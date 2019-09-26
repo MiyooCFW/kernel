@@ -1,0 +1,4 @@
+# Aliases for symbols, used by symbol_request().
+alias symbol:sys_copyarea syscopyarea
+alias symbol:sys_fillrect sysfillrect
+alias symbol:sys_imageblit sysimgblt

@@ -74,7 +74,7 @@
 #define USE_UART	1
 
 #define NO_RAW	1
-#define RS97 1
+#define NO_RS97 1
 
 
 static int major = -1;
@@ -229,12 +229,12 @@ static void scan_handler(unsigned long unused)
     }
   #endif
 #if !defined(RAW)
-    if (miyoo_ver == 1 && val & MY_R) {
+    if (miyoo_ver <= 2 && val & MY_R) {
       if (! (val & MY_LEFT) ) {
         val&= ~MY_R;
         val|= MY_LEFT;
       }
-    } else if (miyoo_ver == 1 && val & MY_LEFT) {
+    } else if (miyoo_ver <= 2 && val & MY_LEFT) {
       if (! (val & MY_R) ) {
         val&= ~MY_LEFT;
         val|= MY_R;
@@ -408,7 +408,7 @@ static void scan_handler(unsigned long unused)
 		else if((val & MY_R) && (val & MY_LEFT)){
       if(!hotkey_down) {
         bd = backlight_device_get_by_type(BACKLIGHT_RAW);
-        if(bd->props.brightness > 2) {
+        if(bd->props.brightness > 1) {
           backlight_device_set_brightness(bd, bd->props.brightness - 1);
         }
         hotkey_down = true;
@@ -419,7 +419,9 @@ static void scan_handler(unsigned long unused)
 	 else if((val & MY_R) && (val & MY_RIGHT)){
       if(!hotkey_down) {
         bd = backlight_device_get_by_type(BACKLIGHT_RAW);
-        if(bd->props.brightness < 10) {
+        if(bd->props.brightness < 2) {
+          backlight_device_set_brightness(bd, 3);
+        } else if (bd->props.brightness < 11) {
           backlight_device_set_brightness(bd, bd->props.brightness + 1);
         }
         hotkey_down = true;
@@ -437,8 +439,13 @@ static void scan_handler(unsigned long unused)
 			//hotkey = hotkey == 0 ? 9 : hotkey;
 		}
 		else if((val & MY_R) && (val & MY_START)){
+      if(!hotkey_down) {
+        static char * screenshot_argv[] = {"/bin/sh", "-c", "/mnt/apps/fbgrab/screenshot.sh", NULL};
+        call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
+        hotkey_down = true;
+      }
 			hotkey_actioned = true;
-			hotkey = hotkey == 0 ? 10 : hotkey;
+      //hotkey = hotkey == 0 ? 10 : hotkey;
 		}
     hotkey_mod_last = true;
 
@@ -522,7 +529,6 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     break;
   case MIYOO_KBD_SET_VER:
     miyoo_ver = arg;
-    //miyoo_ver = 3;
     
 printk("miyoo keypad config as v%d\n", (int)miyoo_ver);
     break;

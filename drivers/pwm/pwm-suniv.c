@@ -383,6 +383,20 @@ static void do_gpio_free(int ver)
   }
 }
 
+extern void MIYOO_RUMBLE(unsigned int rumble){
+  int pin = get_motor_pin(motor_ver);
+  if(pin > 0){
+    if(rumble) {
+      gpio_set_value(pin, 0);
+    } else {
+      gpio_set_value(pin, 1);
+    }
+  }
+}
+
+EXPORT_SYMBOL_GPL(MIYOO_RUMBLE);
+
+
 static int myopen(struct inode *inode, struct file *file)
 {
   return 0;

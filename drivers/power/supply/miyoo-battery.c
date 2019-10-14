@@ -31,6 +31,27 @@
 #include <asm/arch-suniv/clock.h>
 #include <asm/arch-suniv/common.h>
 
+#include <linux/timer.h>
+#include <linux/backlight.h>
+
+static int g_time_interval = 300000;
+static int g_rumble_interval = 2000;
+static int g_flash_interval = 500;
+struct timer_list g_timer;
+struct timer_list g_rumble_timer;
+struct timer_list g_flash_timer;
+
+static unsigned int battery_low=3550;
+module_param(battery_low,int,0660);
+
+static bool use_flash=true;
+module_param(use_flash,bool,0660);
+
+static bool use_rumble=false;
+module_param(use_rumble,bool,0660);
+
+int flash_count=0;
+
 struct suniv_device_info {
 	struct device *dev;
 	struct power_supply *bat;
@@ -87,6 +108,60 @@ static int suniv_battery_remove(struct platform_device *pdev)
   iounmap(lradc);
 	return 0;
 }
+
+void _RumbleTimer(unsigned long data) {
+  extern void MIYOO_RUMBLE(bool);
+  MIYOO_RUMBLE(false);
+}
+
+void _FlashTimer(unsigned long data) {
+  static struct backlight_device *bd;
+  bd = backlight_device_get_by_type(BACKLIGHT_RAW);
+  if (data < 10) {
+    if(data % 2 == 0) {
+      backlight_device_set_brightness(bd, 9);
+    } else {
+      backlight_device_set_brightness(bd, 5);
+    }
+    setup_timer(&g_flash_timer, _FlashTimer, data + 1);
+    mod_timer(&g_flash_timer, jiffies + msecs_to_jiffies(g_flash_interval));
+  } else {
+    backlight_device_set_brightness(bd, 9);
+  }
+}
+
+void _TimerHandler(unsigned long data) {
+
+  if((readl(lradc + 0x0c) * 3 * 3 * 10) < battery_low) {
+    if(use_flash) {
+      setup_timer(&g_flash_timer, _FlashTimer, 0);
+      mod_timer(&g_flash_timer, jiffies + msecs_to_jiffies(g_flash_interval));
+    }
+    if(use_rumble) {
+      extern void MIYOO_RUMBLE(bool);
+      MIYOO_RUMBLE(true);
+      setup_timer(&g_rumble_timer, _RumbleTimer, 1);
+      mod_timer(&g_rumble_timer, jiffies + msecs_to_jiffies(g_rumble_interval));
+    }
+  }
+  mod_timer( &g_timer, jiffies + msecs_to_jiffies(g_time_interval));
+}
+
+static int __init battery_init(void) {
+  setup_timer(&g_timer, _TimerHandler, 0);
+  mod_timer( &g_timer, jiffies + msecs_to_jiffies(10000));
+  return 0;
+}
+
+static void __exit battery_exit(void)
+{
+    del_timer(&g_timer);
+    del_timer(&g_rumble_timer);
+    del_timer(&g_flash_timer);
+}
+
+module_init(battery_init);
+module_exit(battery_exit);
 
 static const struct of_device_id miyoo_battery_of_match[] = {
 	{.compatible = "allwinner,suniv-f1c500s-battery", },{},

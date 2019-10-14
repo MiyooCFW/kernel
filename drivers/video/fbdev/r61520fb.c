@@ -64,6 +64,9 @@
 #define SLCD_RESET		        ((32 * 4) + 11) // PE11
 #define SLCD_TE		  		      ((32 * 4) + 10) // PE10
 
+static bool flip=false;
+module_param(flip,bool,0660);
+
 struct myfb_par {
   struct device *dev;
   struct platform_device *pdev;
@@ -103,16 +106,14 @@ static int major = -1;
 static struct cdev mycdev;
 static struct class *myclass = NULL;
 static uint32_t miyoo_ver=0;
-#if defined(POCKET_GO)
-static uint32_t miyoo_ver_temp=4;
-#else
-static uint32_t miyoo_ver_temp=3;
-#endif
 static int flip_mode=0;
 static int new_bp=8;
 static int new_fp=8;
 static int def_bp=8;
 static int def_fp=8;
+uint32_t ret;
+int x, y;
+uint16_t *p;
 
 struct myfb_par *mypar;
 static struct fb_var_screeninfo myfb_var;
@@ -197,11 +198,6 @@ static void lcdc_wr(uint8_t is_data, uint32_t data)
 static void lcdc_wr_cmd(uint32_t cmd)
 {
 	lcdc_wr(0, cmd);
-}
-
-static void lcdc_wr_dat(uint32_t data)
-{
-	lcdc_wr(1, data);
 }
 
 static uint32_t lcdc_rd_dat(void)
@@ -414,8 +410,7 @@ static int panel_init(void)
       miyoo_ver = 1;
       ser_init();
       ser_wr_cmd(0x04);
-      uint32_t ret = ser_rd_dat();
-      printk("data: 0x%x\n", ret);
+      ret = ser_rd_dat();
       if(ret == 0x42c2a97f){
         miyoo_ver = 4;
       }
@@ -611,11 +606,11 @@ static int panel_init(void)
     mdelay(250);
                   
     gpio_wr_cmd(0x36);
-#if defined(POCKET_GO)
-    gpio_wr_dat(0xB0); //screen direction //0x70 for 3.5, 0xB0 for pg
-#else
-    gpio_wr_dat(0x70); //screen direction //0x70 for 3.5, 0xB0 for pg
-#endif
+    if(flip){
+    	gpio_wr_dat(0xB0); //screen direction //0x70 for 3.5, 0xB0 for pg
+    } else {
+    	gpio_wr_dat(0x70); //screen direction //0x70 for 3.5, 0xB0 for pg
+    }
                           
     gpio_wr_cmd(0x3a);
     gpio_wr_dat(0x05);
@@ -1148,8 +1143,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
 	  writel((0xf << 28) | (6 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); // 6, 15
 	  writel((1 << 28) | (1 << 25) | (1 << 24), iomm.lcdc + TCON0_IO_CTRL_REG0);
 
-    int x, y;
-    uint16_t *p = par->lram_virt[0];
+    p = par->lram_virt[0];
     for(y=0; y<240; y++){
       for(x=0; x<320; x++){
         if(y < 80){
@@ -1563,7 +1557,29 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     break;
 #endif
   case MIYOO_FB0_SET_FLIP:
-    flip_mode = arg;
+    flip = (bool)arg;
+    writel(0x11111110, iomm.gpio + PD_CFG0);
+    writel(0x11111101, iomm.gpio + PD_CFG1);
+    writel(0x00111111, iomm.gpio + PD_CFG2);
+    writel(0xffffffff, iomm.gpio + PD_DATA);
+    mdelay(50);
+    gpio_wr_cmd(0x28);
+    mdelay(250);
+    gpio_wr_cmd(0x36);
+    if(flip){
+    	gpio_wr_dat(0xB0); //screen direction //0x70 for 3.5, 0xB0 for pg
+    } else {
+    	gpio_wr_dat(0x70); //screen direction //0x70 for 3.5, 0xB0 for pg
+    }
+    mdelay(50);
+    gpio_wr_cmd(0x29);
+    mdelay(50);
+    gpio_wr_cmd(0x2c);
+    mdelay(100);
+    writel(0xffffffff, iomm.gpio + PD_DATA);
+    writel(0x22222220, iomm.gpio + PD_CFG0);
+    writel(0x22222202, iomm.gpio + PD_CFG1);
+    writel(0x00222222, iomm.gpio + PD_CFG2);
     break;
   case MIYOO_FB0_GET_FPBP:
     tmp = (def_fp & 0x0f) << 12;

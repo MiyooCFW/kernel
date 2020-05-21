@@ -37,7 +37,15 @@
 #define MIYOO_KBD_GET_HOTKEY  _IOWR(0x100, 0, unsigned long)
 #define MIYOO_KBD_SET_VER     _IOWR(0x101, 0, unsigned long)
 #define MIYOO_KBD_LOCK_KEY    _IOWR(0x102, 0, unsigned long)
-    
+
+//Keypad type
+#if CONFIG_KEYBOARD_MIYOO_TYPE==1
+#define RS97
+#elif CONFIG_KEYBOARD_MIYOO_TYPE==2
+#define POCKETGOV1
+#endif
+
+//Bittboy inputs
 #define MY_UP     0x0008
 #define MY_DOWN   0x0800
 #define MY_LEFT   0x0080
@@ -463,17 +471,26 @@ static void scan_handler(unsigned long unused)
   if(pre != val) {
 #endif
     pre = val;
+
     report_key(pre, MY_UP, KEY_UP);
     report_key(pre, MY_DOWN, KEY_DOWN);
     report_key(pre, MY_LEFT, KEY_LEFT);
     report_key(pre, MY_R, KEY_RIGHTCTRL);
     report_key(pre, MY_RIGHT, KEY_RIGHT);
 #if defined(RS97)
+	//RS97 alters Bittboy layout by flipping South:West, East:North
     report_key(pre, MY_TA, KEY_LEFTCTRL);
     report_key(pre, MY_TB, KEY_SPACE);
     report_key(pre, MY_A, KEY_LEFTALT);
     report_key(pre, MY_B, KEY_LEFTSHIFT);
+#elif defined(POCKETGOV1)
+	//PocketGo v1 alters Bittboy layout by flipping South:East, West:North
+    report_key(pre, MY_A, KEY_LEFTALT);
+    report_key(pre, MY_B, KEY_LEFTSHIFT);
+    report_key(pre, MY_TA, KEY_LEFTCTRL);
+    report_key(pre, MY_TB, KEY_SPACE);
 #else
+	//Bittboy Layout
     report_key(pre, MY_A, KEY_LEFTCTRL);
     report_key(pre, MY_B, KEY_SPACE);
     report_key(pre, MY_TA, KEY_LEFTALT);
@@ -486,6 +503,7 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_R1, KEY_BACKSPACE);
     report_key(pre, MY_L2, KEY_RIGHTALT);
     report_key(pre, MY_R2, KEY_RIGHTSHIFT);
+	
     input_sync(mydev);
     hotkey_mod_last = false;
   }
@@ -611,7 +629,7 @@ static int __init kbd_init(void)
   set_bit(KEY_BACKSPACE, mydev->keybit);
   set_bit(KEY_RIGHTCTRL, mydev->keybit);
   set_bit(KEY_RIGHTALT, mydev->keybit);
-  set_bit(KEY_RIGHTSHIFT, mydev->keybit);
+  set_bit(KEY_RIGHTSHIFT, mydev->keybit);  
   mydev->name = "miyoo_keypad";
   mydev->id.bustype = BUS_HOST;
   ret = input_register_device(mydev);

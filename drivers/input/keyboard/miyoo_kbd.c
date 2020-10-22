@@ -78,6 +78,8 @@
 #define IN_B    ((32 * 0) + 3)
 #define IN_TB   ((32 * 2) + 0)
 #define IN_MENU ((32 * 4) + 1)
+#define IN_PC3  ((32 * 2) + 3)
+#define IN_PA1  ((32 * 0) + 1)
 
 #define USE_UART	1
 
@@ -261,7 +263,8 @@ static void scan_handler(unsigned long unused)
     gpio_direction_input(OUT_3);
     gpio_direction_input(IN_A);
     gpio_direction_input(IN_TA);
-    gpio_direction_input(IN_L2);
+    gpio_direction_input(IN_PC3);
+    gpio_direction_input(IN_PA1);
     gpio_direction_input(IN_L1);
     gpio_direction_input(IN_R1);
     gpio_direction_input(IN_MENU);
@@ -301,6 +304,12 @@ static void scan_handler(unsigned long unused)
     }
     if(gpio_get_value(IN_R1) == 0){
       val|= MY_R1;
+    }
+    if(gpio_get_value(IN_PC3) == 0){
+      val|= MY_L2;
+    }
+    if(gpio_get_value(IN_PA1) == 0){
+      val|= MY_R2;    
     }
     if(gpio_get_value(IN_MENU) == 0){
       val|= MY_R;

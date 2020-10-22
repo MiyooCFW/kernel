@@ -510,8 +510,8 @@ static void scan_handler(unsigned long unused)
 
     report_key(pre, MY_L1, KEY_TAB);
     report_key(pre, MY_R1, KEY_BACKSPACE);
-    report_key(pre, MY_L2, KEY_RIGHTALT);
-    report_key(pre, MY_R2, KEY_RIGHTSHIFT);
+    report_key(pre, MY_L2, KEY_PAGEUP);
+    report_key(pre, MY_R2, KEY_PAGEDOWN);
 	
     input_sync(mydev);
     hotkey_mod_last = false;

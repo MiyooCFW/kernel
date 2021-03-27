@@ -639,6 +639,8 @@ static int __init kbd_init(void)
   set_bit(KEY_RIGHTCTRL, mydev->keybit);
   set_bit(KEY_RIGHTALT, mydev->keybit);
   set_bit(KEY_RIGHTSHIFT, mydev->keybit);  
+  set_bit(KEY_PAGEUP, mydev->keybit);
+  set_bit(KEY_PAGEDOWN, mydev->keybit);
   mydev->name = "miyoo_keypad";
   mydev->id.bustype = BUS_HOST;
   ret = input_register_device(mydev);

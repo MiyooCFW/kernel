@@ -39,11 +39,9 @@
 #define MIYOO_KBD_LOCK_KEY    _IOWR(0x102, 0, unsigned long)
 
 //Keypad type
-#if CONFIG_KEYBOARD_MIYOO_TYPE==1
-#define RS97
-#elif CONFIG_KEYBOARD_MIYOO_TYPE==2
-#define POCKETGOV1
-#endif
+// CONFIG_KEYBOARD_MIYOO_TYPE:
+//   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
+//   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
 
 //Bittboy inputs
 #define MY_UP     0x0008
@@ -84,7 +82,6 @@
 #define USE_UART	1
 
 #define NO_RAW	1
-#define NO_RS97 1
 
 
 static int major = -1;
@@ -486,13 +483,13 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_LEFT, KEY_LEFT);
     report_key(pre, MY_R, KEY_RIGHTCTRL);
     report_key(pre, MY_RIGHT, KEY_RIGHT);
-#if defined(RS97)
+#if defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 1
 	//RS97 alters Bittboy layout by flipping South:West, East:North
     report_key(pre, MY_TA, KEY_LEFTCTRL);
     report_key(pre, MY_TB, KEY_SPACE);
     report_key(pre, MY_A, KEY_LEFTALT);
     report_key(pre, MY_B, KEY_LEFTSHIFT);
-#elif defined(POCKETGOV1)
+#elif defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 2
 	//PocketGo v1 alters Bittboy layout by flipping South:East, West:North
     report_key(pre, MY_A, KEY_LEFTALT);
     report_key(pre, MY_B, KEY_LEFTSHIFT);
@@ -639,6 +636,8 @@ static int __init kbd_init(void)
   set_bit(KEY_RIGHTCTRL, mydev->keybit);
   set_bit(KEY_RIGHTALT, mydev->keybit);
   set_bit(KEY_RIGHTSHIFT, mydev->keybit);  
+  set_bit(KEY_PAGEUP, mydev->keybit);
+  set_bit(KEY_PAGEDOWN, mydev->keybit);
   mydev->name = "miyoo_keypad";
   mydev->id.bustype = BUS_HOST;
   ret = input_register_device(mydev);

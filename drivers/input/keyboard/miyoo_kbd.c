@@ -43,6 +43,41 @@
 //   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
 //   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
 
+/*
+ * Hardware map (as observed from the working code)
+ *
+ * | pad | define  | v1 v2      | v3 v4  | init_pullup? | init_as_in? |
+ * |-----+---------+------------+--------+--------------+-------------|
+ * | PA1 | IN_PA1  |            | R2     |              |             |
+ * | PA3 | IN_B    | B (noUART) |        |              | Y (noUART)  |
+ * | PC0 | IN_TB   | Y (noUART) |        | Y            | Y?          |
+ * | PC1 | IN_L1   | L1         | L1     | Y            | Y           |
+ * | PC2 | IN_R1   | R1         | R1     | Y            | Y           |
+ * | PC3 | IN_R2   | Y          | L2     | Y            | Y           |
+ * | PD0 | IN_A    | A          | SELECT |              |             |
+ * | PD9 | IN_TA   | X          | Y      |              |             |
+ * | PE0 | IN_L2   | B          | START  | Y            | Y           |
+ * | PE1 | IN_MENU |            | R      | Y            |             |
+ * | PE2 | IN_1    | matx       | up     | Y            |             |
+ * | PE3 | IN_2    | matx       | down   | Y            |             |
+ * | PE4 | IN_3    | matx       | left   | Y            |             |
+ * | PE5 | IN_4    | matx       | right  | Y            |             |
+ * | PE7 | OUT_1   | matx       | A      | Y            |             |
+ * | PE8 | OUT_2   | matx       | B      | Y            |             |
+ * | PE9 | OUT_3   | matx       | X      | Y            |             |
+ * 
+ * Notes:
+ *  - init_pullup? shows if an internal pull-up resistor has been
+ *    enabled in kbd_init
+ *  - init_as_in? shows in the pin has been designated by input
+ *    by direct writing to GPIO registers in kbd_init
+ *  - (noUART) only happens when USE_UART is undefined (so by default NOT)
+ *  - v1 and v2 are identical (exists just to match the graphics driver)
+ *  - TA=X, TB=Y
+ *  - "matx" is a matrix with these keys: dpad,R,start,select
+ *  - v1&v2 code swaps 'R' and 'left' after scanning the matrix
+ */
+
 //Bittboy inputs
 #define MY_UP     0x0008
 #define MY_DOWN   0x0800
@@ -574,31 +609,34 @@ static int __init kbd_init(void)
 {
   uint32_t ret;
 
-  gpio = ioremap(0x01c20800, 4096);
-  ret = readl(gpio + (2 * 0x24 + 0x00));
-  ret&= 0xffff0000;
-  writel(ret, gpio + (2 * 0x24 + 0x00));
+  // initialise some of the GPIO pins directly by writing to F1C100S registers
+  // datasheet: https://linux-sunxi.org/images/8/85/Allwinner_F1C600_User_Manual_V1.0.pdf
+  // pages 116 onwards
+  gpio = ioremap(0x01c20800, 4096);      // PIO block
+  ret = readl(gpio + (2 * 0x24 + 0x00)); // PC_CFG0
+  ret&= 0xffff0000;                      // set (PC0?) PC1 PC2 PC3 as inputs
+  writel(ret, gpio + (2 * 0x24 + 0x00)); // (somewhat dirty, writes into some reserved)
 
-  ret = readl(gpio + (2 * 0x24 + 0x1c));
+  ret = readl(gpio + (2 * 0x24 + 0x1c)); // PC_PULL0
   //ret&= 0xffffff00;
   //ret|= 0x00000055;
-  ret = 0x55555555;
-  writel(ret, gpio + (2 * 0x24 + 0x1c));
+  ret = 0x55555555;                      // enable pull-ups on PC0 - PC3
+  writel(ret, gpio + (2 * 0x24 + 0x1c)); // (dirty again)
 
-  ret = readl(gpio + (4 * 0x24 + 0x00));
-  ret&= 0xfffffff0;
+  ret = readl(gpio + (4 * 0x24 + 0x00)); // PE_CFG0
+  ret&= 0xfffffff0;                      // set PE0 as input
   writel(ret, gpio + (4 * 0x24 + 0x00));
 
-  ret = readl(gpio + (4 * 0x24 + 0x1c));
+  ret = readl(gpio + (4 * 0x24 + 0x1c)); // PE_PULL0
   //ret&= 0xffffffff0;
   //ret|= 0x000000001;
-  ret = 0x55555555;
+  ret = 0x55555555;                      // pull-ups on PE0 - PE12
   writel(ret, gpio + (4 * 0x24 + 0x1c));
 
 #if !defined(USE_UART)
-  ret = readl(gpio + (0 * 0x24 + 0x00));
-  ret&= 0xffff0fff;
-  writel(ret, gpio + (0 * 0x24 + 0x00));  
+  ret = readl(gpio + (0 * 0x24 + 0x00)); // PA_CFG0
+  ret&= 0xffff0fff;                      // set PA3 as input
+  writel(ret, gpio + (0 * 0x24 + 0x00));
 #endif
 
   do_input_request(IN_L1, 	"gpio_l1");

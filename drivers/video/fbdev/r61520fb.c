@@ -73,6 +73,7 @@ module_param(flip,bool,0660);
 // 2 = ? - Might be a R61526 or a R61581. It's NOT a R61520, because that one doesn't support the 0x04 read_DDB_start / Read Display ID Information command.
 // 3 = ?
 // 4 = ?
+// Will be automatically detected if left unset (which usually works)
 static uint32_t version=0;
 module_param(version,uint,0660);
 

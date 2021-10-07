@@ -67,6 +67,16 @@
 static bool flip=false;
 module_param(flip,bool,0660);
 
+// Which LCD controller are we driving? E.g. R61520, R61526, R61581, etc. 
+// Should be a number 1-4, but I'm not yet sure which numbers correspond to which panels
+// 1 = ?
+// 2 = ? - Might be a R61526 or a R61581. It's NOT a R61520, because that one doesn't support the 0x04 read_DDB_start / Read Display ID Information command.
+// 3 = ?
+// 4 = ?
+// Will be automatically detected if left unset (which usually works)
+static uint32_t version=0;
+module_param(version,uint,0660);
+
 struct myfb_par {
   struct device *dev;
   struct platform_device *pdev;
@@ -416,6 +426,11 @@ static int panel_init(void)
       }
       ser_deinit();
     }
+  }
+
+  if (version && version != miyoo_ver) {
+    printk("Warning: LCD controller detected as version %d, but being overridden by module_param as version %d (detection 2 of 2)", miyoo_ver, version);
+    miyoo_ver = version;
   }
 
   writel(0x11111110, iomm.gpio + PD_CFG0);
@@ -1091,6 +1106,11 @@ static void suniv_lcdc_init(struct myfb_par *par)
     ver = 4;
   }
   ser_deinit();
+
+  if (version == 4 && ver != 4) {
+    printk("Warning: LCD controller not detected as version 4, but being overridden by module_param as version 4 (detection 1 of 2)");
+    ver = version;
+  }
  
 	writel(0, iomm.lcdc + TCON_CTRL_REG);
 	writel(0, iomm.lcdc + TCON_INT_REG0);

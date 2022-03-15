@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     # ARCH=arm and CROSS_COMPILE=arm-buildroot-linux-musleabi- env props are set in the docker image
-    - name: build devicetree
+    - name: configure
       run: make miyoo_defconfig
     - name: build zImage
       run: make zImage
@@ -42,7 +42,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     # env props from docker image: ARCH=arm CROSS_COMPILE=arm-miyoo-linux-uclibcgnueabi-
-    - name: build devicetree
+    - name: configure
       run: make miyoo_defconfig
     - name: build zImage
       run: make zImage

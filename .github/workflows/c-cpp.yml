@@ -14,10 +14,8 @@ jobs:
     # ARCH=arm and CROSS_COMPILE=arm-buildroot-linux-musleabi- env props are set in the docker image
     - name: configure
       run: make miyoo_defconfig
-    - name: build zImage
-      run: make zImage
-    - name: build drivers
-      run: make M=$PwD
+    - name: build zImage & modules
+      run: make
     # put everything in the same folder so that we can grab it all as a single artifact
     - name: gather files
       run: |

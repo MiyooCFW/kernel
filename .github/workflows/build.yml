@@ -1,0 +1,62 @@
+name: CI Build
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      submodule:
+        required: true
+        type: string
+
+jobs:   
+  build:
+    runs-on: ubuntu-20.04
+    container:
+      image: miyoocfw/toolchain:latest
+    steps:
+    - uses: actions/checkout@v2
+    
+    - if: inputs.submodule
+      run: git submodule update --init --depth 1 -- ${{ inputs.submodule }}
+    
+    - name: Generate cache key
+      if: inputs.submodule
+      id: cache-key
+      run: |
+        cd ${{ inputs.submodule }}
+        echo "::set-output name=key::${{ inputs.submodule }}-$(git rev-parse --short HEAD)"
+      
+    - uses: actions/cache@v3
+      if: inputs.submodule
+      with:
+        path: ${{ inputs.submodule || '.' }}/dist/*
+        key: ${{ steps.cache-key.outputs.key }}
+      id: cache
+      
+    # ARCH=arm and CROSS_COMPILE=arm-buildroot-linux-musleabi- env props are set in the docker image
+    - name: build
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        make miyoo_defconfig
+        make
+        
+        # put everything in the same folder so that we can grab it all as a single artifact
+    - name: gather files
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        mkdir dist
+        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/
+        mv arch/arm/boot/zImage dist/
+        mv drivers/video/fbdev/core/*.ko dist/
+        mv drivers/video/fbdev/r61520fb.ko dist/
+    
+    - run: find ${{ inputs.submodule || '.' }}/dist
+    
+    - uses: actions/upload-artifact@v2
+      with:
+        name: kernel
+        path: ${{ inputs.submodule || '.' }}/dist/*
+        if-no-files-found: error # 'error', 'warn', 'ignore'; defaults to `warn`

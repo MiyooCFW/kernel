@@ -69,9 +69,9 @@ module_param(flip,bool,0660);
 
 // Which LCD controller are we driving? E.g. R61520, R61526, R61581, etc. 
 // Should be a number 1-4, but I'm not yet sure which numbers correspond to which panels
-// 1 = ?
-// 2 = ? - Might be a R61526 or a R61581. It's NOT a R61520, because that one doesn't support the 0x04 read_DDB_start / Read Display ID Information command.
-// 3 = ?
+// 1 = R61520 - R61520 doesn't support the 0x04 read_DDB_start / Read Display ID Information command.
+// 2 = ST7789S
+// 3 = R61505W
 // 4 = ?
 // Will be automatically detected if left unset (which usually works)
 static uint32_t version=0;
@@ -439,7 +439,7 @@ static int panel_init(void)
   writel(0xffffffff, iomm.gpio + PD_DATA);
 
   switch(miyoo_ver){
-  case 1:
+  case 1: // R61520
     gpio_wr_cmd(0xb0);
     gpio_wr_dat(0x00);
 
@@ -616,7 +616,7 @@ static int panel_init(void)
     mdelay(150);
     gpio_wr_cmd(0x2c);
     break;
-  case 2:
+  case 2: // ST7789S
     gpio_wr_cmd(0x11);
     mdelay(250);
                   
@@ -642,6 +642,7 @@ static int panel_init(void)
     gpio_wr_dat(0x00);
     gpio_wr_dat(0xef);
         
+    // ST7789S Frame rate setting
     gpio_wr_cmd(0xb2);
     if((new_fp == -1) || (new_bp == -1)){
       def_bp = new_bp = 9;
@@ -653,15 +654,18 @@ static int panel_init(void)
     gpio_wr_dat(0x00);        			
     gpio_wr_dat(0x33);
     gpio_wr_dat(0x33);
-      
+
+    // Gate Control
     gpio_wr_cmd(0xb7);
     gpio_wr_dat(0x35);
 
+    // ?
     gpio_wr_cmd(0xb8);
     gpio_wr_dat(0x2f);
     gpio_wr_dat(0x2b);
     gpio_wr_dat(0x2f);
-          
+
+    // ST7789S Power setting
     gpio_wr_cmd(0xbb);
     gpio_wr_dat(0x15);
           
@@ -672,7 +676,7 @@ static int panel_init(void)
     gpio_wr_dat(0x01);							
 
     gpio_wr_cmd(0xc3);
-    gpio_wr_dat(0x13);
+    gpio_wr_dat(0x13); // or 0x0b?
 
     gpio_wr_cmd(0xc4);
     gpio_wr_dat(0x20);
@@ -692,6 +696,7 @@ static int panel_init(void)
     gpio_wr_dat(0x12);
     gpio_wr_dat(0x00);
 
+    // ST7789S gamma setting
     gpio_wr_cmd(0xe0);
     gpio_wr_dat(0x70);
     gpio_wr_dat(0x00);
@@ -952,6 +957,7 @@ static int panel_init(void)
     ser_wr_cmd(0xb7);
     ser_wr_dat(0x35);
     
+    // Power settings
     ser_wr_cmd(0xbb);
     ser_wr_dat(0x15);
    

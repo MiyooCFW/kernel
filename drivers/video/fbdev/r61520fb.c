@@ -75,8 +75,9 @@ module_param(flip,bool,0660);
 // 4 = ?
 // Will be automatically detected if left unset (which usually works)
 static uint32_t version=0;
+static bool invert=false;
 module_param(version,uint,0660);
-
+module_param(invert,bool,0660);
 struct myfb_par {
   struct device *dev;
   struct platform_device *pdev;
@@ -142,12 +143,15 @@ static void suniv_gpio_init(void)
 {
   uint32_t ret;
 
-  writel(0x22222220, iomm.gpio + PD_CFG0);
+  ret = readl(iomm.gpio + PD_CFG0);
+  ret&= 0x0000000f;
+  ret|= 0x22222220;
+  writel(ret, iomm.gpio + PD_CFG0);
   writel(0x22222202, iomm.gpio + PD_CFG1);
   writel(0x00222222, iomm.gpio + PD_CFG2);
   writel(0x00040001, iomm.gpio + PD_PUL0);
   writel(0x00000000, iomm.gpio + PD_PUL1);
-  writel(0xffffffff, iomm.gpio + PD_DRV0);
+  //writel(0xffffffff, iomm.gpio + PD_DRV0);
   writel(0xffffffff, iomm.gpio + PD_DRV1);
 
   ret = readl(iomm.gpio + PE_PUL0);
@@ -433,11 +437,14 @@ static int panel_init(void)
     miyoo_ver = version;
   }
 
-  writel(0x11111110, iomm.gpio + PD_CFG0);
+  ret = readl(iomm.gpio + PD_CFG0);
+  ret&= 0x0000000f;
+  ret|= 0x11111110;
+  writel(ret, iomm.gpio + PD_CFG0);
   writel(0x11111101, iomm.gpio + PD_CFG1);
   writel(0x00111111, iomm.gpio + PD_CFG2);
   writel(0xffffffff, iomm.gpio + PD_DATA);
-
+    mdelay(150);
   switch(miyoo_ver){
   case 1: // R61520
     gpio_wr_cmd(0xb0);
@@ -583,7 +590,9 @@ static int panel_init(void)
 
     gpio_wr_cmd(0x13);
 
-    gpio_wr_cmd(0x20);
+    if (invert) {
+        gpio_wr_cmd(0x21); // invert colors
+    }
 
     gpio_wr_cmd(0x35);
     gpio_wr_dat(0x00); // te mode
@@ -593,7 +602,11 @@ static int panel_init(void)
     gpio_wr_dat(0x30);
 
     gpio_wr_cmd(0x36);
-    gpio_wr_dat(0xe0); // display mode
+    if(flip){
+        gpio_wr_dat(0x38);
+    } else {
+        gpio_wr_dat(0xe0);
+    }
 
     gpio_wr_cmd(0x3a);
     gpio_wr_dat(0x55);
@@ -1062,7 +1075,10 @@ static int panel_init(void)
   for(x=0;x<320;x++) gpio_wr_dat(0x00);
 #endif
   writel(0xffffffff, iomm.gpio + PD_DATA);
-  writel(0x22222220, iomm.gpio + PD_CFG0);
+  ret = readl(iomm.gpio + PD_CFG0);
+  ret&= 0x0000000f;
+  ret|= 0x22222220;
+  writel(ret, iomm.gpio + PD_CFG0);
   writel(0x22222202, iomm.gpio + PD_CFG1);
   writel(0x00222222, iomm.gpio + PD_CFG2);
   return miyoo_ver;
@@ -1584,7 +1600,9 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 #endif
   case MIYOO_FB0_SET_FLIP:
     flip = (bool)arg;
-    writel(0x11111110, iomm.gpio + PD_CFG0);
+    ret = readl(iomm.gpio + PD_CFG0);
+    ret&= 0x0000000f;
+    ret|= 0x11111110;
     writel(0x11111101, iomm.gpio + PD_CFG1);
     writel(0x00111111, iomm.gpio + PD_CFG2);
     writel(0xffffffff, iomm.gpio + PD_DATA);
@@ -1603,7 +1621,10 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     gpio_wr_cmd(0x2c);
     mdelay(100);
     writel(0xffffffff, iomm.gpio + PD_DATA);
-    writel(0x22222220, iomm.gpio + PD_CFG0);
+    ret = readl(iomm.gpio + PD_CFG0);
+    ret&= 0x0000000f;
+    ret|= 0x22222220;
+    writel(ret, iomm.gpio + PD_CFG0);
     writel(0x22222202, iomm.gpio + PD_CFG1);
     writel(0x00222222, iomm.gpio + PD_CFG2);
     break;
@@ -1662,4 +1683,3 @@ module_exit(fb_cleanup);
 MODULE_DESCRIPTION("Allwinner suniv framebuffer driver for Miyoo handheld");
 MODULE_AUTHOR("Steward Fu <steward.fu@gmail.com>");
 MODULE_LICENSE("GPL");
-

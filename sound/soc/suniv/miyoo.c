@@ -110,16 +110,24 @@ static void suniv_codec_init(void)
 static void suniv_gpio_init(void)
 {
   uint32_t ret;
-
-  ret = readl(iomm.gpio + PA_CFG0);
+#if defined(CONFIG_SND_SUNIV_CODEC_TYPE) && CONFIG_SND_SUNIV_CODEC_TYPE == 0
+    ret = readl(iomm.gpio + PA_CFG0);
 #if defined(USE_EARPHONE)
-  ret&= 0xfffff0f0;
+    ret&= 0xfffff0f0;
 #else
-  ret&= 0xfffffff0;
+    ret &= 0xfffffff0;
 #endif
-  ret|= 0x00000001;
-  writel(ret, iomm.gpio + PA_CFG0);
-  suniv_setbits(iomm.gpio + PA_DATA, (1 << 0));
+    ret |= 0x00000001;
+    writel(ret, iomm.gpio + PA_CFG0);
+    suniv_setbits(iomm.gpio + PA_DATA, (1 << 0));
+#elif defined(CONFIG_SND_SUNIV_CODEC_TYPE) && CONFIG_SND_SUNIV_CODEC_TYPE == 1
+    ret = readl(iomm.gpio + PD_CFG0);
+    ret &= 0xfffffff0;
+    ret |= 0x00000001;
+    writel(ret, iomm.gpio + PD_CFG0);
+    suniv_setbits(iomm.gpio + PD_DATA, (1 << 0));
+#endif
+
 }
 
 static irqreturn_t dma_irq_handler(int irq, void *arg)

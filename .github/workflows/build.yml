@@ -94,11 +94,11 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         cd ${{ inputs.submodule || '.' }}
-        make miyoo_defconfig
+        make miyoo_q8_defconfig
         make
         
         # put everything in the same folder so that we can grab it all as a single artifact
-    - name: gatherQ8 files
+    - name: gather Q8 files
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         cd ${{ inputs.submodule || '.' }}

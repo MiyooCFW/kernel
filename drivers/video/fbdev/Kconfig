@@ -2506,3 +2506,11 @@ config FB_R61520
 	help
 	  Framebuffer driver for Renesas R61520 SLCD panel.
 
+config FB_GC9306
+	tristate "GC9306 SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for GC9306 SLCD panel.

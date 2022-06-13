@@ -432,10 +432,10 @@ static void scan_handler(unsigned long unused)
               val|= MY_A;
           }
           if(gpio_get_value(IN_2) == 0){
-              val|= MY_B;
+              val|= MY_TB;
           }
           if(gpio_get_value(IN_A) == 0){
-              val|= MY_TB;
+              val|= MY_B;
           }
           if(gpio_get_value(OUT_1) == 0){
               val|= MY_RIGHT;
@@ -766,7 +766,7 @@ static int __init kbd_init(void)
         ret |= 0x00000020;
         writel(ret, gpio + (32 * 0) + 0);
 
-        writel((3 << 20) | (1 << 16) | (1 << 0), touch + 0x00);
+        writel((3 << 20) | (1 << 22) | (1 << 0), touch + 0x00);
         writel((1 << 5) | (1 << 4) | (1 << 1), touch + 0x04);
     }
 

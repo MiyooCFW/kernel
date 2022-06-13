@@ -459,10 +459,10 @@ static void scan_handler(unsigned long unused)
           if(r < 0x40){
               val|= MY_START;
           }
-          else if((r < 0x80) && (r > 0x40)){
+          if((r < 0x80) && (r > 0x40)){
               val|= MY_SELECT;
           }
-          else if((r < 0xe0) && (r > 0x80)){
+          if((r < 0xe0) && (r > 0x80)){
               val|= MY_R;
           }
           break;
@@ -765,8 +765,8 @@ static int __init kbd_init(void)
         ret &= 0xffffff0f;
         ret |= 0x00000020;
         writel(ret, gpio + (32 * 0) + 0);
-
-        writel((3 << 20) | (1 << 22) | (1 << 0), touch + 0x00);
+        
+        writel((3 << 20) | (1 << 28) | (1 << 0), touch + 0x00);
         writel((1 << 5) | (1 << 4) | (1 << 1), touch + 0x04);
     }
 

@@ -131,7 +131,8 @@ static struct timer_list mytimer;
 static int myperiod=30;
 
 static struct backlight_device *bd;
-static unsigned long miyoo_ver=1;
+static uint32_t miyoo_ver=1;
+static uint32_t miyoo_layout=1;
 static unsigned long hotkey=0;
 static unsigned long lockkey=0;
 static uint8_t *gpio;
@@ -141,6 +142,8 @@ bool hotkey_actioned=false;
 bool hotkey_down=false;
 bool non_hotkey_first=false;
 bool non_hotkey_menu=false;
+module_param(miyoo_ver,uint,0660);
+module_param(miyoo_layout,uint,0660);
 
 static int do_input_request(uint32_t pin, const char*name)
 {
@@ -215,117 +218,8 @@ static void scan_handler(unsigned long unused)
   extern void MIYOO_DECREASE_VOLUME(void);
 
 
-  if(miyoo_ver <= 2){
-#if defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 3
-      gpio_direction_input(IN_4);
-      gpio_direction_input(IN_A_M3);
-      gpio_direction_input(IN_PA1);
-      gpio_direction_output(IN_3,1);
-      if(gpio_get_value(IN_1) == 1){
-          val|= MY_UP;
-      }
-      if(gpio_get_value(IN_2) == 1){
-          val|= MY_LEFT;
-      }
-      if(gpio_get_value(IN_A_M3) == 1){
-          val|= MY_TA;
-      }
-      if(gpio_get_value(IN_PA1) == 1){
-          val|= MY_TB;
-      }
-
-      gpio_direction_input(IN_3);
-      gpio_direction_output(IN_4,1);
-      if(gpio_get_value(IN_1) == 1){
-          val|= MY_DOWN;
-      }
-      if(gpio_get_value(IN_2) == 1){
-          val|= MY_RIGHT;
-      }
-      if(gpio_get_value(IN_A_M3) == 1){
-          val|= MY_A;
-      }
-      if(gpio_get_value(IN_PA1) == 1){
-          val|= MY_B;
-      }
-
-      gpio_direction_input(IN_4);
-      gpio_direction_output(OUT_2,1);
-      gpio_direction_output(OUT_3,1);
-      if(gpio_get_value(IN_PA1) == 1){
-          val|= MY_R;
-      }
-      if(gpio_get_value(IN_A_M3) == 1){
-          val|= MY_SELECT;
-      }
-      if(gpio_get_value(IN_1) == 1){
-          val|= MY_START;
-      }
-      if(gpio_get_value(IN_2) == 1){
-          val|= MY_L1;
-      }
-
-      gpio_direction_input(OUT_2);
-      gpio_direction_input(OUT_3);
-      gpio_direction_output(IN_4,1);
-      gpio_direction_output(IN_A_M3,1);
-      gpio_direction_input(IN_R2_M3);
-      if(gpio_get_value(IN_R2_M3) == 1){
-          val|= MY_R1;
-      }
-#elif defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 4
-      gpio_direction_input(OUT_1);
-      gpio_direction_input(OUT_2);
-      gpio_direction_input(OUT_3);
-      gpio_direction_input(OUT_4);
-      gpio_direction_input(IN_1);
-      gpio_direction_input(IN_2);
-      gpio_direction_input(IN_A);
-      gpio_direction_input(IN_A_M3);
-      gpio_direction_input(IN_TA);
-      gpio_direction_input(IN_L1_Q8);
-
-      if(gpio_get_value(IN_1) == 0){
-          val|= MY_TA;
-      }
-      if(gpio_get_value(IN_A_M3) == 0){
-          val|= MY_A;
-      }
-      if(gpio_get_value(IN_2) == 0){
-          val|= MY_B;
-      }
-      if(gpio_get_value(IN_A) == 0){
-          val|= MY_TB;
-      }
-      if(gpio_get_value(OUT_1) == 0){
-          val|= MY_RIGHT;
-      }
-      if(gpio_get_value(OUT_2) == 0){
-          val|= MY_LEFT;
-      }
-      if(gpio_get_value(OUT_3) == 0){
-          val|= MY_DOWN;
-      }
-      if(gpio_get_value(OUT_4) == 0){
-          val|= MY_UP;
-      }
-      if(gpio_get_value(IN_TA) == 0){
-          val|= MY_R1;
-      }
-      if(gpio_get_value(IN_L1_Q8) == 0){
-          val|= MY_L1;
-      }
-      r = (readl(touch  + 0x24) >> 4) & 0xff;
-      if(r < 0x40){
-          val|= MY_START;
-      }
-      else if((r < 0x80) && (r > 0x40)){
-          val|= MY_SELECT;
-      }
-      else if((r < 0xe0) && (r > 0x80)){
-          val|= MY_R;
-      }
-#else
+  switch(miyoo_ver){
+      case 1:
       for(scan=0; scan<3; scan++){
           gpio_set_value(OUT_1, 1);
           gpio_set_value(OUT_2, 1);
@@ -398,70 +292,180 @@ static void scan_handler(unsigned long unused)
           }
         }
         #endif
-#endif
+    break;
+      case 2:
+          gpio_direction_input(IN_1);
+          gpio_direction_input(IN_2);
+          gpio_direction_input(IN_3);
+          gpio_direction_input(IN_4);
+          gpio_direction_input(OUT_1);
+          gpio_direction_input(OUT_2);
+          gpio_direction_input(OUT_3);
+          gpio_direction_input(IN_A);
+          gpio_direction_input(IN_TA);
+          gpio_direction_input(IN_PC3);
+          gpio_direction_input(IN_PA1);
+          gpio_direction_input(IN_L1);
+          gpio_direction_input(IN_R1);
+          gpio_direction_input(IN_MENU);
 
-  }
-  else{
-    gpio_direction_input(IN_1);
-    gpio_direction_input(IN_2);
-    gpio_direction_input(IN_3);
-    gpio_direction_input(IN_4);
-    gpio_direction_input(OUT_1);
-    gpio_direction_input(OUT_2);
-    gpio_direction_input(OUT_3);
-    gpio_direction_input(IN_A);
-    gpio_direction_input(IN_TA);
-    gpio_direction_input(IN_PC3);
-    gpio_direction_input(IN_PA1);
-    gpio_direction_input(IN_L1);
-    gpio_direction_input(IN_R1);
-    gpio_direction_input(IN_MENU);
+          if(gpio_get_value(IN_1) == 0){
+              val|= MY_UP;
+          }
+          if(gpio_get_value(IN_2) == 0){
+              val|= MY_DOWN;
+          }
+          if(gpio_get_value(IN_3) == 0){
+              val|= MY_LEFT;
+          }
+          if(gpio_get_value(IN_4) == 0){
+              val|= MY_RIGHT;
+          }
+          if(gpio_get_value(OUT_1) == 0){
+              val|= MY_A;
+          }
+          if(gpio_get_value(OUT_2) == 0){
+              val|= MY_B;
+          }
+          if(gpio_get_value(OUT_3) == 0){
+              val|= MY_TA;
+          }
+          if(gpio_get_value(IN_TA) == 0){
+              val|= MY_TB;
+          }
+          if(gpio_get_value(IN_A) == 0){
+              val|= MY_SELECT;
+          }
+          if(gpio_get_value(IN_L2) == 0){
+              val|= MY_START;
+          }
+          if(gpio_get_value(IN_L1) == 0){
+              val|= MY_L1;
+          }
+          if(gpio_get_value(IN_R1) == 0){
+              val|= MY_R1;
+          }
+          if(gpio_get_value(IN_PC3) == 0){
+              val|= MY_L2;
+          }
+          if(gpio_get_value(IN_PA1) == 0){
+              val|= MY_R2;
+          }
+          if(gpio_get_value(IN_MENU) == 0){
+              val|= MY_R;
+          }
+          break;
+      case 3:
+          gpio_direction_input(IN_4);
+          gpio_direction_input(IN_A_M3);
+          gpio_direction_input(IN_PA1);
+          gpio_direction_output(IN_3,1);
+          if(gpio_get_value(IN_1) == 1){
+              val|= MY_UP;
+          }
+          if(gpio_get_value(IN_2) == 1){
+              val|= MY_LEFT;
+          }
+          if(gpio_get_value(IN_A_M3) == 1){
+              val|= MY_TA;
+          }
+          if(gpio_get_value(IN_PA1) == 1){
+              val|= MY_TB;
+          }
 
-    if(gpio_get_value(IN_1) == 0){
-      val|= MY_UP;
-    }
-    if(gpio_get_value(IN_2) == 0){
-      val|= MY_DOWN;
-    }
-    if(gpio_get_value(IN_3) == 0){
-      val|= MY_LEFT;
-    }
-    if(gpio_get_value(IN_4) == 0){
-      val|= MY_RIGHT;
-    }
-    if(gpio_get_value(OUT_1) == 0){
-        val|= MY_A;
-    }
-    if(gpio_get_value(OUT_2) == 0){
-        val|= MY_B;
-    }
-    if(gpio_get_value(OUT_3) == 0){
-        val|= MY_TA;
-    }
-    if(gpio_get_value(IN_TA) == 0){
-      val|= MY_TB;
-    }
-    if(gpio_get_value(IN_A) == 0){
-      val|= MY_SELECT;
-    }
-    if(gpio_get_value(IN_L2) == 0){
-      val|= MY_START;
-    }
-    if(gpio_get_value(IN_L1) == 0){
-      val|= MY_L1;
-    }
-    if(gpio_get_value(IN_R1) == 0){
-      val|= MY_R1;
-    }
-    if(gpio_get_value(IN_PC3) == 0){
-      val|= MY_L2;
-    }
-    if(gpio_get_value(IN_PA1) == 0){
-      val|= MY_R2;    
-    }
-    if(gpio_get_value(IN_MENU) == 0){
-      val|= MY_R;
-    }
+          gpio_direction_input(IN_3);
+          gpio_direction_output(IN_4,1);
+          if(gpio_get_value(IN_1) == 1){
+              val|= MY_DOWN;
+          }
+          if(gpio_get_value(IN_2) == 1){
+              val|= MY_RIGHT;
+          }
+          if(gpio_get_value(IN_A_M3) == 1){
+              val|= MY_A;
+          }
+          if(gpio_get_value(IN_PA1) == 1){
+              val|= MY_B;
+          }
+
+          gpio_direction_input(IN_4);
+          gpio_direction_output(OUT_2,1);
+          gpio_direction_output(OUT_3,1);
+          if(gpio_get_value(IN_PA1) == 1){
+              val|= MY_R;
+          }
+          if(gpio_get_value(IN_A_M3) == 1){
+              val|= MY_SELECT;
+          }
+          if(gpio_get_value(IN_1) == 1){
+              val|= MY_START;
+          }
+          if(gpio_get_value(IN_2) == 1){
+              val|= MY_L1;
+          }
+
+          gpio_direction_input(OUT_2);
+          gpio_direction_input(OUT_3);
+          gpio_direction_output(IN_4,1);
+          gpio_direction_output(IN_A_M3,1);
+          gpio_direction_input(IN_R2_M3);
+          if(gpio_get_value(IN_R2_M3) == 1){
+              val|= MY_R1;
+          }
+          break;
+      case 4:
+          gpio_direction_input(OUT_1);
+          gpio_direction_input(OUT_2);
+          gpio_direction_input(OUT_3);
+          gpio_direction_input(OUT_4);
+          gpio_direction_input(IN_1);
+          gpio_direction_input(IN_2);
+          gpio_direction_input(IN_A);
+          gpio_direction_input(IN_A_M3);
+          gpio_direction_input(IN_TA);
+          gpio_direction_input(IN_L1_Q8);
+
+          if(gpio_get_value(IN_1) == 0){
+              val|= MY_TA;
+          }
+          if(gpio_get_value(IN_A_M3) == 0){
+              val|= MY_A;
+          }
+          if(gpio_get_value(IN_2) == 0){
+              val|= MY_TB;
+          }
+          if(gpio_get_value(IN_A) == 0){
+              val|= MY_B;
+          }
+          if(gpio_get_value(OUT_1) == 0){
+              val|= MY_RIGHT;
+          }
+          if(gpio_get_value(OUT_2) == 0){
+              val|= MY_LEFT;
+          }
+          if(gpio_get_value(OUT_3) == 0){
+              val|= MY_DOWN;
+          }
+          if(gpio_get_value(OUT_4) == 0){
+              val|= MY_UP;
+          }
+          if(gpio_get_value(IN_TA) == 0){
+              val|= MY_R1;
+          }
+          if(gpio_get_value(IN_L1_Q8) == 0){
+              val|= MY_L1;
+          }
+          r = (readl(touch  + 0x24) >> 4) & 0xff;
+          if(r < 0x40){
+              val|= MY_START;
+          }
+          else if((r < 0x80) && (r > 0x40)){
+              val|= MY_SELECT;
+          }
+          else if((r < 0xe0) && (r > 0x80)){
+              val|= MY_R;
+          }
+          break;
   }
 
   if(lockkey){
@@ -634,25 +638,30 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_LEFT, KEY_LEFT);
     report_key(pre, MY_R, KEY_RIGHTCTRL);
     report_key(pre, MY_RIGHT, KEY_RIGHT);
-#if defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 1
-	//RS97 alters Bittboy layout by flipping South:West, East:North
-    report_key(pre, MY_TA, KEY_LEFTCTRL);
-    report_key(pre, MY_TB, KEY_SPACE);
-    report_key(pre, MY_A, KEY_LEFTALT);
-    report_key(pre, MY_B, KEY_LEFTSHIFT);
-#elif defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 2
-	//PocketGo v1 alters Bittboy layout by flipping South:East, West:North
-    report_key(pre, MY_A, KEY_LEFTALT);
-    report_key(pre, MY_B, KEY_LEFTSHIFT);
-    report_key(pre, MY_TA, KEY_LEFTCTRL);
-    report_key(pre, MY_TB, KEY_SPACE);
-#else
-	//Bittboy Layout
-    report_key(pre, MY_A, KEY_LEFTCTRL);
-    report_key(pre, MY_B, KEY_SPACE);
-    report_key(pre, MY_TA, KEY_LEFTALT);
-    report_key(pre, MY_TB, KEY_LEFTSHIFT);
-#endif
+    switch (miyoo_layout) {
+        case 1:
+            //Bittboy Layout
+            report_key(pre, MY_A, KEY_LEFTCTRL);
+            report_key(pre, MY_B, KEY_SPACE);
+            report_key(pre, MY_TA, KEY_LEFTALT);
+            report_key(pre, MY_TB, KEY_LEFTSHIFT);
+            break;
+        case 2:
+            //RS97 alters Bittboy layout by flipping South:West, East:North
+            report_key(pre, MY_TA, KEY_LEFTCTRL);
+            report_key(pre, MY_TB, KEY_SPACE);
+            report_key(pre, MY_A, KEY_LEFTALT);
+            report_key(pre, MY_B, KEY_LEFTSHIFT);
+            break;
+        case 3:
+            //PocketGo v1 alters Bittboy layout by flipping South:East, West:North
+            report_key(pre, MY_A, KEY_LEFTALT);
+            report_key(pre, MY_B, KEY_LEFTSHIFT);
+            report_key(pre, MY_TA, KEY_LEFTCTRL);
+            report_key(pre, MY_TB, KEY_SPACE);
+            break;
+    }
+
     report_key(pre, MY_SELECT, KEY_ESC);
     report_key(pre, MY_START, KEY_ENTER);
 
@@ -703,8 +712,6 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     hotkey = 0;
     break;
   case MIYOO_KBD_SET_VER:
-    miyoo_ver = arg;
-    
 printk("miyoo keypad config as v%d\n", (int)miyoo_ver);
     break;
   case MIYOO_KBD_LOCK_KEY:
@@ -740,11 +747,11 @@ static int __init kbd_init(void)
   writel(ret, gpio + (2 * 0x24 + 0x1c)); // (dirty again)
 
   ret = readl(gpio + (4 * 0x24 + 0x00)); // PE_CFG0
-#if defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 3
+  if (miyoo_ver == 3) {
       ret&= 0x0f00000f;
-#else
+  } else {
       ret&= 0xfffffff0;                      // set PE0 as input
-#endif
+  }
   writel(ret, gpio + (4 * 0x24 + 0x00));
 
   ret = readl(gpio + (4 * 0x24 + 0x1c)); // PE_PULL0
@@ -752,17 +759,16 @@ static int __init kbd_init(void)
   //ret|= 0x000000001;
   ret = 0x55555555;                      // pull-ups on PE0 - PE12
   writel(ret, gpio + (4 * 0x24 + 0x1c));
+    if (miyoo_ver == 4) {
+        touch = (uint8_t *) ioremap(0x01c24800, 4096);
+        ret = readl(gpio + (32 * 0) + 0);
+        ret &= 0xffffff0f;
+        ret |= 0x00000020;
+        writel(ret, gpio + (32 * 0) + 0);
 
-#if defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE == 4
-    touch = (uint8_t*)ioremap(0x01c24800, 4096);
-    ret = readl(gpio + (32 * 0) + 0);
-    ret&= 0xffffff0f;
-    ret|= 0x00000020;
-    writel(ret, gpio + (32 * 0) + 0);
-
-    writel((3 << 20) | (1 << 16) | (1 << 0), touch  + 0x00);
-    writel((1 << 5) | (1 << 4) | (1 << 1), touch  + 0x04);
-#endif
+        writel((3 << 20) | (1 << 22) | (1 << 0), touch + 0x00);
+        writel((1 << 5) | (1 << 4) | (1 << 1), touch + 0x04);
+    }
 
 #if !defined(USE_UART)
   ret = readl(gpio + (0 * 0x24 + 0x00)); // PA_CFG0
@@ -777,21 +783,19 @@ static int __init kbd_init(void)
   do_input_request(IN_2, 		"gpio_pe3");
   do_input_request(IN_3, 		"gpio_pe4");
   do_input_request(IN_4, 		"gpio_pe5");
-#if !defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE != 3
-    do_input_request(IN_A, "gpio_a");
-    do_input_request(IN_R2, "gpio_r2");
-#else
-    do_input_request(IN_A_M3, 		"gpio_a");
-    do_input_request(IN_R2_M3, 	"gpio_r2");
-#endif
+    if (miyoo_ver != 3) {
+        do_input_request(IN_A, "gpio_a");
+        do_input_request(IN_R2, "gpio_r2");
+        do_output_request(OUT_1, "gpio_pe7");
+        } else {
+        do_input_request(IN_A_M3, 	"gpio_a");
+        do_input_request(IN_R2_M3, 	"gpio_r2");
+    }
 
   do_input_request(IN_TA, 	"gpio_ta");
 #if !defined(USE_UART)
   do_input_request(IN_B, 		"gpio_b");
   do_input_request(IN_TB, 	"gpio_tb");
-#endif
-#if !defined(CONFIG_KEYBOARD_MIYOO_TYPE) && CONFIG_KEYBOARD_MIYOO_TYPE != 3
-      do_output_request(OUT_1, "gpio_pe7");
 #endif
   do_output_request(OUT_2, "gpio_pe8");
   do_output_request(OUT_3, "gpio_pe9");

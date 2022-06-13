@@ -764,16 +764,5 @@ config KEYBOARD_MIYOO
 	  To compile this driver as a module, choose M here: the
 	  module will be called bcm-keypad.
 
-config KEYBOARD_MIYOO_TYPE
-	int "Miyoo handheld keypad layout type"
-	depends on KEYBOARD_MIYOO
-	default 0
-	help
-	  Say 0 if you want to use the Miyoo/Bittboy keypad
-	  Say 1 if you want to use the RS97 keypad
-	  Say 2 if you want to use the PocketGo keypad
-	  Say 3 if you want to use the M3 keypad
-	  Say 4 if you want to use the Q8 keypad
-
 endif
 

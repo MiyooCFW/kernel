@@ -459,10 +459,10 @@ static void scan_handler(unsigned long unused)
           if(r < 0x40){
               val|= MY_START;
           }
-          if((r < 0x80) && (r > 0x40)){
+          else if((r < 0x80) && (r > 0x40)){
               val|= MY_SELECT;
           }
-          if((r < 0xe0) && (r > 0x80)){
+          else if((r < 0xe0) && (r > 0x80)){
               val|= MY_R;
           }
           break;

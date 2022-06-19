@@ -121,7 +121,8 @@
 #define USE_UART	1
 
 #define NO_RAW	1
-
+#define TP_INT_FIFOC		0x10
+#define FIFO_FLUSH(x)		((x) << 4)
 
 static int major = -1;
 static struct cdev mycdev;
@@ -456,13 +457,14 @@ static void scan_handler(unsigned long unused)
               val|= MY_L1;
           }
           r = (readl(touch  + 0x24) >> 4) & 0xff;
-          if(r < 0x40){
+          writel( FIFO_FLUSH(1), touch + TP_INT_FIFOC);
+          if(r < 0x10){
               val|= MY_START;
           }
-          else if((r < 0x80) && (r > 0x40)){
+          else if((r < 0x5a) && (r > 0x50)){
               val|= MY_SELECT;
           }
-          else if((r < 0xe0) && (r > 0x80)){
+          else if((r < 0xa0) && (r > 0x96)){
               val|= MY_R;
           }
           break;
@@ -473,7 +475,7 @@ static void scan_handler(unsigned long unused)
   }
 
 #if !defined(RAW)
-  if(miyoo_ver == 4)  {
+  if(miyoo_ver == 2)  {
     if((val & MY_R) && (val & MY_L1)) {
       val&= ~MY_R;
       val&= ~MY_L1;
@@ -535,25 +537,25 @@ static void scan_handler(unsigned long unused)
 
   if(val & MY_R && !non_hotkey_first) {
 	  if((val & MY_R) && (val & MY_B)){
-      if(miyoo_ver == 4)  {
+      if(miyoo_ver == 2)  {
 			  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 3 : hotkey;
       }
 	 	}
 	 	else if((val & MY_R) && (val & MY_A)){
-      if(miyoo_ver == 4)  {
+      if(miyoo_ver == 2)  {
 	  	  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 4 : hotkey;
       }
 	 	}
 		else if((val & MY_R) && (val & MY_TB)){
-      if(miyoo_ver == 4)  {
+      if(miyoo_ver == 2)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 1 : hotkey;
       }
 		}
 		else if((val & MY_R) && (val & MY_TA)){
-      if(miyoo_ver == 4)  {
+      if(miyoo_ver == 2)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 2 : hotkey;
       }

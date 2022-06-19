@@ -773,7 +773,7 @@ static int __init kbd_init(void)
         ret |= 0x00000020;
         writel(ret, gpio + (32 * 0) + 0);
 
-        writel((3 << 20) | (1 << 28) | (1 << 0), touch + 0x00);
+        writel((3 << 20) | (1 << 22) | (1 << 0), touch + 0x00);
         writel((1 << 5) | (1 << 4) | (1 << 1), touch + 0x04);
     }
 

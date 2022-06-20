@@ -44,7 +44,7 @@ struct timer_list g_flash_timer;
 static unsigned int battery_low=3550;
 module_param(battery_low,int,0660);
 
-static bool use_flash=true;
+static bool use_flash=false;
 module_param(use_flash,bool,0660);
 
 static bool use_rumble=false;

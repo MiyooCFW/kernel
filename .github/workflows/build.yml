@@ -35,7 +35,8 @@ jobs:
       id: cache
       
     # ARCH=arm and CROSS_COMPILE=arm-buildroot-linux-musleabi- env props are set in the docker image
-    - name: build
+    # todo: build with 1-bit sdcard for new bittboy v1
+    - name: build for Bittboy v2-3
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         cd ${{ inputs.submodule || '.' }}
@@ -43,16 +44,70 @@ jobs:
         make
         
         # put everything in the same folder so that we can grab it all as a single artifact
-    - name: gather files
+    - name: gather Bittboy v2-3 files
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         cd ${{ inputs.submodule || '.' }}
-        mkdir dist
-        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/
-        mv arch/arm/boot/zImage dist/
-        mv drivers/video/fbdev/core/*.ko dist/
-        mv drivers/video/fbdev/r61520fb.ko dist/
-    
+        mkdir -p dist/bittboy-2-3
+        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/bittboy-2-3/
+        mv arch/arm/boot/zImage dist/bittboy-2-3/
+        mv drivers/video/fbdev/core/*.ko dist/bittboy-2-3/
+        mv drivers/video/fbdev/r61520fb.ko dist/bittboy-2-3/
+ 
+
+    - name: build for PocketGo, V90, & Q90
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        make miyoo_pocketgo_defconfig
+        make
+        
+        # put everything in the same folder so that we can grab it all as a single artifact
+    - name: gather PocketGo, V90, & Q90 files
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        mkdir -p dist/pocketgo-v90-q90
+        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/pocketgo-v90-q90/
+        mv arch/arm/boot/zImage dist/pocketgo-v90-q90/
+        mv drivers/video/fbdev/core/*.ko dist/pocketgo-v90-q90/
+        mv drivers/video/fbdev/r61520fb.ko dist/pocketgo-v90-q90/
+ 
+    - name: build for M3
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        make miyoo_m3_defconfig
+        make
+        
+    - name: gather M3 files
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        mkdir -p dist/m3
+        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/m3/
+        mv arch/arm/boot/zImage dist/m3/
+        mv drivers/video/fbdev/core/*.ko dist/m3/
+        mv drivers/video/fbdev/r61520fb.ko dist/m3/
+
+    - name: build for Q8
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        make miyoo_q8_defconfig
+        make
+        
+        # put everything in the same folder so that we can grab it all as a single artifact
+    - name: gather Q8 files
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        mkdir -p dist/q8
+        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/q8/
+        mv arch/arm/boot/zImage dist/q8/
+        mv drivers/video/fbdev/core/*.ko dist/q8/
+        mv drivers/video/fbdev/r61520fb.ko dist/q8/
+
     - run: find ${{ inputs.submodule || '.' }}/dist
     
     - uses: actions/upload-artifact@v2

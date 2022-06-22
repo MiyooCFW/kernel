@@ -214,8 +214,8 @@ static void report_key(uint32_t btn, uint32_t mask, uint8_t key)
 static void scan_handler(unsigned long unused)
 {
   static uint32_t pre=0;
-  uint32_t scan=0, val=0, r=0;
-  static uint32_t r1=0, r2=0;
+  uint32_t scan=0, val=0, debounce=0;
+  static uint32_t touchRead=0, touchReadPrev=0;
   extern void MIYOO_INCREASE_VOLUME(void);
   extern void MIYOO_DECREASE_VOLUME(void);
 
@@ -457,21 +457,21 @@ static void scan_handler(unsigned long unused)
           if(gpio_get_value(IN_L1_Q8) == 0){
               val|= MY_L1;
           }
-          r1 = (readl(touch  + 0x24) >> 4) & 0xff;
-          r= abs(r1 - r2);
+          touchRead = (readl(touch + 0x24) >> 4) & 0xff;
+          debounce = abs(touchRead - touchReadPrev);
           writel( FIFO_FLUSH(1), touch + TP_INT_FIFOC);
-          if(r <= 3){
-            if((r1 < 0x30) && (r1 >= 0x00)){
+          if(debounce <= 3){
+            if((touchRead < 0x30) && (touchRead >= 0x00)){
               val|= MY_START;
             }
-            else if((r1 < 0x60) && (r1 >= 0x30)){
+            else if((touchRead < 0x60) && (touchRead >= 0x30)){
               val|= MY_SELECT;
             }
-            else if((r1 < 0xEF) && (r1 >= 0x60)){
+            else if((touchRead < 0xEF) && (touchRead >= 0x60)){
               val|= MY_R;
             }
           }
-          r2 = r1;
+          touchReadPrev = touchRead;
           break; 
   }
 

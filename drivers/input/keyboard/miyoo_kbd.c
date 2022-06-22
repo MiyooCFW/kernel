@@ -660,13 +660,6 @@ static void scan_handler(unsigned long unused)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_LEFTSHIFT);
             break;
-        case 3:
-            //PocketGo v1 alters Bittboy layout by flipping South:East, West:North
-            report_key(pre, MY_TA, KEY_LEFTALT);
-            report_key(pre, MY_TB, KEY_LEFTSHIFT);
-            report_key(pre, MY_A, KEY_LEFTCTRL);
-            report_key(pre, MY_B, KEY_SPACE);
-            break;
     }
 
     report_key(pre, MY_SELECT, KEY_ESC);

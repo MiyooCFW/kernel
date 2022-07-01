@@ -53,6 +53,8 @@ jobs:
         mv arch/arm/boot/zImage dist/
         mv drivers/video/fbdev/core/*.ko dist/
         mv drivers/video/fbdev/r61520fb.ko dist/
+        mv drivers/video/fbdev/gc9306fb.ko dist/
+        mv drivers/video/fbdev/st7789sfb.ko dist/
 
     - run: find ${{ inputs.submodule || '.' }}/dist
     

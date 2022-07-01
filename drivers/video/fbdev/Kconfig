@@ -2514,3 +2514,12 @@ config FB_GC9306
 	select FB_SYS_IMAGEBLIT
 	help
 	  Framebuffer driver for GC9306 SLCD panel.
+
+config FB_ST7789S
+	tristate "ST7789S SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for ST7789S SLCD panel.

@@ -111,7 +111,7 @@ static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
 uint16_t x, gscan[8]={0};
-static bool sync = false;
+static int count;
 
 static struct fb_fix_screeninfo myfb_fix = {
         .id = DRIVER_NAME,
@@ -146,8 +146,8 @@ static void suniv_gpio_init(void)
     writel(r, iomm.gpio + PD_CFG1);
 
     r = readl(iomm.gpio + PD_CFG2);
-    r&= 0xff000000;
-    r|= 0x000222222;
+    r&= 0x00000000;
+    r|= 0x22222222;
     writel(r, iomm.gpio + PD_CFG2);
 
     r = readl(iomm.gpio + PD_PUL1);
@@ -230,12 +230,14 @@ static void refresh_lcd(struct myfb_par *par)
     for(x=0; x<8; x++){
         gscan[x] = lcdc_rd_dat();
     }
-	//printk("%u %u %u %u %u %u %u %u", gscan[0], gscan[1], gscan[2], gscan[3], gscan[4], gscan[5], gscan[6], gscan[7]);
+
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-    if (sync == false) {
-        if(gscan[3] == 0)
-            sync = true;
-    } else if ((par->app_virt->yoffset == 0 && gscan[2] == 1 && gscan[3] < 256) || (par->app_virt->yoffset == 240 && gscan[2] == 1 && gscan[3] > 0)){
+    if(gscan[2] == 1 ) {
+        count++;
+        printk("%u",count);
+    }
+    //printk("%u %u %u %u %u %u %u %u", gscan[0], gscan[1], gscan[2], gscan[3], gscan[4], gscan[5], gscan[6], gscan[7]);
+    if ((par->app_virt->yoffset == 0 && gscan[2] == 1) || (par->app_virt->yoffset == 240 && gscan[2] == 1)){
         suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
         suniv_clrbits(iomm.lcdc + TCON_CTRL_REG, (1 << 31));
         if (par->lcdc_ready) {
@@ -333,8 +335,8 @@ static void init_lcd(void)
     lcdc_wr_cmd(0xc0);
     lcdc_wr_dat(0x3c);
 
-    lcdc_wr_cmd(0x35);
-    lcdc_wr_dat(0x11);
+    //lcdc_wr_cmd(0x35);
+    //lcdc_wr_dat(0x00);
 
     lcdc_wr_cmd(0xc2);
     lcdc_wr_dat(0x01);
@@ -446,8 +448,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel((uint32_t)(par->vram_phys + 320*240*2*3) >> 29, iomm.debe + DEBE_LAY3_FB_HI_ADDR_REG);
 
     writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
-    writel((0xf << 28) | (15 << 0), iomm.lcdc + TCON_CLK_CTRL_REG);
-
+    writel((0xf << 28) | (8 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
     writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
     writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
 
@@ -456,11 +457,11 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG0);
 
     p1 = 1 + 1;
-    p2 = 1 + 1 + par->mode.xres + 2;
+    p2 = par->mode.xres + 11 ;
     writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG1);
 
     p1 = 1 + 1;
-    p2 = (1 + 1 + par->mode.yres + 1 + 2) << 1;
+    p2 = (par->mode.yres + 10) << 1;
     writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG2);
 
     p1 = 1 + 1;

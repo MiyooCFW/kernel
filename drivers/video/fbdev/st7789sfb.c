@@ -230,12 +230,12 @@ static void refresh_lcd(struct myfb_par *par)
     for(x=0; x<8; x++){
         gscan[x] = lcdc_rd_dat();
     }
-	printk("%u %u %u %u %u %u %u %u", gscan[0], gscan[1], gscan[2], gscan[3], gscan[4], gscan[5], gscan[6], gscan[7]);
+	//printk("%u %u %u %u %u %u %u %u", gscan[0], gscan[1], gscan[2], gscan[3], gscan[4], gscan[5], gscan[6], gscan[7]);
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
     if (sync == false) {
         if(gscan[3] == 0)
             sync = true;
-    } else {
+    } else if ((par->app_virt->yoffset == 0 && gscan[2] == 1 && gscan[3] < 256) || (par->app_virt->yoffset == 240 && gscan[2] == 1 && gscan[3] > 0)){
         suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
         suniv_clrbits(iomm.lcdc + TCON_CTRL_REG, (1 << 31));
         if (par->lcdc_ready) {
@@ -473,6 +473,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
     suniv_setbits(iomm.lcdc + TCON_CTRL_REG, (1 << 31));
     init_lcd();
     suniv_setbits(iomm.lcdc + TCON_INT_REG0, (1 << 31));
+    suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 24));
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
 }
 

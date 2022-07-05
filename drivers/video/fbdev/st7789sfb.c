@@ -232,12 +232,16 @@ static void refresh_lcd(struct myfb_par *par)
     }
 
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-    if(gscan[2] == 1 ) {
-        count++;
-        printk("%u",count);
+//    if(gscan[2] == 1 ) {
+//        count++;
+//        printk("%u",count);
+//    }
+    count++;
+    if (count > 3) {
+        count = 0;
     }
     //printk("%u %u %u %u %u %u %u %u", gscan[0], gscan[1], gscan[2], gscan[3], gscan[4], gscan[5], gscan[6], gscan[7]);
-    if ((par->app_virt->yoffset == 0 && gscan[2] == 1) || (par->app_virt->yoffset == 240 && gscan[2] == 1)){
+    if ((par->app_virt->yoffset == 0 && gscan[2] == 1) || (par->app_virt->yoffset == 240 && gscan[2] == 1) || (count == 0)){
         suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
         suniv_clrbits(iomm.lcdc + TCON_CTRL_REG, (1 << 31));
         if (par->lcdc_ready) {
@@ -448,7 +452,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel((uint32_t)(par->vram_phys + 320*240*2*3) >> 29, iomm.debe + DEBE_LAY3_FB_HI_ADDR_REG);
 
     writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
-    writel((0xf << 28) | (8 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
+    writel((0xf << 28) | (6 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
     writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
     writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
 

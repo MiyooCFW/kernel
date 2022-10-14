@@ -286,12 +286,12 @@ static void scan_handler(unsigned long unused)
         }
       #endif
         #if !defined(RAW)
-        if (miyoo_ver <= 2 || miyoo_ver == 5  && val & MY_R) {
+        if ((miyoo_ver <= 2 || miyoo_ver == 5)  && val & MY_R) {
           if (! (val & MY_LEFT) ) {
             val&= ~MY_R;
             val|= MY_LEFT;
           }
-        } else if (miyoo_ver <= 2 || miyoo_ver == 5 && val & MY_LEFT) {
+        } else if ((miyoo_ver <= 2 || miyoo_ver == 5) && val & MY_LEFT) {
           if (! (val & MY_R) ) {
             val&= ~MY_LEFT;
             val|= MY_R;
@@ -692,7 +692,7 @@ static void scan_handler(unsigned long unused)
 		}
 		else if((val & MY_R) && (val & MY_SELECT)){
       if(!hotkey_down) {
-        static char * shutdown4_argv[] = {  "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /bin/printf "TURN OFF YOUR CONSOLE\n" && sleep 100",  NULL };
+        static char * shutdown4_argv[] = {  "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /bin/echo \"TURN OFF YOUR CONSOLE\" && sleep 100",  NULL };
         call_usermodehelper(shutdown4_argv[0], shutdown4_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }

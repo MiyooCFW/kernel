@@ -562,8 +562,8 @@ static void scan_handler(unsigned long unused)
   } else if(miyoo_ver == 5) {
     if((val & MY_R) && (val & MY_L1)) {
 		if(!hotkey_down) {
-			static char * shutdown_argv[] = { "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/emus/\")" , NULL };
-			static char * shutdown2_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/emus_strong/\")" , NULL };
+			static char * shutdown_argv[] = { "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
+			static char * shutdown2_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/hard/\")" , NULL };
 			call_usermodehelper(shutdown_argv[0], shutdown_argv, NULL, UMH_NO_WAIT);
 			call_usermodehelper(shutdown2_argv[0], shutdown2_argv, NULL, UMH_NO_WAIT);
 			hotkey_down = true;

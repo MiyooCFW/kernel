@@ -32,6 +32,7 @@
 #include <asm/arch-suniv/cpu.h>
 #include <asm/arch-suniv/gpio.h>
 #include <linux/uaccess.h>
+#include <linux/unistd.h>
 
 //#define DEBUG
 #define MIYOO_KBD_GET_HOTKEY  _IOWR(0x100, 0, unsigned long)
@@ -239,6 +240,9 @@ static void scan_handler(unsigned long unused)
           case 2:
             gpio_direction_output(OUT_3, 0);
             break;
+          case 5:
+            gpio_direction_output(OUT_3, 0);
+            break;
           }
           if (gpio_get_value(IN_1) == 0){
             val|= ((1 << 0) << (scan << 2));
@@ -282,12 +286,12 @@ static void scan_handler(unsigned long unused)
         }
       #endif
         #if !defined(RAW)
-        if (miyoo_ver <= 2 && val & MY_R) {
+        if ((miyoo_ver <= 2 || miyoo_ver == 5)  && val & MY_R) {
           if (! (val & MY_LEFT) ) {
             val&= ~MY_R;
             val|= MY_LEFT;
           }
-        } else if (miyoo_ver <= 2 && val & MY_LEFT) {
+        } else if ((miyoo_ver <= 2 || miyoo_ver == 5) && val & MY_LEFT) {
           if (! (val & MY_R) ) {
             val&= ~MY_LEFT;
             val|= MY_R;
@@ -473,6 +477,68 @@ static void scan_handler(unsigned long unused)
           }
           touchReadPrev = touchRead;
           break; 
+      case 5:
+          gpio_direction_input(IN_1);
+          gpio_direction_input(IN_2);
+          gpio_direction_input(IN_3);
+          gpio_direction_input(IN_4);
+          gpio_direction_input(OUT_1);
+          gpio_direction_input(OUT_2);
+          gpio_direction_input(OUT_3);
+          gpio_direction_input(IN_A);
+          gpio_direction_input(IN_TA);
+          gpio_direction_input(IN_PC3);
+          gpio_direction_input(IN_PA1);
+          gpio_direction_input(IN_L1);
+          gpio_direction_input(IN_R1);
+          gpio_direction_input(IN_MENU);
+
+          if(gpio_get_value(IN_1) == 0){
+              val|= MY_UP;
+          }
+          if(gpio_get_value(IN_2) == 0){
+              val|= MY_DOWN;
+          }
+          if(gpio_get_value(IN_3) == 0){
+              val|= MY_LEFT;
+          }
+          if(gpio_get_value(IN_4) == 0){
+              val|= MY_RIGHT;
+          }
+          if(gpio_get_value(OUT_1) == 0){
+              val|= MY_A;
+          }
+          if(gpio_get_value(OUT_2) == 0){
+              val|= MY_B;
+          }
+          if(gpio_get_value(OUT_3) == 0){
+              val|= MY_TA;
+          }
+          if(gpio_get_value(IN_TA) == 0){
+              val|= MY_TB;
+          }
+          if(gpio_get_value(IN_A) == 0){
+              val|= MY_SELECT;
+          }
+          if(gpio_get_value(IN_L2) == 0){
+              val|= MY_START;
+          }
+          if(gpio_get_value(IN_L1) == 0){
+              val|= MY_L1;
+          }
+          if(gpio_get_value(IN_R1) == 0){
+              val|= MY_R1;
+          }
+          if(gpio_get_value(IN_PC3) == 0){
+              val|= MY_L2;
+          }
+          if(gpio_get_value(IN_PA1) == 0){
+              val|= MY_R2;
+          }
+          if(gpio_get_value(IN_MENU) == 0){
+              val|= MY_R;
+          }
+          break;
   }
 
   if(lockkey){
@@ -493,6 +559,25 @@ static void scan_handler(unsigned long unused)
       val|= MY_R2;
       hotkey_actioned = true;
     }
+  } else if(miyoo_ver == 5) {
+    if((val & MY_R) && (val & MY_L1)) {
+		if(!hotkey_down) {
+			static char * shutdown_argv[] = { "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
+			static char * shutdown2_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/hard/\")" , NULL };
+			call_usermodehelper(shutdown_argv[0], shutdown_argv, NULL, UMH_NO_WAIT);
+			call_usermodehelper(shutdown2_argv[0], shutdown2_argv, NULL, UMH_NO_WAIT);
+			hotkey_down = true;
+      }
+			hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_R1)) {
+       		if(!hotkey_down) {
+			static char * shutdown3_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
+			call_usermodehelper(shutdown3_argv[0], shutdown3_argv, NULL, UMH_NO_WAIT);
+			hotkey_down = true;
+      }
+			hotkey_actioned = true;	  
+    } 
   } else {
     if((val & MY_R) && (val & MY_B)) {
       val&= ~MY_R;
@@ -542,25 +627,25 @@ static void scan_handler(unsigned long unused)
 
   if(val & MY_R && !non_hotkey_first) {
 	  if((val & MY_R) && (val & MY_B)){
-      if(miyoo_ver == 2)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5)  {
 			  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 3 : hotkey;
       }
 	 	}
 	 	else if((val & MY_R) && (val & MY_A)){
-      if(miyoo_ver == 2)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5)  {
 	  	  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 4 : hotkey;
       }
 	 	}
 		else if((val & MY_R) && (val & MY_TB)){
-      if(miyoo_ver == 2)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 1 : hotkey;
       }
 		}
 		else if((val & MY_R) && (val & MY_TA)){
-      if(miyoo_ver == 2)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 2 : hotkey;
       }
@@ -607,8 +692,8 @@ static void scan_handler(unsigned long unused)
 		}
 		else if((val & MY_R) && (val & MY_SELECT)){
       if(!hotkey_down) {
-        static char * shutdown_argv[] = {  "/bin/sh", "-c", "/bin/kill $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /sbin/poweroff",  NULL };
-        call_usermodehelper(shutdown_argv[0], shutdown_argv, NULL, UMH_NO_WAIT);
+	static char * shutdown4_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
+	call_usermodehelper(shutdown4_argv[0], shutdown4_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
 			hotkey_actioned = true;

@@ -667,19 +667,19 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_RIGHT, KEY_RIGHT);
     switch (miyoo_layout) {
         case 1:
-            //Bittboy Layout
+            //MiyooCFW 2.0 layout
             report_key(pre, MY_A, KEY_LEFTCTRL);
             report_key(pre, MY_B, KEY_SPACE);
             report_key(pre, MY_TA, KEY_LEFTALT);
             report_key(pre, MY_TB, KEY_LEFTSHIFT);
             break;
-        case 2: case 5:
-            //RS97 alters Bittboy layout by flipping South:West, East:North
-            report_key(pre, MY_TA, KEY_LEFTCTRL);
-            report_key(pre, MY_TB, KEY_SPACE);
-            report_key(pre, MY_A, KEY_LEFTALT);
-            report_key(pre, MY_B, KEY_LEFTSHIFT);
-            break;
+        /*case 2:
+            //CFW 1.3.3 Bittboy layout (A-TA & B-TB are swapped)
+            report_key(pre, MY_TA, KEY_LEFTALT);
+            report_key(pre, MY_TB, KEY_LEFTSHIFT);
+            report_key(pre, MY_A, KEY_LEFTCTRL);
+            report_key(pre, MY_B, KEY_SPACE);
+            break;*/
     }
 
     report_key(pre, MY_SELECT, KEY_ESC);

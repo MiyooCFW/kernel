@@ -673,13 +673,13 @@ static void scan_handler(unsigned long unused)
             report_key(pre, MY_TA, KEY_LEFTALT);
             report_key(pre, MY_TB, KEY_LEFTSHIFT);
             break;
-        /*case 2:
+        case 2:
             //CFW 1.3.3 Bittboy layout (A-TA & B-TB are swapped)
             report_key(pre, MY_TA, KEY_LEFTALT);
             report_key(pre, MY_TB, KEY_LEFTSHIFT);
             report_key(pre, MY_A, KEY_LEFTCTRL);
             report_key(pre, MY_B, KEY_SPACE);
-            break;*/
+            break;
     }
 
     report_key(pre, MY_SELECT, KEY_ESC);

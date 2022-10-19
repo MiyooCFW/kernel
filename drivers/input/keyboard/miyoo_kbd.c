@@ -237,10 +237,7 @@ static void scan_handler(unsigned long unused)
           case 1:
             gpio_direction_output(OUT_2, 0);
             break;
-          case 2:
-            gpio_direction_output(OUT_3, 0);
-            break;
-          case 5:
+	  case 2: case 5:
             gpio_direction_output(OUT_3, 0);
             break;
           }
@@ -299,7 +296,7 @@ static void scan_handler(unsigned long unused)
         }
         #endif
     break;
-      case 2:
+      case 2: case 5:
           gpio_direction_input(IN_1);
           gpio_direction_input(IN_2);
           gpio_direction_input(IN_3);
@@ -477,68 +474,6 @@ static void scan_handler(unsigned long unused)
           }
           touchReadPrev = touchRead;
           break; 
-      case 5:
-          gpio_direction_input(IN_1);
-          gpio_direction_input(IN_2);
-          gpio_direction_input(IN_3);
-          gpio_direction_input(IN_4);
-          gpio_direction_input(OUT_1);
-          gpio_direction_input(OUT_2);
-          gpio_direction_input(OUT_3);
-          gpio_direction_input(IN_A);
-          gpio_direction_input(IN_TA);
-          gpio_direction_input(IN_PC3);
-          gpio_direction_input(IN_PA1);
-          gpio_direction_input(IN_L1);
-          gpio_direction_input(IN_R1);
-          gpio_direction_input(IN_MENU);
-
-          if(gpio_get_value(IN_1) == 0){
-              val|= MY_UP;
-          }
-          if(gpio_get_value(IN_2) == 0){
-              val|= MY_DOWN;
-          }
-          if(gpio_get_value(IN_3) == 0){
-              val|= MY_LEFT;
-          }
-          if(gpio_get_value(IN_4) == 0){
-              val|= MY_RIGHT;
-          }
-          if(gpio_get_value(OUT_1) == 0){
-              val|= MY_A;
-          }
-          if(gpio_get_value(OUT_2) == 0){
-              val|= MY_B;
-          }
-          if(gpio_get_value(OUT_3) == 0){
-              val|= MY_TA;
-          }
-          if(gpio_get_value(IN_TA) == 0){
-              val|= MY_TB;
-          }
-          if(gpio_get_value(IN_A) == 0){
-              val|= MY_SELECT;
-          }
-          if(gpio_get_value(IN_L2) == 0){
-              val|= MY_START;
-          }
-          if(gpio_get_value(IN_L1) == 0){
-              val|= MY_L1;
-          }
-          if(gpio_get_value(IN_R1) == 0){
-              val|= MY_R1;
-          }
-          if(gpio_get_value(IN_PC3) == 0){
-              val|= MY_L2;
-          }
-          if(gpio_get_value(IN_PA1) == 0){
-              val|= MY_R2;
-          }
-          if(gpio_get_value(IN_MENU) == 0){
-              val|= MY_R;
-          }
-          break;
   }
 
   if(lockkey){
@@ -732,18 +667,18 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_RIGHT, KEY_RIGHT);
     switch (miyoo_layout) {
         case 1:
-            //Bittboy Layout
+            //MiyooCFW 2.0 layout
             report_key(pre, MY_A, KEY_LEFTCTRL);
             report_key(pre, MY_B, KEY_SPACE);
             report_key(pre, MY_TA, KEY_LEFTALT);
             report_key(pre, MY_TB, KEY_LEFTSHIFT);
             break;
         case 2:
-            //RS97 alters Bittboy layout by flipping South:West, East:North
-            report_key(pre, MY_TA, KEY_LEFTCTRL);
-            report_key(pre, MY_TB, KEY_SPACE);
+            //CFW 1.3.3 Bittboy layout (A-TA & B-TB are swapped)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_LEFTSHIFT);
+            report_key(pre, MY_TA, KEY_LEFTCTRL);
+            report_key(pre, MY_TB, KEY_SPACE);
             break;
     }
 

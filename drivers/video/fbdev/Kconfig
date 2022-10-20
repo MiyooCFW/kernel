@@ -2523,3 +2523,13 @@ config FB_ST7789S
 	select FB_SYS_IMAGEBLIT
 	help
 	  Framebuffer driver for ST7789S SLCD panel.
+
+config FB_ST7789S_TE
+	tristate "ST7789S SLCD framebuffer support with TE pin"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for ST7789S SLCD panel.
+	  

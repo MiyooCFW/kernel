@@ -55,7 +55,8 @@ jobs:
         mv drivers/video/fbdev/r61520fb.ko dist/
         mv drivers/video/fbdev/gc9306fb.ko dist/
         mv drivers/video/fbdev/st7789sfb.ko dist/
-
+        mv drivers/video/fbdev/st7789sTEfb.ko dist/
+        
     - run: find ${{ inputs.submodule || '.' }}/dist
     
     - uses: actions/upload-artifact@v2

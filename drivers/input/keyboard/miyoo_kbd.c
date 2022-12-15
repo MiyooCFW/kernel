@@ -239,7 +239,7 @@ static void scan_handler(unsigned long unused)
           case 1:
             gpio_direction_output(OUT_2, 0);
             break;
-	  case 2: case 5: case: 6
+	  case 2: case 5: case 6:
             gpio_direction_output(OUT_3, 0);
             break;
           }

@@ -43,8 +43,13 @@
 // CONFIG_KEYBOARD_MIYOO_TYPE:
 //   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
 //   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
+//   3 -> "SUP M3" meaning 6 face buttons
+//   4 -> "XYC Q8" meaning 6 face buttons with echo and debounce code
+//   5 -> - V90 meaning additional L2/R2 physical buttons
+//   6 -> - Q20/Q90 meaning Lfunction/Rfunction button, left as L2 and right as RESET
 
-/*
+/* UNMAITAINED PART BELOW !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * 
  * Hardware map (as observed from the working code)
  *
  * | pad | define  | v1 v2      | v3 v4  | init_pullup? | init_as_in? |
@@ -77,6 +82,8 @@
  *  - TA=X, TB=Y
  *  - "matx" is a matrix with these keys: dpad,R,start,select
  *  - v1&v2 code swaps 'R' and 'left' after scanning the matrix
+ * 
+ * UNMAITAINED PART UNTIL THIS END !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  */
 
 //Bittboy inputs
@@ -221,7 +228,6 @@ static void scan_handler(unsigned long unused)
   static uint32_t touchRead=0, touchReadPrev=0;
   extern void MIYOO_INCREASE_VOLUME(void);
   extern void MIYOO_DECREASE_VOLUME(void);
-
 
   switch(miyoo_ver){
       case 1:
@@ -529,10 +535,10 @@ static void scan_handler(unsigned long unused)
               val|= MY_R1;
           }
           if(gpio_get_value(IN_PC3) == 0){
-              val|= MY_L2;
+              val|= MY_R2;
           }
           if(gpio_get_value(IN_MENU) == 0){
-              val|= MY_R2;
+              val|= MY_L2;
           }
           if(gpio_get_value(IN_PA1) == 0){
               val|= MY_R;
@@ -559,7 +565,7 @@ static void scan_handler(unsigned long unused)
       hotkey_actioned = true;
     }
   } else if(miyoo_ver == 5) {
-    if((val & MY_R) && (val & MY_L1)) {
+    if((val & MY_R) && (val & MY_L2)) {
 		if(!hotkey_down) {
 			static char * shutdown_argv[] = { "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
 			static char * shutdown2_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/hard/\")" , NULL };
@@ -569,7 +575,7 @@ static void scan_handler(unsigned long unused)
       }
 			hotkey_actioned = true;
     }
-    if((val & MY_R) && (val & MY_R1)) {
+    if((val & MY_R) && (val & MY_R2)) {
        		if(!hotkey_down) {
 			static char * shutdown3_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
 			call_usermodehelper(shutdown3_argv[0], shutdown3_argv, NULL, UMH_NO_WAIT);
@@ -577,8 +583,7 @@ static void scan_handler(unsigned long unused)
       }
 			hotkey_actioned = true;	  
     }
-  } else if(miyoo_ver == 6) {
-    if((val & MY_R) && (val & MY_L1)) {
+	if((val & MY_R) && (val & MY_L1)) {
       val&= ~MY_R;
       val&= ~MY_L1;
       val|= MY_L3;
@@ -588,6 +593,25 @@ static void scan_handler(unsigned long unused)
       val&= ~MY_R;
       val&= ~MY_R1;
       val|= MY_R3;
+      hotkey_actioned = true;
+	}
+  } else if(miyoo_ver == 6) {
+    if((val & MY_R) && (val & MY_L1)) {
+      val&= ~MY_R;
+      val&= ~MY_L1;
+      val|= MY_L2;
+      hotkey_actioned = true; 
+	}
+    if((val & MY_R) && (val & MY_R1)) {
+      val&= ~MY_R;
+      val&= ~MY_R1;
+      val|= MY_R2;
+      hotkey_actioned = true;
+	}
+    if((val & MY_R) && (val & MY_L2)) {
+      val&= ~MY_R;
+      val&= ~MY_L2;
+      val|= MY_L3;
       hotkey_actioned = true;
 	}
   } else {
@@ -766,8 +790,8 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_R1, KEY_BACKSPACE);
     report_key(pre, MY_L2, KEY_PAGEUP);
     report_key(pre, MY_R2, KEY_PAGEDOWN);
-    report_key(pre, MY_L3, KEY_RIGHTALT);
-    report_key(pre, MY_R3, KEY_RIGHTSHIFT);
+    report_key(pre, MY_L3, KEY_KP_DIVIDE);
+    report_key(pre, MY_R3, KEY_KP_PERIOD);
 	
     input_sync(mydev);
     hotkey_mod_last = false;

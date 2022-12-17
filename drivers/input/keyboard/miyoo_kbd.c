@@ -937,8 +937,8 @@ static int __init kbd_init(void)
   set_bit(KEY_TAB, mydev->keybit);
   set_bit(KEY_BACKSPACE, mydev->keybit);
   set_bit(KEY_RIGHTCTRL, mydev->keybit);
-  set_bit(KEY_RIGHTALT, mydev->keybit);
-  set_bit(KEY_RIGHTSHIFT, mydev->keybit);  
+  set_bit(KEY_KP_DIVIDE, mydev->keybit);
+  set_bit(KEY_KP_PERIOD, mydev->keybit);  
   set_bit(KEY_PAGEUP, mydev->keybit);
   set_bit(KEY_PAGEDOWN, mydev->keybit);
   mydev->name = "miyoo_keypad";

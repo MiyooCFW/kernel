@@ -538,7 +538,7 @@ static void scan_handler(unsigned long unused)
               val|= MY_R2;
           }
           if(gpio_get_value(IN_MENU) == 0){
-              val|= MY_L2;
+              val|= MY_L3;
           }
           if(gpio_get_value(IN_PA1) == 0){
               val|= MY_R;
@@ -608,10 +608,10 @@ static void scan_handler(unsigned long unused)
       val|= MY_R2;
       hotkey_actioned = true;
 	}
-    if((val & MY_R) && (val & MY_L2)) {
+    if((val & MY_R) && (val & MY_L3)) {
       val&= ~MY_R;
-      val&= ~MY_L2;
-      val|= MY_L3;
+      val&= ~MY_L3;
+      val|= MY_R3;
       hotkey_actioned = true;
 	}
   } else {
@@ -790,8 +790,8 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_R1, KEY_BACKSPACE);
     report_key(pre, MY_L2, KEY_PAGEUP);
     report_key(pre, MY_R2, KEY_PAGEDOWN);
-    report_key(pre, MY_L3, KEY_KP_DIVIDE);
-    report_key(pre, MY_R3, KEY_KP_PERIOD);
+    report_key(pre, MY_L3, KEY_RIGHTALT);
+    report_key(pre, MY_R3, KEY_RIGHTSHIFT);
 	
     input_sync(mydev);
     hotkey_mod_last = false;
@@ -937,8 +937,8 @@ static int __init kbd_init(void)
   set_bit(KEY_TAB, mydev->keybit);
   set_bit(KEY_BACKSPACE, mydev->keybit);
   set_bit(KEY_RIGHTCTRL, mydev->keybit);
-  set_bit(KEY_KP_DIVIDE, mydev->keybit);
-  set_bit(KEY_KP_PERIOD, mydev->keybit);  
+  set_bit(KEY_RIGHTALT, mydev->keybit);
+  set_bit(KEY_RIGHTSHIFT, mydev->keybit);  
   set_bit(KEY_PAGEUP, mydev->keybit);
   set_bit(KEY_PAGEDOWN, mydev->keybit);
   mydev->name = "miyoo_keypad";

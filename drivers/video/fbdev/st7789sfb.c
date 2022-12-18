@@ -231,18 +231,19 @@ static uint32_t lcdc_rd_dat(void)
 
 static void refresh_lcd(struct myfb_par *par)
 {
-
-    lcdc_wr_cmd(0x2c);
+    if(par->lcdc_ready) {
+        lcdc_wr_cmd(0x2c);
   
-  if(par->app_virt->yoffset == 0){
-	  suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
-	  suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
-  }
-  else{
-	  suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
-	  suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
-  }
-	suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 0));
+        if(par->app_virt->yoffset == 0){
+	        suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+	        suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+        }
+        else{
+	        suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+	        suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+        }
+	    suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 0));
+    }
 }
 
 static irqreturn_t gpio_irq_handler(int irq, void *arg)

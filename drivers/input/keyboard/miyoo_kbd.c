@@ -43,8 +43,12 @@
 // CONFIG_KEYBOARD_MIYOO_TYPE:
 //   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
 //   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
+//   3 -> "SUP M3" meaning AB flipped & mapping through GPIO reads except from HOME/START/VOLUME
+//   4 -> "XYC Q8" meaning AB flipped & with echo and debounce code - matrix multiplexation for inputs.
+//   5 -> V90 meaning additional L2/R2 physical buttons
+//   6 -> Q20 meaning Lfunction/Rfunction button (similarly to Q90)
 
-/*
+/* 
  * Hardware map (as observed from the working code)
  *
  * | pad | define  | v1 v2      | v3 v4  | init_pullup? | init_as_in? |
@@ -95,6 +99,8 @@
 #define MY_R1     0x2000
 #define MY_L2     0x4000
 #define MY_R2     0x8000
+#define MY_L3     0x10000
+#define MY_R3     0x20000
 
 #define IN_L1   ((32 * 2) + 1)
 #define IN_R1   ((32 * 2) + 2)
@@ -171,8 +177,8 @@ static int do_output_request(uint32_t pin, const char* name)
 static void print_key(uint32_t val, uint8_t is_pressed)
 {
   uint32_t i;
-  uint32_t map_val[] = {MY_UP, MY_DOWN, MY_LEFT, MY_RIGHT, MY_A, MY_B, MY_TA, MY_TB, MY_SELECT, MY_START, MY_R, MY_L1, MY_R1, MY_L2, MY_R2, -1};
-  char* map_key[] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "SELECT", "START", "MENU", "L1", "R1", "L2", "R2"};
+  uint32_t map_val[] = {MY_UP, MY_DOWN, MY_LEFT, MY_RIGHT, MY_A, MY_B, MY_TA, MY_TB, MY_SELECT, MY_START, MY_R, MY_L1, MY_R1, MY_L2, MY_R2, MY_L3, MY_R3, -1};
+  char* map_key[] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "SELECT", "START", "MENU", "L1", "R1", "L2", "R2", "L3", "R3"};
 
   for(i=0; map_val[i]!=-1; i++){
     if(map_val[i] == val){
@@ -220,7 +226,6 @@ static void scan_handler(unsigned long unused)
   extern void MIYOO_INCREASE_VOLUME(void);
   extern void MIYOO_DECREASE_VOLUME(void);
 
-
   switch(miyoo_ver){
       case 1:
       for(scan=0; scan<3; scan++){
@@ -237,7 +242,7 @@ static void scan_handler(unsigned long unused)
           case 1:
             gpio_direction_output(OUT_2, 0);
             break;
-	  case 2: case 5:
+	  case 2: case 5: case 6:
             gpio_direction_output(OUT_3, 0);
             break;
           }
@@ -283,12 +288,12 @@ static void scan_handler(unsigned long unused)
         }
       #endif
         #if !defined(RAW)
-        if ((miyoo_ver <= 2 || miyoo_ver == 5)  && val & MY_R) {
+        if ((miyoo_ver <= 2 || miyoo_ver == 5 || miyoo_ver == 6)  && val & MY_R) {
           if (! (val & MY_LEFT) ) {
             val&= ~MY_R;
             val|= MY_LEFT;
           }
-        } else if ((miyoo_ver <= 2 || miyoo_ver == 5) && val & MY_LEFT) {
+        } else if ((miyoo_ver <= 2 || miyoo_ver == 5 || miyoo_ver == 6) && val & MY_LEFT) {
           if (! (val & MY_R) ) {
             val&= ~MY_LEFT;
             val|= MY_R;
@@ -473,6 +478,68 @@ static void scan_handler(unsigned long unused)
             }
           }
           touchReadPrev = touchRead;
+          break;
+      case 6:
+          gpio_direction_input(IN_1);
+          gpio_direction_input(IN_2);
+          gpio_direction_input(IN_3);
+          gpio_direction_input(IN_4);
+          gpio_direction_input(OUT_1);
+          gpio_direction_input(OUT_2);
+          gpio_direction_input(OUT_3);
+          gpio_direction_input(IN_A);
+          gpio_direction_input(IN_TA);
+          gpio_direction_input(IN_PC3);
+          gpio_direction_input(IN_PA1);
+          gpio_direction_input(IN_L1);
+          gpio_direction_input(IN_R1);
+          gpio_direction_input(IN_MENU);
+
+          if(gpio_get_value(IN_1) == 0){
+              val|= MY_UP;
+          }
+          if(gpio_get_value(IN_2) == 0){
+              val|= MY_DOWN;
+          }
+          if(gpio_get_value(IN_3) == 0){
+              val|= MY_LEFT;
+          }
+          if(gpio_get_value(IN_4) == 0){
+              val|= MY_RIGHT;
+          }
+          if(gpio_get_value(OUT_1) == 0){
+              val|= MY_A;
+          }
+          if(gpio_get_value(OUT_2) == 0){
+              val|= MY_B;
+          }
+          if(gpio_get_value(OUT_3) == 0){
+              val|= MY_TA;
+          }
+          if(gpio_get_value(IN_TA) == 0){
+              val|= MY_TB;
+          }
+          if(gpio_get_value(IN_A) == 0){
+              val|= MY_SELECT;
+          }
+          if(gpio_get_value(IN_L2) == 0){
+              val|= MY_START;
+          }
+          if(gpio_get_value(IN_L1) == 0){
+              val|= MY_L1;
+          }
+          if(gpio_get_value(IN_R1) == 0){
+              val|= MY_R1;
+          }
+          if(gpio_get_value(IN_PC3) == 0){
+              val|= MY_R2;
+          }
+          if(gpio_get_value(IN_MENU) == 0){
+              val|= MY_L3;
+          }
+          if(gpio_get_value(IN_PA1) == 0){
+              val|= MY_R;
+          }
           break; 
   }
 
@@ -495,7 +562,7 @@ static void scan_handler(unsigned long unused)
       hotkey_actioned = true;
     }
   } else if(miyoo_ver == 5) {
-    if((val & MY_R) && (val & MY_L1)) {
+    if((val & MY_R) && (val & MY_L2)) {
 		if(!hotkey_down) {
 			static char * shutdown_argv[] = { "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
 			static char * shutdown2_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/hard/\")" , NULL };
@@ -505,14 +572,45 @@ static void scan_handler(unsigned long unused)
       }
 			hotkey_actioned = true;
     }
-    if((val & MY_R) && (val & MY_R1)) {
+    if((val & MY_R) && (val & MY_R2)) {
        		if(!hotkey_down) {
 			static char * shutdown3_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
 			call_usermodehelper(shutdown3_argv[0], shutdown3_argv, NULL, UMH_NO_WAIT);
 			hotkey_down = true;
       }
 			hotkey_actioned = true;	  
-    } 
+    }
+	if((val & MY_R) && (val & MY_L1)) {
+      val&= ~MY_R;
+      val&= ~MY_L1;
+      val|= MY_L3;
+      hotkey_actioned = true; 
+	}
+    if((val & MY_R) && (val & MY_R1)) {
+      val&= ~MY_R;
+      val&= ~MY_R1;
+      val|= MY_R3;
+      hotkey_actioned = true;
+	}
+  } else if(miyoo_ver == 6) {
+    if((val & MY_R) && (val & MY_L1)) {
+      val&= ~MY_R;
+      val&= ~MY_L1;
+      val|= MY_L2;
+      hotkey_actioned = true; 
+	}
+    if((val & MY_R) && (val & MY_R1)) {
+      val&= ~MY_R;
+      val&= ~MY_R1;
+      val|= MY_R2;
+      hotkey_actioned = true;
+	}
+    if((val & MY_R) && (val & MY_L3)) {
+      val&= ~MY_R;
+      val&= ~MY_L3;
+      val|= MY_R3;
+      hotkey_actioned = true;
+	}
   } else {
     if((val & MY_R) && (val & MY_B)) {
       val&= ~MY_R;
@@ -562,25 +660,25 @@ static void scan_handler(unsigned long unused)
 
   if(val & MY_R && !non_hotkey_first) {
 	  if((val & MY_R) && (val & MY_B)){
-      if(miyoo_ver == 2 || miyoo_ver == 5)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
 			  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 3 : hotkey;
       }
 	 	}
 	 	else if((val & MY_R) && (val & MY_A)){
-      if(miyoo_ver == 2 || miyoo_ver == 5)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
 	  	  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 4 : hotkey;
       }
 	 	}
 		else if((val & MY_R) && (val & MY_TB)){
-      if(miyoo_ver == 2 || miyoo_ver == 5)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 1 : hotkey;
       }
 		}
 		else if((val & MY_R) && (val & MY_TA)){
-      if(miyoo_ver == 2 || miyoo_ver == 5)  {
+      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 2 : hotkey;
       }
@@ -689,6 +787,8 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_R1, KEY_BACKSPACE);
     report_key(pre, MY_L2, KEY_PAGEUP);
     report_key(pre, MY_R2, KEY_PAGEDOWN);
+    report_key(pre, MY_L3, KEY_RIGHTALT);
+    report_key(pre, MY_R3, KEY_RIGHTSHIFT);
 	
     input_sync(mydev);
     hotkey_mod_last = false;

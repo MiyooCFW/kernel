@@ -43,13 +43,12 @@
 // CONFIG_KEYBOARD_MIYOO_TYPE:
 //   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
 //   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
-//   3 -> "SUP M3" meaning 6 face buttons
-//   4 -> "XYC Q8" meaning 6 face buttons with echo and debounce code
-//   5 -> - V90 meaning additional L2/R2 physical buttons
-//   6 -> - Q20/Q90 meaning Lfunction/Rfunction button, left as L2 and right as RESET
+//   3 -> "SUP M3" meaning AB flipped & mapping through GPIO reads except from HOME/START/VOLUME
+//   4 -> "XYC Q8" meaning AB flipped & with echo and debounce code - matrix multiplexation for inputs.
+//   5 -> V90 meaning additional L2/R2 physical buttons
+//   6 -> Q20 meaning Lfunction/Rfunction button, left as L2 and right as RESET
 
-/* UNMAITAINED PART BELOW !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
- * 
+/* 
  * Hardware map (as observed from the working code)
  *
  * | pad | define  | v1 v2      | v3 v4  | init_pullup? | init_as_in? |
@@ -82,8 +81,6 @@
  *  - TA=X, TB=Y
  *  - "matx" is a matrix with these keys: dpad,R,start,select
  *  - v1&v2 code swaps 'R' and 'left' after scanning the matrix
- * 
- * UNMAITAINED PART UNTIL THIS END !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  */
 
 //Bittboy inputs

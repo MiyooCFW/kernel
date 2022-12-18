@@ -46,7 +46,7 @@
 //   3 -> "SUP M3" meaning AB flipped & mapping through GPIO reads except from HOME/START/VOLUME
 //   4 -> "XYC Q8" meaning AB flipped & with echo and debounce code - matrix multiplexation for inputs.
 //   5 -> V90 meaning additional L2/R2 physical buttons
-//   6 -> Q20 meaning Lfunction/Rfunction button, left as L2 and right as RESET
+//   6 -> Q20 meaning Lfunction/Rfunction button (similarly to Q90)
 
 /* 
  * Hardware map (as observed from the working code)

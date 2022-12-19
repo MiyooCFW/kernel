@@ -43,8 +43,8 @@
 // CONFIG_KEYBOARD_MIYOO_TYPE:
 //   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
 //   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
-//   3 -> "SUP M3" meaning AB flipped & mapping through GPIO reads except from HOME/START/VOLUME
-//   4 -> "XYC Q8" meaning AB flipped & with echo and debounce code - matrix multiplexation for inputs.
+//   3 -> "SUP M3" meaning AB flipped - matrix multiplexation for inputs.
+//   4 -> "XYC Q8" meaning AB flipped & with echo and debounce code - mapping through GPIO reads except from HOME/START/VOLUME 
 //   5 -> V90 meaning additional L2/R2 physical buttons
 //   6 -> Q20 meaning Lfunction/Rfunction button (similarly to Q90)
 

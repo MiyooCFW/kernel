@@ -49,7 +49,7 @@
 #include <asm/arch-suniv/codec.h>
 #include <asm/arch-suniv/common.h>
 
-//#define USE_EARPHONE          1
+#define USE_EARPHONE          1
 #define DMA_SIZE              (128 * 2 * PAGE_SIZE)
 #define MIYOO_KBD_GET_HOTKEY  _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)

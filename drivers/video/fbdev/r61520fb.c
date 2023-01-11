@@ -429,7 +429,7 @@ static int panel_init(void)
   printk(" ");
   
     readReg(0x00, 4, "ID: ILI9320, ILI9325, ILI9335, ...");
-    readReg(0x04, 4, "Manufacturer ID");
+    readReg(0x05, 4, "Manufacturer ID");
     readReg(0x09, 5, "Status Register");
     readReg(0x0A, 2, "Get Power Mode");
     readReg(0x0C, 2, "Get Pixel Format");

@@ -401,7 +401,6 @@ static void readReg(uint32_t reg, uint8_t n, const char *msg) //this is for debu
 {
   uint32_t res;
   lcdc_wr_cmd(reg);
-  res = lcdc_rd_dat();
   printk("REG 0x%02x:     ", reg);
   for(x=0; x<n; x++){
     res = lcdc_rd_dat();
@@ -429,7 +428,7 @@ static int panel_init(void)
   printk("TFT IDENTIFICATION 8BITS:");
   printk(" ");
   
-    readReg(0x00, 2, "ID: ILI9320, ILI9325, ILI9335, ...");
+    readReg(0x00, 4, "ID: ILI9320, ILI9325, ILI9335, ...");
     readReg(0x04, 4, "Manufacturer ID");
     readReg(0x09, 5, "Status Register");
     readReg(0x0A, 2, "Get Power Mode");

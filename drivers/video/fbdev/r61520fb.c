@@ -70,6 +70,9 @@ module_param(flip,bool,0660);
 static bool debug=false;
 module_param(debug,bool,0660);
 
+static bool lowcurrent=false;
+module_param(lowcurrent,bool,0660);
+
 static uint32_t version=0;
 module_param(version,uint,0660);
 
@@ -159,6 +162,10 @@ static void suniv_gpio_init(void)
   writel(0x00000000, iomm.gpio + PD_PUL1);
   //writel(0xffffffff, iomm.gpio + PD_DRV0);
   writel(0xffffffff, iomm.gpio + PD_DRV1);
+
+  if (lowcurrent){
+    writel(0x00000000, iomm.gpio + PD_DRV0);
+  }
 
   ret = readl(iomm.gpio + PE_PUL0);
   ret&= 0xff0fffff;

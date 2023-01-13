@@ -134,6 +134,7 @@ obj-$(CONFIG_FB_R61520)		  += r61520fb.o
 obj-$(CONFIG_FB_GC9306)		  += gc9306fb.o
 obj-$(CONFIG_FB_ST7789S)		  += st7789sfb.o
 obj-$(CONFIG_FB_ST7789S_TE)		  += st7789sTEfb.o
+obj-$(CONFIG_FB_RM68090)		  += rm68090fb.o
 
 # Platform or fallback drivers go here
 obj-$(CONFIG_FB_UVESA)            += uvesafb.o

@@ -67,6 +67,15 @@
 static bool flip=false;
 module_param(flip,bool,0660);
 
+static bool debug=false;
+module_param(debug,bool,0660);
+
+static uint32_t version=0;
+module_param(version,uint,0660);
+
+static bool invert=false;
+module_param(invert,bool,0660);
+
 // Which LCD controller are we driving? E.g. R61520, R61526, R61581, etc. 
 // Should be a number 1-4, but I'm not yet sure which numbers correspond to which panels
 // 1 = R61520 - R61520 doesn't support the 0x04 read_DDB_start / Read Display ID Information command.
@@ -74,10 +83,7 @@ module_param(flip,bool,0660);
 // 3 = R61505W
 // 4 = ?
 // Will be automatically detected if left unset (which usually works)
-static uint32_t version=0;
-static bool invert=false;
-module_param(version,uint,0660);
-module_param(invert,bool,0660);
+
 struct myfb_par {
   struct device *dev;
   struct platform_device *pdev;
@@ -428,6 +434,7 @@ static int panel_init(void)
   printk("TFT IDENTIFICATION 8BITS:");
   printk(" ");
   
+if(debug){	
     readReg(0x00, 4, "ID: ILI9320, ILI9325, ILI9335, ...");
     readReg(0x05, 4, "Manufacturer ID");
     readReg(0x09, 5, "Status Register");
@@ -468,8 +475,8 @@ static int panel_init(void)
     readReg(0xEF, 6, "ILI9327");
     readReg(0xF2, 12, "Adjust Control 2");
     readReg(0xF6, 4, "Interface Control");
-  
-  
+  }
+
   suniv_setbits(iomm.lcdc + PE_DATA, (11 << 0));
   mdelay(50);
   suniv_clrbits(iomm.lcdc + PE_DATA, (11 << 0));

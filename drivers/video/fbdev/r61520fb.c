@@ -67,6 +67,15 @@
 static bool flip=false;
 module_param(flip,bool,0660);
 
+static bool debug=false;
+module_param(debug,bool,0660);
+
+static uint32_t version=0;
+module_param(version,uint,0660);
+
+static bool invert=false;
+module_param(invert,bool,0660);
+
 // Which LCD controller are we driving? E.g. R61520, R61526, R61581, etc. 
 // Should be a number 1-4, but I'm not yet sure which numbers correspond to which panels
 // 1 = R61520 - R61520 doesn't support the 0x04 read_DDB_start / Read Display ID Information command.
@@ -74,10 +83,7 @@ module_param(flip,bool,0660);
 // 3 = R61505W
 // 4 = ?
 // Will be automatically detected if left unset (which usually works)
-static uint32_t version=0;
-static bool invert=false;
-module_param(version,uint,0660);
-module_param(invert,bool,0660);
+
 struct myfb_par {
   struct device *dev;
   struct platform_device *pdev;
@@ -396,10 +402,82 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
   return IRQ_HANDLED;
 }
 
+
+static void readReg(uint32_t reg, uint8_t n, const char *msg) //this is for debugging registers on TFT panels
+{
+  uint32_t res;
+  lcdc_wr_cmd(reg);
+  printk("REG 0x%02x:     ", reg);
+  for(x=0; x<n; x++){
+    res = lcdc_rd_dat();
+    printk(KERN_CONT "%02x ",res);
+  }
+  printk(KERN_CONT "%s ",msg);
+}
+
+
+
+
+
 static int panel_init(void)
 {
   uint16_t x, ver[4]={0};
   
+  suniv_setbits(iomm.lcdc + PE_DATA, (11 << 0));
+  mdelay(50);
+  suniv_clrbits(iomm.lcdc + PE_DATA, (11 << 0));
+  mdelay(150);
+  suniv_setbits(iomm.lcdc + PE_DATA, (11 << 0));
+  mdelay(150);
+  
+  
+  
+if(debug){
+    printk(" ");
+    printk("TFT IDENTIFICATION 8BITS:");
+    printk(" ");
+    readReg(0x00, 4, "ID: ILI9320, ILI9325, ILI9335, ...");
+    readReg(0x05, 4, "Manufacturer ID");
+    readReg(0x09, 5, "Status Register");
+    readReg(0x0A, 2, "Get Power Mode");
+    readReg(0x0C, 2, "Get Pixel Format");
+    readReg(0x30, 5, "PTLAR");
+    readReg(0x33, 7, "VSCRLDEF");
+    readReg(0x61, 2, "RDID1 HX8347-G");
+    readReg(0x62, 2, "RDID2 HX8347-G");
+    readReg(0x63, 2, "RDID3 HX8347-G");
+    readReg(0x64, 2, "RDID1 HX8347-A");
+    readReg(0x65, 2, "RDID2 HX8347-A");
+    readReg(0x66, 2, "RDID3 HX8347-A");
+    readReg(0x67, 2, "RDID Himax HX8347-A");
+    readReg(0x70, 2, "Panel Himax HX8347-A");
+    readReg(0xA1, 5, "RD_DDB SSD1963");
+    readReg(0xB0, 2, "RGB Interface Signal Control");
+    readReg(0xB3, 5, "Frame Memory");
+    readReg(0xB4, 2, "Frame Mode");
+    readReg(0xB6, 5, "Display Control");
+    readReg(0xB7, 2, "Entry Mode Set");
+    readReg(0xBF, 6, "ILI9481, HX8357-B");
+    readReg(0xC0, 9, "Panel Control");
+    readReg(0xC1, 4, "Display Timing");
+    readReg(0xC5, 2, "Frame Rate");
+    readReg(0xC8, 13, "GAMMA");
+    readReg(0xCC, 2, "Panel Control");
+    readReg(0xD0, 4, "Power Control");
+    readReg(0xD1, 4, "VCOM Control");
+    readReg(0xD2, 3, "Power Normal");
+    readReg(0xD3, 4, "ILI9341, ILI9488");
+    readReg(0xD4, 4, "Novatek");
+    readReg(0xDA, 2, "RDID1");
+    readReg(0xDB, 2, "RDID2");
+    readReg(0xDC, 2, "RDID3");
+    readReg(0xE0, 16, "GAMMA-P");
+    readReg(0xE1, 16, "GAMMA-N");
+    readReg(0xEF, 6, "ILI9327");
+    readReg(0xF2, 12, "Adjust Control 2");
+    readReg(0xF6, 4, "Interface Control");
+  }
+
   suniv_setbits(iomm.lcdc + PE_DATA, (11 << 0));
   mdelay(50);
   suniv_clrbits(iomm.lcdc + PE_DATA, (11 << 0));

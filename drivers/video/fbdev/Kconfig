@@ -2532,4 +2532,12 @@ config FB_ST7789S_TE
 	select FB_SYS_IMAGEBLIT
 	help
 	  Framebuffer driver for ST7789S SLCD panel.
-	  
+
+config RM68090
+	tristate "RM68090 SLCD framebuffer support with TE pin"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for RM68090 SLCD panel.

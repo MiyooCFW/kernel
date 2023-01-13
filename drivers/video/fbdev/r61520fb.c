@@ -430,11 +430,12 @@ static int panel_init(void)
   suniv_setbits(iomm.lcdc + PE_DATA, (11 << 0));
   mdelay(150);
   
-  printk(" ");
-  printk("TFT IDENTIFICATION 8BITS:");
-  printk(" ");
   
-if(debug){	
+  
+if(debug){
+    printk(" ");
+    printk("TFT IDENTIFICATION 8BITS:");
+    printk(" ");
     readReg(0x00, 4, "ID: ILI9320, ILI9325, ILI9335, ...");
     readReg(0x05, 4, "Manufacturer ID");
     readReg(0x09, 5, "Status Register");

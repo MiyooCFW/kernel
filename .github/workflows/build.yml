@@ -13,7 +13,7 @@ jobs:
   build:
     runs-on: ubuntu-20.04
     container:
-      image: miyoocfw/toolchain:latest
+      image: nfriedly/miyoo-toolchain:steward
     steps:
     - uses: actions/checkout@v2
     
@@ -56,11 +56,13 @@ jobs:
         mv drivers/video/fbdev/gc9306fb.ko dist/
         mv drivers/video/fbdev/st7789sfb.ko dist/
         mv drivers/video/fbdev/st7789sTEfb.ko dist/
+        mv drivers/video/fbdev/rm68090fb.ko dist/
+
         
     - run: find ${{ inputs.submodule || '.' }}/dist
     
     - uses: actions/upload-artifact@v2
       with:
-        name: kernel
+        name: kernel (uClibc)
         path: ${{ inputs.submodule || '.' }}/dist/*
         if-no-files-found: error # 'error', 'warn', 'ignore'; defaults to `warn`

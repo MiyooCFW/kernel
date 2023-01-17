@@ -74,6 +74,9 @@ DECLARE_WAIT_QUEUE_HEAD(wait_vsync_queue);
 static bool flip=false;
 module_param(flip,bool,0660);
 
+static bool lowcurrent=false;
+module_param(lowcurrent,bool,0660);
+
 struct myfb_app{
     uint32_t yoffset;
     uint32_t vsync_count;
@@ -155,6 +158,10 @@ static void suniv_gpio_init(void)
     r&= 0x00000000;
     r|= 0x22222222;
     writel(r, iomm.gpio + PD_CFG2);
+
+    if (lowcurrent){
+    writel(0x00000000, iomm.gpio + PD_DRV0);
+    }
 
     r = readl(iomm.gpio + PD_PUL1);
     r&= 0xfffff0ff;

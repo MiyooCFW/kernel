@@ -35,7 +35,6 @@ jobs:
       id: cache
       
     # ARCH=arm and CROSS_COMPILE=arm-buildroot-linux-musleabi- env props are set in the docker image
-    # todo: build with 1-bit sdcard for new bittboy v1
     - name: build
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
@@ -50,6 +49,7 @@ jobs:
         cd ${{ inputs.submodule || '.' }}
         mkdir dist
         mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/
+        mv arch/arm/boot/dts/suniv-f1c500s-miyoo-1bit.dtb dist/
         mv arch/arm/boot/zImage dist/
         mv drivers/video/fbdev/core/*.ko dist/
         mv drivers/video/fbdev/r61520fb.ko dist/

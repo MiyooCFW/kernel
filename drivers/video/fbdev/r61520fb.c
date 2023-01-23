@@ -156,7 +156,7 @@ static void suniv_gpio_init(void)
   ret&= 0x0000000f;
   ret|= 0x22222220;
   writel(ret, iomm.gpio + PD_CFG0);
-  writel(0x22222202, iomm.gpio + PD_CFG1);
+  writel(0x22222212, iomm.gpio + PD_CFG1);
   writel(0x00222222, iomm.gpio + PD_CFG2);
   writel(0x00040001, iomm.gpio + PD_PUL0);
   writel(0x00000000, iomm.gpio + PD_PUL1);

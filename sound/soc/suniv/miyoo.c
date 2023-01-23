@@ -130,6 +130,12 @@ static void suniv_gpio_init(void)
         ret |= 0x00000001;
         writel(ret, iomm.gpio + PD_CFG0);
         suniv_setbits(iomm.gpio + PD_DATA, (1 << 0));
+
+        ret = readl(iomm.gpio + PD_CFG1);
+        ret &= 0xffffff1f;
+        ret |= 0x00000010;
+        writel(ret, iomm.gpio + PD_CFG1);
+        suniv_setbits(iomm.gpio + PD_DATA, (1 << 9));
         break;
   }
 

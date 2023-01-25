@@ -530,7 +530,7 @@ if(debug){
   ret&= 0x0000000f;
   ret|= 0x11111110;
   writel(ret, iomm.gpio + PD_CFG0);
-  writel(0x11111111, iomm.gpio + PD_CFG1);
+  writel(0x11111101, iomm.gpio + PD_CFG1);
   writel(0x00111111, iomm.gpio + PD_CFG2);
   writel(0xffffffff, iomm.gpio + PD_DATA);
     mdelay(150);
@@ -1168,7 +1168,10 @@ if(debug){
   ret&= 0x0000000f;
   ret|= 0x22222220;
   writel(ret, iomm.gpio + PD_CFG0);
-  writel(0x22222212, iomm.gpio + PD_CFG1);
+    ret = readl(iomm.gpio + PD_CFG1);
+    ret&= 0x000000f0;
+    ret|= 0x22222202;
+    writel(ret, iomm.gpio + PD_CFG1);
   writel(0x00222222, iomm.gpio + PD_CFG2);
   return miyoo_ver;
 }
@@ -1692,7 +1695,7 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     ret = readl(iomm.gpio + PD_CFG0);
     ret&= 0x0000000f;
     ret|= 0x11111110;
-    writel(0x11111111, iomm.gpio + PD_CFG1);
+    writel(0x11111101, iomm.gpio + PD_CFG1);
     writel(0x00111111, iomm.gpio + PD_CFG2);
     writel(0xffffffff, iomm.gpio + PD_DATA);
     mdelay(50);
@@ -1714,7 +1717,10 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     ret&= 0x0000000f;
     ret|= 0x22222220;
     writel(ret, iomm.gpio + PD_CFG0);
-    writel(0x22222212, iomm.gpio + PD_CFG1);
+          ret = readl(iomm.gpio + PD_CFG1);
+          ret&= 0x000000f0;
+          ret|= 0x22222202;
+          writel(ret, iomm.gpio + PD_CFG1);
     writel(0x00222222, iomm.gpio + PD_CFG2);
     break;
   case MIYOO_FB0_GET_FPBP:

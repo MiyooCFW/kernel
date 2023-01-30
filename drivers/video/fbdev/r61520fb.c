@@ -158,7 +158,7 @@ static void suniv_gpio_init(void)
   writel(ret, iomm.gpio + PD_CFG0);
     ret = readl(iomm.gpio + PD_CFG1);
     ret&= 0x000000f0;
-    ret|= 0x22222202;
+    ret|= 0x22222212;
     writel(ret, iomm.gpio + PD_CFG1);
   writel(0x00222222, iomm.gpio + PD_CFG2);
   writel(0x00040001, iomm.gpio + PD_PUL0);
@@ -1170,7 +1170,7 @@ if(debug){
   writel(ret, iomm.gpio + PD_CFG0);
     ret = readl(iomm.gpio + PD_CFG1);
     ret&= 0x000000f0;
-    ret|= 0x22222202;
+    ret|= 0x22222212;
     writel(ret, iomm.gpio + PD_CFG1);
   writel(0x00222222, iomm.gpio + PD_CFG2);
   return miyoo_ver;
@@ -1719,7 +1719,7 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     writel(ret, iomm.gpio + PD_CFG0);
           ret = readl(iomm.gpio + PD_CFG1);
           ret&= 0x000000f0;
-          ret|= 0x22222202;
+          ret|= 0x22222212;
           writel(ret, iomm.gpio + PD_CFG1);
     writel(0x00222222, iomm.gpio + PD_CFG2);
     break;

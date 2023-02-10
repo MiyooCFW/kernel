@@ -57,6 +57,7 @@ jobs:
         mv drivers/video/fbdev/st7789sfb.ko dist/
         mv drivers/video/fbdev/st7789sTEfb.ko dist/
         mv drivers/video/fbdev/rm68090fb.ko dist/
+        mv drivers/video/fbdev/miyoo-tvout.ko dist/
 
         
     - run: find ${{ inputs.submodule || '.' }}/dist

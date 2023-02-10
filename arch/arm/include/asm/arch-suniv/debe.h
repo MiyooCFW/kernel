@@ -76,5 +76,38 @@
 #define DEBE_COEF22_REG           0x978 //DEBE Coefficient 22 Register
 #define DEBE_COEF23_REG           0x97C //DEBE Coefficient 23 Register
 
+typedef enum
+{
+    DEFE_EN         = 0x000,
+    DEFE_FRM_CTRL   = 0x004,
+    DEFE_BYPASS     = 0x008,
+    DEFE_AGTH_SEL   = 0x00C,
+    DEFE_INT_LINE   = 0x010,
+    DEFE_ADDR0      = 0x020,
+    DEFE_ADDR1      = 0x024,
+    DEFE_ADDR2      = 0x028,
+    DEFE_FIELD_CTRL = 0x02C,
+    DEFE_TB_OFF0    = 0x030,
+    DEFE_TB_OFF1    = 0x034,
+    DEFE_TB_OFF2    = 0x038,
+    DEFE_STRIDE0    = 0x040,
+    DEFE_STRIDE1    = 0x044,
+    DEFE_STRIDE2    = 0x048,
+    DEFE_IN_FMT     = 0x04C,
+    DEFE_WB_ADDR    = 0x050,
+    DEFE_OUT_FMT    = 0x05C,
+    DEFE_INT_EN     = 0x060,
+    DEFE_INT_STATUS = 0x064,
+    DEFE_STATUS     = 0x068,
+    DEFE_CSC_COEF   = 0x070,
+    DEFE_IN_SIZE    = 0x100,
+    DEFE_OUT_SIZE   = 0x104,
+    DEFE_H_FACT     = 0x108,
+    DEFE_V_FACT     = 0x10C,
+    DEFE_CH0_H_COEF = 0x400,
+    DEFE_CH0_V_COEF = 0x500,
+    DEFE_CH1_H_COEF = 0x600,
+    DEFE_CH1_V_COEF = 0x700,
+} defe_reg_e;
 #endif
 

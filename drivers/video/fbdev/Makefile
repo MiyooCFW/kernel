@@ -135,6 +135,7 @@ obj-$(CONFIG_FB_GC9306)		  += gc9306fb.o
 obj-$(CONFIG_FB_ST7789S)		  += st7789sfb.o
 obj-$(CONFIG_FB_ST7789S_TE)		  += st7789sTEfb.o
 obj-$(CONFIG_FB_RM68090)		  += rm68090fb.o
+obj-$(CONFIG_FB_TVOUT)		  += miyoo-tvout.o
 
 # Platform or fallback drivers go here
 obj-$(CONFIG_FB_UVESA)            += uvesafb.o

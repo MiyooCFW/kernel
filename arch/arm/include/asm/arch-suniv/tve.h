@@ -128,4 +128,97 @@ struct sunxi_tve_reg {
 void tvencoder_mode_set(struct sunxi_tve_reg * const tve, enum tve_mode mode);
 void tvencoder_enable(struct sunxi_tve_reg * const tve);
 
+typedef enum
+{
+    TVE_MODE_NTSC,
+    TVE_MODE_PAL,
+} tve_mode_e;
+
+typedef enum
+{
+    DE_LCD,
+    DE_TV,
+} de_mode_e;
+
+typedef enum
+{
+    TVE_ENABLE          = 0x000,
+    TVE_CFG1            = 0x004,
+    TVE_DAC1            = 0x008,
+    TVE_NOTCH_DELAY     = 0x00C,
+    TVE_CHROMA_FREQ     = 0x010,
+    TVE_FB_PORCH        = 0x014,
+    TVE_HD_VS           = 0x018,
+    TVE_LINE_NUM        = 0x01C,
+    TVE_LEVEL           = 0x020,
+    TVE_DAC2            = 0x024,
+    TVE_AUTO_EN         = 0x030,
+    TVE_AUTO_ISR        = 0x034,
+    TVE_AUTO_SR         = 0x038,
+    TVE_AUTO_DEB        = 0x03C,
+    TVE_CSC1            = 0x040,
+    TVE_CSC2            = 0x044,
+    TVE_CSC3            = 0x048,
+    TVE_CSC4            = 0x04C,
+    TVE_REG_0F8         = 0x0F8,
+    TVE_REG_0FC         = 0x0FC,
+    TVE_CB_RESET        = 0x100,
+    TVE_VS_NUM          = 0x104,
+    TVE_FILTER          = 0x108,
+    TVE_CBCR_LEVEL      = 0x10C,
+    TVE_TINT_PHASE      = 0x110,
+    TVE_B_WIDTH         = 0x114,
+    TVE_CBCR_GAIN       = 0x118,
+    TVE_SYNC_LEVEL      = 0x11C,
+    TVE_WHITE_LEVEL     = 0x120,
+    TVE_ACT_LINE        = 0x124,
+    TVE_CHROMA_BW       = 0x128,
+    TVE_CFG2            = 0x12C,
+    TVE_RESYNC          = 0x130,
+    TVE_SLAVE           = 0x134,
+    TVE_CFG3            = 0x138,
+    TVE_CFG4            = 0x13C,
+} tve_reg_e;
+
+typedef enum
+{
+    DEBE_1BPP   = (1 << 8),
+    DEBE_2BPP   = (2 << 8),
+    DEBE_4BPP   = (4 << 8),
+    DEBE_8BPP   = (8 << 8),
+    DEBE_16BPP  = (16 << 8),
+    DEBE_24BPP  = (24 << 8),
+    DEBE_32BPP  = (32 << 8),
+} debe_color_mode_bpp_e;
+
+#define DEBE_PALETTE_EN 0x80
+
+typedef enum
+{
+    DEBE_MODE__1BPP_MONO        = 0 | DEBE_1BPP,
+    DEBE_MODE__2BPP_MONO        = 1 | DEBE_2BPP,
+    DEBE_MODE__4BPP_MONO        = 2 | DEBE_4BPP,
+    DEBE_MODE__8BPP_MONO        = 3 | DEBE_8BPP,
+    DEBE_MODE_16BPP_RGB_655     = 4 | DEBE_16BPP,
+    DEBE_MODE_16BPP_RGB_565     = 5 | DEBE_16BPP,
+    DEBE_MODE_16BPP_RGB_556     = 6 | DEBE_16BPP,
+    DEBE_MODE_16BPP_ARGB_1555   = 7 | DEBE_16BPP,
+    DEBE_MODE_16BPP_RGBA_5551   = 8 | DEBE_16BPP,
+    DEBE_MODE_32BPP_RGB_888     = 9 | DEBE_32BPP,
+    DEBE_MODE_32BPP_ARGB_8888   = 10 | DEBE_32BPP,
+    DEBE_MODE_24BPP_RGB_888     = 11 | DEBE_24BPP,
+    DEBE_MODE__1BPP_PALETTE     = 0 | DEBE_PALETTE_EN | DEBE_1BPP,
+    DEBE_MODE__2BPP_PALETTE     = 1 | DEBE_PALETTE_EN | DEBE_2BPP,
+    DEBE_MODE__4BPP_PALETTE     = 2 | DEBE_PALETTE_EN | DEBE_4BPP,
+    DEBE_MODE__8BPP_PALETTE     = 3 | DEBE_PALETTE_EN | DEBE_8BPP,
+    DEBE_MODE_DEFE_VIDEO        = 0x40,
+    DEBE_MODE_YUV               = 0x41,
+} debe_color_mode_e;
+
+
+typedef enum
+{
+    CLK_DE_SRC_PLL_VIDEO = 0,
+    CLK_DE_SRC_PLL_PERIPH = 2,
+} clk_source_de_e;
 #endif /* _TVE_H */

@@ -70,7 +70,6 @@
 #define DRIVER_NAME  "tvout-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
-
 static int tvmode=0;
 module_param(tvmode,int,0660);
 
@@ -87,15 +86,16 @@ struct myfb_par {
     resource_size_t p_palette_base;
     unsigned short *v_palette_base;
 
-    void *vram_virt;
-    uint32_t vram_size;
     dma_addr_t vram_phys;
-    struct myfb_app *app_virt;
+    uint32_t vram_size;
+    void *vram_virt;
+    int yoffset;
+    void *dma_addr;
 
     int bpp;
     int lcdc_irq;
     int gpio_irq;
-    int lcdc_ready;
+    volatile int have_te;
     u32 pseudo_palette[16];
     struct fb_videomode mode;
 };
@@ -178,24 +178,6 @@ typedef struct
 
 static de_params_t de;
 
-
-static void pll_video_init(void) // out = (24MHz*N) / M
-{
-    uint8_t mul = 99;
-    uint8_t div = 8;
-    if ((mul == 0) || (div == 0))
-        return;
-    if ((mul > 128) || (div > 16))
-        return;
-
-    // mul = n
-    // div = m
-
-    val = readl(iomm.ccm + PLL_VIDEO_CTRL_REG);
-    val &= (1 << 31) | (1 << 28);
-    val |= ((mul - 1) << 8) | (div - 1) | (1 << 24);
-    writel(val, iomm.ccm + PLL_VIDEO_CTRL_REG);
-}
 
 static uint32_t pll_video_get_freq(void) // +
 {
@@ -309,7 +291,6 @@ static void tcon1_init(tve_mode_e mode) // TCON1 -> TVE
     ret = readl(iomm.lcdc + TCON_CTRL_REG);
     ret&= ~(1 << 0);
     writel(ret, iomm.lcdc + TCON_CTRL_REG);
-
     if (mode == TVE_MODE_NTSC)
     {
         writel(0x00100130,iomm.lcdc + TCON1_CTRL_REG);
@@ -362,7 +343,7 @@ void debe_layer_init(uint8_t layer)
     de.layer[layer].width = de.width;
     de.layer[layer].height = de.height;
 
-    writel((120 << 16)|(200 << 0), iomm.debe + DEBE_LAY0_CODNT_REG + layer*4);
+    writel((20 << 0) | (20 << 16), iomm.debe + DEBE_LAY0_CODNT_REG + layer*4);
     writel(((de.height - 1) << 16) | (de.width - 1), iomm.debe + DEBE_LAY0_SIZE_REG + layer*4 );
 
     debe_update_linewidth(layer);
@@ -401,69 +382,51 @@ void debe_layer_set_mode(uint8_t layer, debe_color_mode_e mode)
 static void debe_init(struct myfb_par *par)
 {
     writel((1 << 1), iomm.debe + DEBE_MODE_CTRL_REG);
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < 1; i++)
     {
-        writel((i << 10) | ((i & 1) << 15), iomm.debe + DEBE_LAY0_ATT_CTRL_REG0 + i*4);
-        writel((uint32_t)(par->vram_phys + 320*240*2*i) << 3, iomm.debe + DEBE_LAY0_FB_ADDR_REG + i*4);
-        writel((uint32_t)(par->vram_phys + 320*240*2*i) >> 29, iomm.debe + DEBE_LAY0_FB_HI_ADDR_REG + i*4);
         writel(0, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1 + i*4);
-        de.layer[i].bits_per_pixel = 16;
+        de.layer[i].bits_per_pixel = 32;
         debe_layer_init(i);
-        debe_layer_set_mode(i, DEBE_MODE_16BPP_RGB_565);
-        writel(csc_tab[12*3+i] << 16,iomm.debe+DEBE_COEF00_REG+i*4+0*4);
-        writel(csc_tab[12*3+i+4] << 16,iomm.debe+DEBE_COEF00_REG+i*4+4*4);
-        writel(csc_tab[12*3+i+8] << 16,iomm.debe+DEBE_COEF00_REG+i*4+8*4);
+        debe_layer_set_mode(i, DEBE_MODE_DEFE_VIDEO);
+    }
+    for (i = 0; i < 4; i++) {
+        writel(csc_tab[12 * 3 + i] << 16, iomm.debe + DEBE_COEF00_REG + i * 4 + 0 * 4);
+        writel(csc_tab[12 * 3 + i + 4] << 16, iomm.debe + DEBE_COEF00_REG + i * 4 + 4 * 4);
+        writel(csc_tab[12 * 3 + i + 8] << 16, iomm.debe + DEBE_COEF00_REG + i * 4 + 8 * 4);
     }
     suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 5)); // CSC enable
 }
 
-// DEBE / DEFE clock configuration
-void clk_de_config(uint32_t reg, clk_source_de_e source, uint8_t div)
+// TCON clock configuration
+void clk_tcon_config(void)
 {
-    if ((div == 0) || (div > 16))
-        return;
-
-    val = readl(iomm.ccm+reg);
-
-    val &= ~((0x7 << 24) | (0xF));
-    val |= (source << 24) | (div - 1);
-
-    writel(val, iomm.ccm+reg);
+    uint32_t val = readl(iomm.ccm + TCON_CLK_REG) & ~(0x7 << 24);
+    writel( val | (0 << 24), iomm.ccm + TCON_CLK_REG);
 }
 
 void defe_init_spl_422(uint16_t in_w, uint16_t in_h, struct myfb_par *par)
 {
     suniv_setbits(iomm.defe+DEFE_EN, 0x01); // Enable DEFE
     suniv_setbits(iomm.defe+DEFE_EN, (1 << 31)); // Enable CPU access
-    writel((0 << 0) | (0 << 1), iomm.defe+DEFE_BYPASS); // CSC/scaler bypass disabled
+    writel((0 << 0) | (1 << 1), iomm.defe+DEFE_BYPASS); // CSC/scaler bypass disabled
 
     writel((uint32_t)((par->vram_phys)), iomm.defe+DEFE_ADDR0);
-    writel((uint32_t)((par->vram_phys)), iomm.defe+DEFE_ADDR1);
-    writel(in_w, iomm.defe+DEFE_STRIDE0);
-    writel(in_w, iomm.defe+DEFE_STRIDE1);
-
-    writel((in_w-1) | ((in_h-1) << 16), iomm.defe+DEFE_IN_SIZE); // Out size = In size
-    writel((in_w-1) | ((in_h) << 16), iomm.defe+DEFE_OUT_SIZE);
-    writel((1 << 16), iomm.defe+DEFE_H_FACT); // H scale: 1
-    if (de.mode == DE_LCD)
-        writel((1 << 16), iomm.defe+DEFE_V_FACT); // V scale: 1
-    else if (de.mode == DE_TV)
-        writel((2 << 16), iomm.defe+DEFE_V_FACT); // V scale: 1/2 (??)
-
-    writel( (1 <<8 ) | (5 << 4), iomm.defe+DEFE_IN_FMT); // UV combined | 422
-    //suniv_setbits(iomm.defe+DEFE_OUT_FMT, (2 << 0)); //??
-    //write32(F1C100S_DEFE_BASE+DEFE_FIELD_CTRL, (1 << 12)); //?
-    for(i = 0; i < 4; i++) // Color conversion table
-    {
-        writel(csc_tab[i], iomm.defe+DEFE_CSC_COEF+i*4+0*4);
-        writel(csc_tab[i+4], iomm.defe+DEFE_CSC_COEF+i*4+4*4);
-        writel(csc_tab[i+8], iomm.defe+DEFE_CSC_COEF+i*4+8*4);
+    writel(in_w*4, iomm.defe+DEFE_STRIDE0);
+    writel((in_w-1) | ((in_h-1) << 16), iomm.defe+DEFE_IN_SIZE);
+    if (tvmode == 0) {
+        writel((665-1) | ((450-1) << 16), iomm.defe+DEFE_OUT_SIZE);
+        writel((31500 << 0), iomm.defe+DEFE_H_FACT); // H scale
+        writel((70600 << 0), iomm.defe+DEFE_V_FACT); // V scale
+    }
+    else {
+        writel((665-1) | ((546-1) << 16), iomm.defe+DEFE_OUT_SIZE);
+        writel((31500 << 0), iomm.defe+DEFE_H_FACT); // H scale
+        writel((59000 << 0), iomm.defe+DEFE_V_FACT); // V scale
     }
 
+
+    writel( (1 << 8 ) | (5 << 4) | (1 << 0), iomm.defe+DEFE_IN_FMT); // ARGB888
     suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 23)); // Enable CPU access to filter RAM (if enabled, filter is bypassed?)
-
-
-
     suniv_clrbits(iomm.defe+DEFE_EN, (1 << 31)); // Disable CPU access (?)
     suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 0)); // Registers ready
     suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 16)); // Start frame processing
@@ -472,12 +435,18 @@ void defe_init_spl_422(uint16_t in_w, uint16_t in_h, struct myfb_par *par)
 static void suniv_tve_init(struct myfb_par *par)
 {
     de.mode = DE_TV;
-    de.width = 320;
-    de.height = 240;
-    if (tvmode == 0)
+
+    if (tvmode == 0) {
         mode = TVE_MODE_NTSC;
-    else
+        de.width = 665;
+        de.height = 450;
+    }
+    else {
         mode = TVE_MODE_PAL;
+        de.width = 665;
+        de.height = 546;
+    }
+    defe_init_spl_422(320, 240, par);
     debe_init(par);
     tcon1_init(mode);
     suniv_setbits(iomm.lcdc + TCON1_CTRL_REG, (1 << 31));
@@ -489,30 +458,180 @@ static void suniv_tve_init(struct myfb_par *par)
     tve_init(mode);
 }
 
+static void pll_video_init(uint8_t mul, uint8_t div) // out = (24MHz*N) / M
+{
+    if ((mul == 0) || (div == 0))
+        return;
+    if ((mul > 128) || (div > 16))
+        return;
+
+    // mul = n
+    // div = m
+
+    uint32_t val = readl(iomm.ccm + PLL_VIDEO_CTRL_REG);
+    val &= (1 << 31) | (1 << 28);
+    val |= ((mul - 1) << 8) | (div - 1) | (1 << 24);
+    writel(val, iomm.ccm + PLL_VIDEO_CTRL_REG);
+}
+
+// CPU clock configuration
+void clk_cpu_config(clk_source_cpu_e source)
+{
+    uint32_t reg = readl(iomm.ccm +CCU_CPU_CFG) & ~(0x3 << 16);
+    writel( reg | (source << 16), iomm.ccm+CCU_CPU_CFG);
+}
+
+static void pll_periph_init(uint8_t mul, uint8_t div) // out = (24MHz*N) / M
+{
+    if ((mul == 0) || (div == 0))
+        return;
+    if ((mul > 32) || (div > 4))
+        return;
+
+    // mul = n
+    // div = m
+
+    uint32_t val = readl(iomm.ccm + CCU_PLL_PERIPH_CTRL);
+    val &= (1 << 31) | (1 << 28);
+    val |= ((mul - 1) << 8) | ((div - 1) << 4) | (1 << 18); // do we need 24m output?
+    writel(val, iomm.ccm + CCU_PLL_PERIPH_CTRL);
+}
+
+// Enable PLL
+inline void clk_pll_enable(pll_ch_e pll)
+{
+    writel((readl(iomm.ccm+pll)|(1 << 31)), iomm.ccm+pll);
+}
+
+// Get PLL lock state
+uint8_t clk_pll_is_locked(pll_ch_e pll)
+{
+    uint32_t val = readl(iomm.ccm + pll);
+    return ((val >> 28) & 0x1);
+}
+
+void clk_hclk_config(uint8_t div) // HCLK = CPUCLK / div
+{
+    if ((div == 0) || (div > 4))
+        return;
+
+    uint32_t val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~(0x3 << 16);
+    writel(val | ((div-1) << 16), iomm.ccm+CCU_AHB_APB_CFG);
+}
+
+void clk_apb_config(clk_div_apb_e div) // APB = AHB / div
+{
+    uint32_t val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~(0x3 << 8);
+    writel( val | (div << 8), iomm.ccm+CCU_AHB_APB_CFG);
+}
+
+void clk_ahb_config(clk_source_ahb_e src, uint8_t prediv, uint8_t div) // AHB = (src or src/prediv)/div
+{
+    if ((prediv == 0) || (prediv > 4))
+        return;
+    if ((div == 0) || ((div > 4) && (div != 8)) || (div == 3))
+        return;
+    if (div == 4)
+        div = 3;
+    if (div == 8)
+        div = 4;
+
+    uint32_t val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~((0x3 << 12) | (0xF << 4));
+    writel(val | (src << 12) | ((prediv-1) << 6) | ((div-1) << 4), iomm.ccm+CCU_AHB_APB_CFG);
+}
+
+static void pll_cpu_init(uint8_t mul, uint8_t div) // out = (24MHz*N*K) / (M*P)
+{
+    if ((mul == 0) || (div == 0))
+        return;
+    if ((mul > 128) || (div > 16))
+        return;
+
+    uint8_t n, k, m, p;
+    // mul = n*k
+    // n = 1..32
+    // k = 1..4
+    for (k = 1; k <= 4; k++)
+    {
+        n = mul / k;
+        if ((n < 32) && (n * k == mul))
+            break;
+    }
+    if (n * k != mul)
+        return;
+    // div = m*p
+    // m = 1..4
+    // k = 1,2,4
+    for (m = 1; m <= 4; m++)
+    {
+        p = div / m;
+        if (((p == 1) || (p == 2) || (p == 4)) && (m * p == div))
+            break;
+    }
+    if (m * p != div)
+        return;
+
+    p--;
+    if (p == 3)
+        p = 2;
+
+    uint32_t val = readl(iomm.ccm + CCU_PLL_CPU_CTRL);
+    val &= (1 << 31) | (1 << 28);
+    val |= ((n - 1) << 8) | ((k - 1) << 4) | (m - 1) | (p << 16);
+    writel(val, iomm.ccm + CCU_PLL_CPU_CTRL);
+}
 
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){
-    }
-    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){
-    }
-    clk_de_config(FE_CLK_REG, CLK_DE_SRC_PLL_VIDEO, 1);
-    clk_de_config(BE_CLK_REG, CLK_DE_SRC_PLL_VIDEO, 1);
+
+    // Set CPU clock to 24MHz
+    clk_cpu_config(CLK_CPU_SRC_OSC24M);
+    mdelay(10); // Wait for some clock cycles
+
+    pll_periph_init(25, 1); // PLL_PERIPH = 24M*25/1 = 600M
+    clk_pll_enable(PLL_PERIPH);
+    while (!clk_pll_is_locked(PLL_PERIPH)); // Wait for PLL to lock
+
+    // Configure bus clocks
+    clk_hclk_config(1); // HCLK = CLK_CPU
+    clk_ahb_config(CLK_AHB_SRC_PLL_PERIPH_PREDIV, 3, 1); // AHB = PLL_PERIPH/3/1 = 200M
+    clk_apb_config(CLK_APB_DIV_2); // APB = AHB/2 = 100M
+    mdelay(10);
+
+    // Configure video clocks
+    pll_video_init(99,8); // 24*99/8 = 297MHz
+    clk_pll_enable(PLL_VIDEO);
+
+    // Configure CPU PLL
+    pll_cpu_init(30, 1); // PLL_CPU = 24M*30/1 = 720M
+    clk_pll_enable(PLL_CPU);
+    while (!clk_pll_is_locked(PLL_CPU)); // Wait for PLL to lock
+
+    // Select PLL as CPU clock source
+    clk_cpu_config(CLK_CPU_SRC_PLL_CPU);
+    mdelay(10);
+    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
+    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
+
     ret = readl(iomm.ccm + DRAM_GATING_REG);
     ret|= (1 << 26) | (1 << 24);
     writel(ret, iomm.ccm + DRAM_GATING_REG);
 
     suniv_setbits(iomm.ccm + FE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BE_CLK_REG, (1 << 31));
-    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31) | (1 << 25));
+    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     for(i=0x0800; i<0x1000; i+=4){
         writel(0, iomm.debe + i);
     }
-    pll_video_init();
-    writel((readl(iomm.ccm + PLL_VIDEO_CTRL_REG)|(1 << 31)), iomm.ccm + PLL_VIDEO_CTRL_REG);
+
+    //writel(0x90000c00, iomm.ccm + PLL_DDR_CTRL_REG);
+    //writel(0x90001223, iomm.ccm + PLL_DDR_CTRL_REG);
+    //writel(0x90001c01, iomm.ccm + PLL_DDR_CTRL_REG);
+    //writel((1 << 31) | (1 << 28) | ( 25 << 8) | (1 << 0), iomm.ccm + PLL_DDR_CTRL_REG);
+    while((readl(iomm.ccm + PLL_DDR_CTRL_REG) & (1 << 28)) == 0){}
 }
 
 
@@ -533,18 +652,18 @@ static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
     struct myfb_par *par = info->par;
     unsigned long line_size = var->xres_virtual * bpp;
 
-    if((var->xres != 320) || (var->yres != 240) || (var->bits_per_pixel != 16)){
+    if((var->xres != 320) || (var->yres != 240) || (var->bits_per_pixel != 32)){
         return -EINVAL;
     }
 
     var->transp.offset = 0;
     var->transp.length = 0;
-    var->red.offset = 11;
-    var->red.length = 5;
-    var->green.offset = 5;
-    var->green.length = 6;
+    var->red.offset = 16;
+    var->red.length = 8;
+    var->green.offset = 8;
+    var->green.length = 8;
     var->blue.offset = 0;
-    var->blue.length = 5;
+    var->blue.length = 8;
     var->red.msb_right = 0;
     var->green.msb_right = 0;
     var->blue.msb_right = 0;
@@ -567,26 +686,45 @@ static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
     return 0;
 }
 
+static int myfb_remove(struct platform_device *dev)
+{
+    int i;
+    struct fb_info *info = dev_get_drvdata(&dev->dev);
+    struct myfb_par *par = info->par;
+
+    if(info){
+        flush_scheduled_work();
+        unregister_framebuffer(info);
+        fb_dealloc_cmap(&info->cmap);
+        dma_free_coherent(NULL, PALETTE_SIZE, par->v_palette_base, par->p_palette_base);
+        dma_free_coherent(NULL, par->vram_size, par->vram_virt, par->vram_phys);
+        pm_runtime_put_sync(&dev->dev);
+        pm_runtime_disable(&dev->dev);
+        framebuffer_release(info);
+    }
+    return 0;
+}
+
 static int myfb_set_par(struct fb_info *info)
 {
     struct myfb_par *par = info->par;
 
     fb_var_to_videomode(&par->mode, &info->var);
-    par->app_virt->yoffset = info->var.yoffset = 0;
+    par->yoffset = info->var.yoffset;
     par->bpp = info->var.bits_per_pixel;
     info->fix.visual = FB_VISUAL_TRUECOLOR;
     info->fix.line_length = (par->mode.xres * par->bpp) / 8;
-    writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
-    writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
-    writel((5 << 8), iomm.debe + DEBE_LAY2_ATT_CTRL_REG1);
-    writel((5 << 8), iomm.debe + DEBE_LAY3_ATT_CTRL_REG1);
+    writel((9 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
+    writel((9 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
     return 0;
 }
 
-
-
 static int myfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
+    switch(cmd){
+        case FBIO_WAITFORVSYNC:
+            break;
+    }
     return 0;
 }
 
@@ -608,10 +746,11 @@ static int myfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 static int myfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
     struct myfb_par *par = info->par;
-
-    info->var.xoffset = var->xoffset;
-    info->var.yoffset = var->yoffset;
-    par->app_virt->yoffset = var->yoffset;
+    if((var->xoffset != info->var.xoffset) || (var->yoffset != info->var.yoffset)){
+        info->var.xoffset = var->xoffset;
+        info->var.yoffset = var->yoffset;
+        par->yoffset = var->yoffset;
+    }
     return 0;
 }
 
@@ -631,10 +770,10 @@ static struct fb_ops myfb_ops = {
 
 static int myfb_probe(struct platform_device *device)
 {
-    int ret=0;
-    struct fb_info *info=NULL;
-    struct myfb_par *par=NULL;
-    struct fb_videomode *mode=NULL;
+    int i, ret;
+    struct fb_info *info;
+    struct myfb_par *par;
+    struct fb_videomode *mode;
 
     mode = devm_kzalloc(&device->dev, sizeof(struct fb_videomode), GFP_KERNEL);
     if(mode == NULL){
@@ -649,28 +788,30 @@ static int myfb_probe(struct platform_device *device)
 
     info = framebuffer_alloc(sizeof(struct myfb_par), &device->dev);
     if(!info){
+        dev_dbg(&device->dev, "memory allocation failed for fb_info\n");
         return -ENOMEM;
     }
 
     par = info->par;
     par->pdev = device;
     par->dev = &device->dev;
-    par->bpp = 16;
+    par->bpp = 32;
     fb_videomode_to_var(&myfb_var, mode);
 
-    par->vram_size = (320 * 240 * 2 * 4) + 4096;
+    par->vram_size = 320*240*2*2;
     par->vram_virt = dma_alloc_coherent(NULL, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
     if(!par->vram_virt){
+        dev_err(&device->dev, "%s, failed to allocate frame buffer(vram)\n", __func__);
         return -EINVAL;
     }
     info->screen_base = (char __iomem*)par->vram_virt;
     myfb_fix.smem_start = par->vram_phys;
     myfb_fix.smem_len = par->vram_size;
-    myfb_fix.line_length = 320 * 2;
-    par->app_virt = (struct myfb_app*)((uint8_t*)par->vram_virt + (320 * 240 * 2 * 4));
+    myfb_fix.line_length = 320 * 4;
 
     par->v_palette_base = dma_alloc_coherent(NULL, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
     if(!par->v_palette_base){
+        dev_err(&device->dev, "GLCD: kmalloc for palette buffer failed\n");
         return -EINVAL;
     }
     memset(par->v_palette_base, 0, PALETTE_SIZE);
@@ -692,37 +833,21 @@ static int myfb_probe(struct platform_device *device)
     myfb_var.activate = FB_ACTIVATE_FORCE;
     fb_set_var(info, &myfb_var);
     dev_set_drvdata(&device->dev, info);
+
     if(register_framebuffer(info) < 0){
+        dev_err(&device->dev, "failed to register /dev/fb0\n");
         return -EINVAL;
     }
 
     mypar = par;
-    mypar->lcdc_ready = 0;
-    mypar->app_virt->vsync_count = 0;
     for(ret=0; ret<of_clk_get_parent_count(device->dev.of_node); ret++){
         clk_prepare_enable(of_clk_get(device->dev.of_node, ret));
     }
-    suniv_cpu_init(mypar);
-    suniv_tve_init(mypar);
-    return 0;
-}
+    suniv_cpu_init(par);
+    suniv_tve_init(par);
 
-static int myfb_remove(struct platform_device *dev)
-{
-    struct fb_info *info = dev_get_drvdata(&dev->dev);
-    struct myfb_par *par = info->par;
-
-    if(info){
-        del_timer(&mytimer);
-        flush_scheduled_work();
-        unregister_framebuffer(info);
-        fb_dealloc_cmap(&info->cmap);
-        dma_free_coherent(NULL, PALETTE_SIZE, par->v_palette_base, par->p_palette_base);
-        dma_free_coherent(NULL, par->vram_size, par->vram_virt, par->vram_phys);
-        pm_runtime_put_sync(&dev->dev);
-        pm_runtime_disable(&dev->dev);
-        framebuffer_release(info);
-    }
+    fb_prepare_logo(info, 0);
+    fb_show_logo(info, 0);
     return 0;
 }
 
@@ -769,20 +894,24 @@ static struct platform_driver fb_driver = {
 
 static void suniv_ioremap(void)
 {
-    iomm.ccm = (uint8_t*)ioremap(SUNIV_CCM_BASE, 1024);
-    iomm.lcdc = (uint8_t*)ioremap(SUNIV_LCDC_BASE, 1024);
+    iomm.dma = (uint8_t*)ioremap(SUNIV_DMA_BASE, 4096);
+    iomm.ccm = (uint8_t*)ioremap(SUNIV_CCM_BASE, 4096);
+    iomm.lcdc = (uint8_t*)ioremap(SUNIV_LCDC_BASE, 4096);
     iomm.debe = (uint8_t*)ioremap(SUNIV_DEBE_BASE, 4096);
-    iomm.tve = (uint8_t*)ioremap(SUNIV_TVE_BASE, 1024);
     iomm.defe = (uint8_t*)ioremap(SUNIV_DEFE_BASE, 4096);
+    iomm.intc = (uint8_t*)ioremap(SUNIV_INTC_BASE, 4096);
+    iomm.tve = (uint8_t*)ioremap(SUNIV_TVE_BASE, 1024);
 }
 
 static void suniv_iounmap(void)
 {
+    iounmap(iomm.dma);
     iounmap(iomm.ccm);
     iounmap(iomm.lcdc);
     iounmap(iomm.debe);
+    iounmap(iomm.defe);
+    iounmap(iomm.tve);
     iounmap(iomm.intc);
-    iounmap(iomm.timer);
 }
 
 static int myopen(struct inode *inode, struct file *file)
@@ -794,24 +923,16 @@ static int myclose(struct inode *inode, struct file *file)
 {
     return 0;
 }
+
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     int32_t w, bpp;
+    unsigned long tmp;
 
     switch(cmd){
         case MIYOO_FB0_PUT_OSD:
             break;
         case MIYOO_FB0_SET_MODE:
-            w = (arg >> 16);
-            bpp = (arg & 0xffff);
-            if((bpp != 16)){
-                writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
-                writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
-            }
-            else{
-                writel((7 << 8) | 4, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
-                writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
-            }
             break;
     }
     return 0;
@@ -838,6 +959,10 @@ static int __init fb_init(void)
 static void __exit fb_cleanup(void)
 {
     suniv_iounmap();
+    device_destroy(myclass, major);
+    cdev_del(&mycdev);
+    class_destroy(myclass);
+    unregister_chrdev_region(major, 1);
     platform_driver_unregister(&fb_driver);
 }
 
@@ -847,4 +972,3 @@ module_exit(fb_cleanup);
 MODULE_DESCRIPTION("Framebuffer driver for TVE");
 MODULE_AUTHOR("Tiopex <tiopxyz@gmail.com>");
 MODULE_LICENSE("GPL");
-

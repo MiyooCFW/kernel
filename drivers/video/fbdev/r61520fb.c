@@ -440,8 +440,8 @@ static int panel_init(void)
   mdelay(150);
   suniv_setbits(iomm.lcdc + PE_DATA, (11 << 0));
   mdelay(150);
-  
-  
+
+
   
 if(debug){
     printk(" ");
@@ -1225,7 +1225,8 @@ static void suniv_lcdc_init(struct myfb_par *par)
     printk("Warning: LCD controller not detected as version 4, but being overridden by module_param as version 4 (detection 1 of 2)");
     ver = version;
   }
- 
+    suniv_setbits(iomm.lcdc + TCON1_CTRL_REG, (0 << 31));
+    suniv_setbits(iomm.lcdc + TCON_CTRL_REG, (0 << 31));
 	writel(0, iomm.lcdc + TCON_CTRL_REG);
 	writel(0, iomm.lcdc + TCON_INT_REG0);
 	ret = readl(iomm.lcdc + TCON_CLK_CTRL_REG);
@@ -1242,6 +1243,8 @@ static void suniv_lcdc_init(struct myfb_par *par)
 	writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY1_SIZE_REG);
 	writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
   writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+    ret = readl(iomm.debe + DEBE_LAY0_ATT_CTRL_REG0 ) & ~(3 << 1);
+    writel(ret | (0 << 1), iomm.debe + DEBE_LAY0_ATT_CTRL_REG0);
 	suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
 	suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 1));
   suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 1));
@@ -1333,7 +1336,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
   uint32_t ret, i;
-
+    writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
   while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
   while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
 
@@ -1366,17 +1369,17 @@ static int myfb_setcolreg(unsigned regno, unsigned red, unsigned green, unsigned
   return 0;
 }
 #undef CNVT_TOHW
- 
+
 static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
   int bpp = var->bits_per_pixel >> 3;
   struct myfb_par *par = info->par;
   unsigned long line_size = var->xres_virtual * bpp;
- 
+
   if((var->xres != 320) || (var->yres != 240) || (var->bits_per_pixel != 16)){
     return -EINVAL;
   }
- 
+
   var->transp.offset = 0;
   var->transp.length = 0;
   var->red.offset = 11;
@@ -1406,14 +1409,16 @@ static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
   }
   return 0;
 }
- 
+
 static int myfb_remove(struct platform_device *dev)
 {
   int i;
   struct fb_info *info = dev_get_drvdata(&dev->dev);
   struct myfb_par *par = info->par;
- 
+
   if(info){
+    free_irq(par->lcdc_irq, par);
+    free_irq(par->gpio_irq, par);
     flush_scheduled_work();
     unregister_framebuffer(info);
     fb_dealloc_cmap(&info->cmap);
@@ -1428,21 +1433,21 @@ static int myfb_remove(struct platform_device *dev)
   }
   return 0;
 }
- 
+
 static int myfb_set_par(struct fb_info *info)
 {
   struct myfb_par *par = info->par;
-   
+
   fb_var_to_videomode(&par->mode, &info->var);
   par->yoffset = info->var.yoffset;
   par->bpp = info->var.bits_per_pixel;
   info->fix.visual = FB_VISUAL_TRUECOLOR;
-  info->fix.line_length = (par->mode.xres * par->bpp) / 8; 	
+  info->fix.line_length = (par->mode.xres * par->bpp) / 8;
   writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
   writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
   return 0;
 }
- 
+
 static int myfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
   switch(cmd){
@@ -1451,16 +1456,16 @@ static int myfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
   }
   return 0;
 }
- 
+
 static int myfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
   const unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
   const unsigned long size = vma->vm_end - vma->vm_start;
-  
+
   if(offset + size > info->fix.smem_len){
     return -EINVAL;
   }
-  
+
   if(remap_pfn_range(vma, vma->vm_start, (info->fix.smem_start + offset) >> PAGE_SHIFT, size, vma->vm_page_prot)){
     return -EAGAIN;
   }
@@ -1486,7 +1491,7 @@ static struct fb_ops myfb_ops = {
   .fb_pan_display = myfb_pan_display,
   .fb_ioctl       = myfb_ioctl,
   .fb_mmap        = myfb_mmap,
- 
+
   .fb_fillrect  = sys_fillrect,
   .fb_copyarea  = sys_copyarea,
   .fb_imageblit = sys_imageblit,
@@ -1506,22 +1511,22 @@ static int myfb_probe(struct platform_device *device)
   mode->name = "320x240";
   mode->xres = 320;
   mode->yres = 240;
-  mode->vmode = FB_VMODE_NONINTERLACED; 
+  mode->vmode = FB_VMODE_NONINTERLACED;
   pm_runtime_enable(&device->dev);
   pm_runtime_get_sync(&device->dev);
-   
+
   info = framebuffer_alloc(sizeof(struct myfb_par), &device->dev);
   if(!info){
     dev_dbg(&device->dev, "memory allocation failed for fb_info\n");
     return -ENOMEM;
   }
- 
+
   par = info->par;
   par->pdev = device;
   par->dev = &device->dev;
   par->bpp = 16;
   fb_videomode_to_var(&myfb_var, mode);
-  
+
   par->vram_size = 320*240*2*2;
   par->vram_virt = dma_alloc_coherent(NULL, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
   if(!par->vram_virt){
@@ -1532,7 +1537,7 @@ static int myfb_probe(struct platform_device *device)
   myfb_fix.smem_start = par->vram_phys;
   myfb_fix.smem_len = par->vram_size;
   myfb_fix.line_length = 320 * 2;
-  
+
   par->lram_size = 320*240*18;
   for(i=0; i<LRAM_NUM; i++){
     par->lram_virt[i] = dma_alloc_coherent(NULL, par->lram_size, (resource_size_t*)&par->lram_phys[i], GFP_KERNEL | GFP_DMA);
@@ -1541,7 +1546,7 @@ static int myfb_probe(struct platform_device *device)
       return -EINVAL;
     }
   }
-   
+
   par->v_palette_base = dma_alloc_coherent(NULL, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
   if(!par->v_palette_base){
     dev_err(&device->dev, "GLCD: kmalloc for palette buffer failed\n");
@@ -1550,19 +1555,19 @@ static int myfb_probe(struct platform_device *device)
   memset(par->v_palette_base, 0, PALETTE_SIZE);
   myfb_var.grayscale = 0;
   myfb_var.bits_per_pixel = par->bpp;
- 
+
   info->flags = FBINFO_FLAG_DEFAULT;
   info->fix = myfb_fix;
   info->var = myfb_var;
   info->fbops = &myfb_ops;
   info->pseudo_palette = par->pseudo_palette;
-  info->fix.visual = (info->var.bits_per_pixel <= 8) ? FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR; 
+  info->fix.visual = (info->var.bits_per_pixel <= 8) ? FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR;
   ret = fb_alloc_cmap(&info->cmap, PALETTE_SIZE, 0);
   if(ret){
     return -EINVAL;
   }
   info->cmap.len = 32;
- 
+
   myfb_var.activate = FB_ACTIVATE_FORCE;
   fb_set_var(info, &myfb_var);
   dev_set_drvdata(&device->dev, info);
@@ -1571,7 +1576,7 @@ static int myfb_probe(struct platform_device *device)
     dev_err(&device->dev, "failed to register /dev/fb0\n");
     return -EINVAL;
   }
-  
+
   mypar = par;
   new_bp = -1;
   new_fp = -1;
@@ -1582,23 +1587,23 @@ static int myfb_probe(struct platform_device *device)
   suniv_gpio_init();
   suniv_lcdc_init(par);
   suniv_enable_irq(par);
-  
+
   fb_prepare_logo(info, 0);
   fb_show_logo(info, 0);
   return 0;
 }
- 
+
 static int myfb_suspend(struct platform_device *dev, pm_message_t state)
 {
   struct fb_info *info = platform_get_drvdata(dev);
- 
+
   console_lock();
   fb_set_suspend(info, 1);
   pm_runtime_put_sync(&dev->dev);
   console_unlock();
   return 0;
 }
- 
+
 static int myfb_resume(struct platform_device *dev)
 {
   struct fb_info *info = platform_get_drvdata(dev);
@@ -1612,11 +1617,11 @@ static int myfb_resume(struct platform_device *dev)
 
 static const struct of_device_id fb_of_match[] = {
   {
-    .compatible = "allwinner,suniv-f1c500s-tcon0", 
+    .compatible = "allwinner,suniv-f1c500s-tcon0",
   },{}
 };
 MODULE_DEVICE_TABLE(of, fb_of_match);
- 
+
 static struct platform_driver fb_driver = {
   .probe    = myfb_probe,
   .remove   = myfb_remove,
@@ -1628,7 +1633,7 @@ static struct platform_driver fb_driver = {
     .of_match_table = of_match_ptr(fb_of_match),
   },
 };
- 
+
 static void suniv_ioremap(void)
 {
   iomm.dma = (uint8_t*)ioremap(SUNIV_DMA_BASE, 4096);
@@ -1733,7 +1738,7 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
   case MIYOO_FB0_SET_FPBP:
     new_fp = (arg & 0xf0) >> 4;
     new_bp = (arg & 0x0f) >> 0;
-	  
+
     flip_mode = 1;
     mdelay(100);
     panel_init();
@@ -1753,15 +1758,15 @@ static const struct file_operations myfops = {
 
 static int __init fb_init(void)
 {
-  suniv_ioremap(); 
-  alloc_chrdev_region(&major, 0, 1, "miyoo_fb0");
-  myclass = class_create(THIS_MODULE, "miyoo_fb0");
-  device_create(myclass, NULL, major, NULL, "miyoo_fb0");
-  cdev_init(&mycdev, &myfops);
-  cdev_add(&mycdev, major, 1);
-  return platform_driver_register(&fb_driver);
+    suniv_ioremap();
+    alloc_chrdev_region(&major, 0, 1, "miyoo_video_fb0");
+    myclass = class_create(THIS_MODULE, "miyoo_video_fb0");
+    device_create(myclass, NULL, major, NULL, "miyoo_video_fb0");
+    cdev_init(&mycdev, &myfops);
+    cdev_add(&mycdev, major, 1);
+    return platform_driver_register(&fb_driver);
 }
- 
+
 static void __exit fb_cleanup(void)
 {
   suniv_iounmap();
@@ -1771,10 +1776,10 @@ static void __exit fb_cleanup(void)
   unregister_chrdev_region(major, 1);
   platform_driver_unregister(&fb_driver);
 }
- 
+
 module_init(fb_init);
 module_exit(fb_cleanup);
- 
+
 MODULE_DESCRIPTION("Allwinner suniv framebuffer driver for Miyoo handheld");
 MODULE_AUTHOR("Steward Fu <steward.fu@gmail.com>");
 MODULE_LICENSE("GPL");

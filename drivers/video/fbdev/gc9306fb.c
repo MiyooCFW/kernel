@@ -363,7 +363,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel((uint32_t)(par->vram_phys+ 320*240*2) >> 29, iomm.debe + DEBE_LAY1_FB_HI_ADDR_REG);
 
     writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
-    writel((0xf << 28) | (25 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
+    writel((0xf << 28) | (6 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
     writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
     writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
 
@@ -411,11 +411,9 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-
-    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){
-    }
-    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){
-    }
+    writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
+    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
+    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
 
     ret = readl(iomm.ccm + DRAM_GATING_REG);
     ret|= (1 << 26) | (1 << 24);
@@ -637,6 +635,7 @@ static int myfb_remove(struct platform_device *dev)
     struct myfb_par *par = info->par;
 
     if(info){
+        free_irq(par->lcdc_irq, par);
         del_timer(&mytimer);
         flush_scheduled_work();
         unregister_framebuffer(info);
@@ -736,9 +735,9 @@ static const struct file_operations myfops = {
 static int __init fb_init(void)
 {
     suniv_ioremap();
-    alloc_chrdev_region(&major, 0, 1, "miyoo_fb0");
-    myclass = class_create(THIS_MODULE, "miyoo_fb0");
-    device_create(myclass, NULL, major, NULL, "miyoo_fb0");
+    alloc_chrdev_region(&major, 0, 1, "miyoo_video_fb0");
+    myclass = class_create(THIS_MODULE, "miyoo_video_fb0");
+    device_create(myclass, NULL, major, NULL, "miyoo_video_fb0");
     cdev_init(&mycdev, &myfops);
     cdev_add(&mycdev, major, 1);
     return platform_driver_register(&fb_driver);

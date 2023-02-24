@@ -515,11 +515,9 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-
-    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){
-    }
-    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){
-    }
+    writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
+    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
+    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
 
     ret = readl(iomm.ccm + DRAM_GATING_REG);
     ret|= (1 << 26) | (1 << 24);
@@ -747,6 +745,8 @@ static int myfb_remove(struct platform_device *dev)
     struct myfb_par *par = info->par;
 
     if(info){
+        free_irq(par->lcdc_irq, par);
+        free_irq(par->gpio_irq, par);
         del_timer(&mytimer);
         flush_scheduled_work();
         unregister_framebuffer(info);
@@ -861,9 +861,9 @@ static const struct file_operations myfops = {
 static int __init fb_init(void)
 {
     suniv_ioremap();
-    alloc_chrdev_region(&major, 0, 1, "miyoo_fb0");
-    myclass = class_create(THIS_MODULE, "miyoo_fb0");
-    device_create(myclass, NULL, major, NULL, "miyoo_fb0");
+    alloc_chrdev_region(&major, 0, 1, "miyoo_video_fb0");
+    myclass = class_create(THIS_MODULE, "miyoo_video_fb0");
+    device_create(myclass, NULL, major, NULL, "miyoo_video_fb0");
     cdev_init(&mycdev, &myfops);
     cdev_add(&mycdev, major, 1);
     return platform_driver_register(&fb_driver);

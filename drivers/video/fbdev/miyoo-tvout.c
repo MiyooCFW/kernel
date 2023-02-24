@@ -620,7 +620,7 @@ static void suniv_cpu_init(struct myfb_par *par)
 
     suniv_setbits(iomm.ccm + FE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BE_CLK_REG, (1 << 31));
-    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
+    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31) | (0 << 25));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     for(i=0x0800; i<0x1000; i+=4){

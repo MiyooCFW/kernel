@@ -202,6 +202,9 @@ static void init_lcd(void)
     suniv_setbits(iomm.lcdc + PE_DATA, (1 << 11));
     mdelay(150);
 
+    lcdc_wr_cmd(0x11);       // SleepIn
+    mdelay(120);
+    lcdc_wr_cmd(0x28);  // display off
     //------------- display control setting -----------------------//
     lcdc_wr_cmd(0xfe);
     lcdc_wr_cmd(0xef);
@@ -363,7 +366,7 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel((uint32_t)(par->vram_phys+ 320*240*2) >> 29, iomm.debe + DEBE_LAY1_FB_HI_ADDR_REG);
 
     writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
-    writel((0xf << 28) | (6 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
+    writel((0xf << 28) | (25 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
     writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
     writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
 
@@ -746,6 +749,10 @@ static int __init fb_init(void)
 static void __exit fb_cleanup(void)
 {
     suniv_iounmap();
+    device_destroy(myclass, major);
+    cdev_del(&mycdev);
+    class_destroy(myclass);
+    unregister_chrdev_region(major, 1);
     platform_driver_unregister(&fb_driver);
 }
 

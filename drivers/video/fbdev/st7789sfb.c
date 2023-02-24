@@ -872,6 +872,10 @@ static int __init fb_init(void)
 static void __exit fb_cleanup(void)
 {
     suniv_iounmap();
+    device_destroy(myclass, major);
+    cdev_del(&mycdev);
+    class_destroy(myclass);
+    unregister_chrdev_region(major, 1);
     platform_driver_unregister(&fb_driver);
 }
 

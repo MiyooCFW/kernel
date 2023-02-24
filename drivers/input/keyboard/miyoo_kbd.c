@@ -561,6 +561,22 @@ static void scan_handler(unsigned long unused)
       val|= MY_R2;
       hotkey_actioned = true;
     }
+    if((val & MY_R) && (val & MY_SELECT)) {
+      if(!hotkey_down) {
+        static char * shutdown90_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
+        call_usermodehelper(shutdown90_argv[0], shutdown90_argv, NULL, UMH_NO_WAIT);
+        hotkey_down = true;
+      }
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_START)) {
+      if(!hotkey_down) {
+        static char * screenshot_argv[] = {"/bin/sh", "-c", "/mnt/apps/fbgrab/screenshot.sh", NULL};
+        call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
+        hotkey_down = true;
+      }
+      hotkey_actioned = true;   
+    }
   } else if(miyoo_ver == 5) {
     if((val & MY_R) && (val & MY_L2)) {
 		if(!hotkey_down) {
@@ -592,6 +608,35 @@ static void scan_handler(unsigned long unused)
       val|= MY_R3;
       hotkey_actioned = true;
 	}
+  } else if(miyoo_ver == 4) {
+    if((val & MY_R) && (val & MY_TA)) {
+      if(!hotkey_down) {
+      static char * shutdown8_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
+      call_usermodehelper(shutdown8_argv[0], shutdown8_argv, NULL, UMH_NO_WAIT);
+        hotkey_down = true;
+      }
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_A)) {
+      if(!hotkey_down) {
+        static char * screenshot_argv[] = {"/bin/sh", "-c", "/mnt/apps/fbgrab/screenshot.sh", NULL};
+        call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
+        hotkey_down = true;
+      }
+      hotkey_actioned = true;   
+    }
+    if((val & MY_R) && (val & MY_L1)) {
+      val&= ~MY_R;
+      val&= ~MY_TB;
+      val|= MY_L2;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_R1)) {
+      val&= ~MY_R;
+      val&= ~MY_TA;
+      val|= MY_R2;
+      hotkey_actioned = true;
+    }
   } else if(miyoo_ver == 6) {
     if((val & MY_R) && (val & MY_L1)) {
       val&= ~MY_R;

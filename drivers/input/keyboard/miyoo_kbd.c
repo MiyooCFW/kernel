@@ -561,22 +561,6 @@ static void scan_handler(unsigned long unused)
       val|= MY_R2;
       hotkey_actioned = true;
     }
-    if((val & MY_R) && (val & MY_SELECT)) {
-      if(!hotkey_down) {
-        static char * shutdown90_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
-        call_usermodehelper(shutdown90_argv[0], shutdown90_argv, NULL, UMH_NO_WAIT);
-        hotkey_down = true;
-      }
-      hotkey_actioned = true;
-    }
-    if((val & MY_R) && (val & MY_START)) {
-      if(!hotkey_down) {
-        static char * screenshot_argv[] = {"/bin/sh", "-c", "/mnt/apps/fbgrab/screenshot.sh", NULL};
-        call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
-        hotkey_down = true;
-      }
-      hotkey_actioned = true;   
-    }
   } else if(miyoo_ver == 5) {
     if((val & MY_R) && (val & MY_L2)) {
 		if(!hotkey_down) {

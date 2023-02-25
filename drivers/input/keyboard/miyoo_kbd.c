@@ -563,7 +563,7 @@ static void scan_handler(unsigned long unused)
     }
     if((val & MY_R) && (val & MY_SELECT)) {
       if(!hotkey_down) {
-        static char * shutdown90_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
+        static char * shutdown90_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
         call_usermodehelper(shutdown90_argv[0], shutdown90_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
@@ -611,8 +611,8 @@ static void scan_handler(unsigned long unused)
   } else if(miyoo_ver == 4) {
     if((val & MY_R) && (val & MY_TA)) {
       if(!hotkey_down) {
-      static char * shutdown8_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
-      call_usermodehelper(shutdown8_argv[0], shutdown8_argv, NULL, UMH_NO_WAIT);
+        static char * shutdown8_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
+        call_usermodehelper(shutdown8_argv[0], shutdown8_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
       hotkey_actioned = true;

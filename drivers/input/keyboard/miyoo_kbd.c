@@ -581,7 +581,7 @@ static void scan_handler(unsigned long unused)
       hotkey_actioned = true;
     }
     if((val & MY_R) && (val & MY_B)) {
-      val&= ~MY_R
+      val&= ~MY_R;
       val&= ~MY_B;
       val|= MY_L3;
       hotkey_actioned = true;
@@ -612,7 +612,7 @@ static void scan_handler(unsigned long unused)
     if((val & MY_R) && (val & MY_B)) {
       val&= ~MY_R;
       val&= ~MY_B;
-      val|= MY_L3
+      val|= MY_L3;
       hotkey_actioned = true;
     }
     if((val & MY_R) && (val & MY_L1)) {

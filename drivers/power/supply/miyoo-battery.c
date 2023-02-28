@@ -33,6 +33,7 @@
 
 #include <linux/timer.h>
 #include <linux/backlight.h>
+#include <linux/gpio.h>
 
 static int g_time_interval = 300000;
 static int g_rumble_interval = 2000;
@@ -50,6 +51,9 @@ module_param(use_flash,bool,0660);
 static bool use_rumble=false;
 module_param(use_rumble,bool,0660);
 
+static bool use_charge_status=false;
+module_param(use_charge_status,bool,0660);
+
 int flash_count=0;
 
 struct suniv_device_info {
@@ -65,6 +69,16 @@ static int suniv_battery_get_property(struct power_supply *psy, enum power_suppl
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		val->intval = (readl(lradc + 0x0c) * 3 * 3 * 10);
 		break;
+    case POWER_SUPPLY_PROP_STATUS:
+        if(use_charge_status) {
+            if (gpio_get_value(((32 * 4) + 7))) // sup m3
+                val->intval = POWER_SUPPLY_STATUS_CHARGING;
+            else
+                val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+        } else {
+            val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
+        }
+        break;
 	default:
 		return -EINVAL;
 	}
@@ -73,6 +87,7 @@ static int suniv_battery_get_property(struct power_supply *psy, enum power_suppl
 
 static enum power_supply_property suniv_battery_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+    POWER_SUPPLY_PROP_STATUS
 };
 
 static int suniv_battery_probe(struct platform_device *pdev)

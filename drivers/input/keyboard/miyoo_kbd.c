@@ -405,15 +405,16 @@ static void scan_handler(unsigned long unused)
           if(gpio_get_value(IN_A_M3) == 1){
               val|= MY_SELECT;
           }
-          if(gpio_get_value(IN_1) == 1){
-              val|= MY_START;
-          }
           if(gpio_get_value(IN_2) == 1){
               val|= MY_L1;
           }
+          if(gpio_get_value(IN_1) == 1 && gpio_get_value(IN_2) == 0){
+              val|= MY_START;
+          }
 
-          gpio_direction_input(OUT_2);
-          gpio_direction_input(OUT_3);
+
+          gpio_direction_output(OUT_2, 0);
+          gpio_direction_output(OUT_3, 0);
           gpio_direction_output(IN_4,1);
           gpio_direction_output(IN_A_M3,1);
           gpio_direction_input(IN_R2_M3);
@@ -879,6 +880,10 @@ static int __init kbd_init(void)
   //ret|= 0x000000001;
   ret = 0x55555555;                      // pull-ups on PE0 - PE12
   writel(ret, gpio + (4 * 0x24 + 0x1c));
+    if (miyoo_ver == 3) {
+        ret = 0x55555555;                      // pull-ups on PA0 - PA12
+        writel(ret, gpio + (0 * 0x24 + 0x1c));
+    }
     if (miyoo_ver == 4) {
         touch = (uint8_t *) ioremap(0x01c24800, 4096);
         ret = readl(gpio + (32 * 0) + 0);

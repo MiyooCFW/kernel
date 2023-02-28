@@ -299,8 +299,8 @@ static void pocketgo_lcd_init(void)
 
     // ST7789S Frame rate setting
     lcdc_wr_cmd(0xb2);
-    lcdc_wr_dat(116);
-    lcdc_wr_dat(16);
+    lcdc_wr_dat(90);
+    lcdc_wr_dat(127);
     lcdc_wr_dat(0x01);
     lcdc_wr_dat(0x33);
     lcdc_wr_dat(0x33);
@@ -335,7 +335,7 @@ static void pocketgo_lcd_init(void)
     lcdc_wr_dat(0x20);
 
     lcdc_wr_cmd(0xc6);
-    lcdc_wr_dat(0x04); // 0x04, 0x1f
+    lcdc_wr_dat(0x01); // 0x04, 0x1f
 
     lcdc_wr_cmd(0xd0);
     lcdc_wr_dat(0xa4);
@@ -391,7 +391,13 @@ static void pocketgo_lcd_init(void)
 
 static void smartlcd_init(struct myfb_par *par)
 {
-    uint32_t ret = 0, p1 = 0, p2 = 0;
+    uint32_t ret=0, bp=0, total=0, ver=0;
+    uint32_t h_front_porch = 8;
+    uint32_t h_back_porch = 8;
+    uint32_t h_sync_len = 1;
+    uint32_t v_front_porch = 8;
+    uint32_t v_back_porch = 8;
+    uint32_t v_sync_len = 1;
 
     writel(0, iomm.lcdc + TCON_CTRL_REG);
     writel(0, iomm.lcdc + TCON_INT_REG0);
@@ -439,22 +445,14 @@ static void smartlcd_init(struct myfb_par *par)
     writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
     writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
 
-    p1 = par->mode.yres - 1;
-    p2 = par->mode.xres - 1;
-    writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG0);
-
-
-        p1 = 1 + 1;
-        p2 = 1 + 1 + par->mode.xres + 2;
-        writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG1);
-
-        p1 = 1 + 1;
-        p2 = (1 + 1 + par->mode.yres + 1 + 2) << 1;
-        writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG2);
-
-        p1 = 1 + 1;
-        p2 = 1 + 1;
-        writel((p2 << 16) | (p1 << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG3);
+    writel(((par->mode.xres - 1) << 16) | ((par->mode.yres - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG0);
+    bp = h_sync_len + h_back_porch;
+    total = par->mode.xres * 1 + h_front_porch + bp;
+    writel(((total - 1) << 16) | ((bp - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG1);
+    bp = v_sync_len + v_back_porch;
+    total = par->mode.yres + v_front_porch + bp;
+    writel(((total * 2) << 16) | ((bp - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG2);
+    writel(((h_sync_len - 1) << 16) | ((v_sync_len - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG3);
 
     writel(0, iomm.lcdc + TCON0_HV_TIMING_REG);
     writel(0, iomm.lcdc + TCON0_IO_CTRL_REG1);

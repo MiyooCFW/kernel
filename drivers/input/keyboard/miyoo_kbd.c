@@ -375,10 +375,10 @@ static void scan_handler(unsigned long unused)
               val|= MY_LEFT;
           }
           if(gpio_get_value(IN_A_M3) == 1){
-              val|= MY_TA;
+              val|= MY_TB;
           }
           if(gpio_get_value(IN_PA1) == 1){
-              val|= MY_TB;
+              val|= MY_B;
           }
 
           gpio_direction_input(IN_3);
@@ -390,10 +390,10 @@ static void scan_handler(unsigned long unused)
               val|= MY_RIGHT;
           }
           if(gpio_get_value(IN_A_M3) == 1){
-              val|= MY_A;
+              val|= MY_TA;
           }
           if(gpio_get_value(IN_PA1) == 1){
-              val|= MY_B;
+              val|= MY_A;
           }
 
           gpio_direction_input(IN_4);
@@ -562,6 +562,31 @@ static void scan_handler(unsigned long unused)
       val|= MY_R2;
       hotkey_actioned = true;
     }
+  } else if(miyoo_ver == 3) {
+    if((val & MY_R) && (val & MY_L1)) {
+      val&= ~MY_R;
+      val&= ~MY_L1;
+      val|= MY_L2;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_R1)) {
+      val&= ~MY_R;
+      val&= ~MY_R1;
+      val|= MY_R2;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_TB)) {
+      val&= ~MY_R;
+      val&= ~MY_TB;
+      val|= MY_R3;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_B)) {
+      val&= ~MY_R;
+      val&= ~MY_B;
+      val|= MY_L3;
+      hotkey_actioned = true;
+    }
   } else if(miyoo_ver == 4) {
     if((val & MY_R) && (val & MY_TA)) {
       if(!hotkey_down) {
@@ -579,15 +604,27 @@ static void scan_handler(unsigned long unused)
       }
       hotkey_actioned = true;   
     }
-    if((val & MY_R) && (val & MY_L1)) {
+    if((val & MY_R) && (val & MY_TB)) {
       val&= ~MY_R;
       val&= ~MY_TB;
+      val|= MY_R3;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_B)) {
+      val&= ~MY_R;
+      val&= ~MY_B;
+      val|= MY_L3;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_L1)) {
+      val&= ~MY_R;
+      val&= ~MY_L1;
       val|= MY_L2;
       hotkey_actioned = true;
     }
     if((val & MY_R) && (val & MY_R1)) {
       val&= ~MY_R;
-      val&= ~MY_TA;
+      val&= ~MY_R1;
       val|= MY_R2;
       hotkey_actioned = true;
     }
@@ -696,7 +733,7 @@ static void scan_handler(unsigned long unused)
       }
 	 	}
 	 	else if((val & MY_R) && (val & MY_A)){
-      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
+      if(miyoo_ver == 2 || miyoo_ver == 3 || miyoo_ver == 5 || miyoo_ver == 6)  {
 	  	  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 4 : hotkey;
       }
@@ -708,7 +745,7 @@ static void scan_handler(unsigned long unused)
       }
 		}
 		else if((val & MY_R) && (val & MY_TA)){
-      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
+      if(miyoo_ver == 2 || miyoo_ver == 3 || miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 2 : hotkey;
       }

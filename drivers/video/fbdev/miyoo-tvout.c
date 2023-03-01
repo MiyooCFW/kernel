@@ -426,6 +426,7 @@ void defe_init_spl_422(uint16_t in_w, uint16_t in_h, struct myfb_par *par)
 
 
     writel( (1 << 8 ) | (5 << 4) | (1 << 0), iomm.defe+DEFE_IN_FMT); // ARGB888
+    writel( (1 << 4), iomm.defe+DEFE_OUT_FMT); // Output interlace enable
     suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 23)); // Enable CPU access to filter RAM (if enabled, filter is bypassed?)
     suniv_clrbits(iomm.defe+DEFE_EN, (1 << 31)); // Disable CPU access (?)
     suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 0)); // Registers ready

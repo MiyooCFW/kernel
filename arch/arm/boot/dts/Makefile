@@ -819,7 +819,7 @@ dtb-$(CONFIG_ARCH_STM32)+= \
 	stm32h743i-disco.dtb
 dtb-$(CONFIG_MACH_SUNIV) += \
 	suniv-f1c500s-miyoo.dtb \
-	suniv-f1c500s-miyoo-1bit.dtb
+	suniv-f1c500s-miyoo-4bit.dtb
 dtb-$(CONFIG_ARCH_TANGO) += \
 	tango4-vantage-1172.dtb
 dtb-$(CONFIG_ARCH_TEGRA_2x_SOC) += \

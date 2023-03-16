@@ -861,9 +861,9 @@ static const struct file_operations myfops = {
 static int __init fb_init(void)
 {
     suniv_ioremap();
-    alloc_chrdev_region(&major, 0, 1, "miyoo_video_fb0");
-    myclass = class_create(THIS_MODULE, "miyoo_video_fb0");
-    device_create(myclass, NULL, major, NULL, "miyoo_video_fb0");
+    alloc_chrdev_region(&major, 0, 1, "miyoo_fb0");
+    myclass = class_create(THIS_MODULE, "miyoo_fb0");
+    device_create(myclass, NULL, major, NULL, "miyoo_fb0");
     cdev_init(&mycdev, &myfops);
     cdev_add(&mycdev, major, 1);
     return platform_driver_register(&fb_driver);

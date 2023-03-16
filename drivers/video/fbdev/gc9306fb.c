@@ -201,7 +201,10 @@ static void init_lcd(void)
     mdelay(150);
     suniv_setbits(iomm.lcdc + PE_DATA, (1 << 11));
     mdelay(150);
-
+    
+    lcdc_wr_cmd(0x11);       // SleepIn
+    mdelay(120);
+    lcdc_wr_cmd(0x28);  // display off
     //------------- display control setting -----------------------//
     lcdc_wr_cmd(0xfe);
     lcdc_wr_cmd(0xef);

@@ -550,6 +550,18 @@ static void scan_handler(unsigned long unused)
 
 #if !defined(RAW)
   if(miyoo_ver == 2)  {
+    if((val & MY_R) && (val & MY_B)) {
+      val&= ~MY_R;
+      val&= ~MY_B;
+      val|= MY_L3;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_TB)) {
+      val&= ~MY_R;
+      val&= ~MY_TB;
+      val|= MY_R3;
+      hotkey_actioned = true;
+    }
     if((val & MY_R) && (val & MY_L1)) {
       val&= ~MY_R;
       val&= ~MY_L1;
@@ -604,16 +616,16 @@ static void scan_handler(unsigned long unused)
       }
       hotkey_actioned = true;   
     }
-    if((val & MY_R) && (val & MY_TB)) {
-      val&= ~MY_R;
-      val&= ~MY_TB;
-      val|= MY_R3;
-      hotkey_actioned = true;
-    }
     if((val & MY_R) && (val & MY_B)) {
       val&= ~MY_R;
       val&= ~MY_B;
       val|= MY_L3;
+      hotkey_actioned = true;
+    }
+    if((val & MY_R) && (val & MY_TB)) {
+      val&= ~MY_R;
+      val&= ~MY_TB;
+      val|= MY_R3;
       hotkey_actioned = true;
     }
     if((val & MY_R) && (val & MY_L1)) {
@@ -727,7 +739,7 @@ static void scan_handler(unsigned long unused)
 
   if(val & MY_R && !non_hotkey_first) {
 	  if((val & MY_R) && (val & MY_B)){
-      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
+      if(miyoo_ver == 5 || miyoo_ver == 6)  {
 			  hotkey_actioned = true;
 	  	  hotkey = hotkey == 0 ? 3 : hotkey;
       }
@@ -739,7 +751,7 @@ static void scan_handler(unsigned long unused)
       }
 	 	}
 		else if((val & MY_R) && (val & MY_TB)){
-      if(miyoo_ver == 2 || miyoo_ver == 5 || miyoo_ver == 6)  {
+      if(miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
         hotkey = hotkey == 0 ? 1 : hotkey;
       }
@@ -828,21 +840,28 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_UP, KEY_UP);
     report_key(pre, MY_DOWN, KEY_DOWN);
     report_key(pre, MY_LEFT, KEY_LEFT);
-    report_key(pre, MY_R, KEY_RIGHTCTRL);
     report_key(pre, MY_RIGHT, KEY_RIGHT);
+    report_key(pre, MY_R, KEY_RIGHTCTRL); // "HOME/RESET" button
     switch (miyoo_layout) {
         case 1:
-            //MiyooCFW 2.0 layout
-            report_key(pre, MY_A, KEY_LEFTCTRL);
-            report_key(pre, MY_B, KEY_SPACE);
-            report_key(pre, MY_TA, KEY_LEFTALT);
-            report_key(pre, MY_TB, KEY_LEFTSHIFT);
+            //MiyooCFW 2.0 default layout
+            report_key(pre, MY_A, KEY_LEFTCTRL); // "B" for PocketGO - bottom face button
+            report_key(pre, MY_B, KEY_SPACE); // "Y" for PocketGO - left face button
+            report_key(pre, MY_TA, KEY_LEFTALT); // "A" for PocketGO - right face button
+            report_key(pre, MY_TB, KEY_LEFTSHIFT); // "X" for PocketGO - upper face button
             break;
         case 2:
             //CFW 1.3.3 Bittboy layout (A-TA & B-TB are swapped)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_LEFTSHIFT);
             report_key(pre, MY_TA, KEY_LEFTCTRL);
+            report_key(pre, MY_TB, KEY_SPACE);
+            break;
+        case 3:
+            //Bittboy original layout
+            report_key(pre, MY_A, KEY_LEFTALT);
+            report_key(pre, MY_B, KEY_LEFTCTRL);
+            report_key(pre, MY_TA, KEY_LEFTSHIFT);
             report_key(pre, MY_TB, KEY_SPACE);
             break;
     }

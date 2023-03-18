@@ -2542,6 +2542,15 @@ config FB_RM68090
 	help
 	  Framebuffer driver for RM68090 SLCD panel.
 
+config FB_HX8347D
+	tristate "HX8347D SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for HX8347D SLCD panel.
+
 config FB_TVOUT
 tristate "TVOUT support"
 depends on FB

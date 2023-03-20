@@ -52,6 +52,8 @@
 
 #define PALETTE_SIZE 256
 #define DRIVER_NAME  "q8-fb"
+#define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
+#define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
 
 struct myfb_par {
     struct device *dev;
@@ -725,7 +727,24 @@ static int myclose(struct inode *inode, struct file *file)
 }
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    return 0;
+    int32_t w, bpp;
+
+    switch(cmd){
+        case MIYOO_FB0_PUT_OSD:
+            break;
+        case MIYOO_FB0_SET_MODE:
+            w = (arg >> 16);
+            bpp = (arg & 0xffff);
+            if((bpp != 16)){
+                writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
+                writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+            }
+            else{
+                writel((7 << 8) | 4, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
+                writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+            }
+            break;
+    }
 }
 
 static const struct file_operations myfops = {

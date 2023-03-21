@@ -913,7 +913,7 @@ static int myclose(struct inode *inode, struct file *file)
 
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-  int ret;
+  uint32_t ret;
 
   switch(cmd){
   case MIYOO_KBD_GET_HOTKEY:
@@ -925,14 +925,14 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     printk("miyoo keypad version config as v%d\n", (int)miyoo_ver);
     break;
   case MIYOO_KBD_GET_VER:
-    ret = copy_to_user((void*)arg, &miyoo_ver, sizeof(uint32_t));
+    ret = copy_to_user((void*)arg, &miyoo_ver, sizeof(unsigned long));
     break;
   case MIYOO_LAY_SET_VER:
     miyoo_layout = arg;
     printk("miyoo keypad layout config as v%d\n", (int)miyoo_layout);
     break;
   case MIYOO_LAY_GET_VER:
-    ret = copy_to_user((void*)arg, &miyoo_layout, sizeof(uint32_t));
+    ret = copy_to_user((void*)arg, &miyoo_layout, sizeof(unsigned long));
     break;
   case MIYOO_KBD_LOCK_KEY:
     lockkey = arg;

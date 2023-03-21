@@ -39,6 +39,8 @@
 #define MIYOO_KBD_SET_VER     _IOWR(0x101, 0, unsigned long)
 #define MIYOO_KBD_LOCK_KEY    _IOWR(0x102, 0, unsigned long)
 #define MIYOO_LAY_SET_VER     _IOWR(0x103, 0, unsigned long)
+#define MIYOO_KBD_GET_VER     _IOWR(0x104, 0, unsigned long)
+#define MIYOO_LAY_GET_VER     _IOWR(0x105, 0, unsigned long)
 
 //Keypad type
 // CONFIG_KEYBOARD_MIYOO_TYPE:
@@ -922,9 +924,15 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     miyoo_ver = arg;
     printk("miyoo keypad version config as v%d\n", (int)miyoo_ver);
     break;
+  case MIYOO_KBD_GET_VER:
+    ret = copy_to_user((void*)arg, &miyoo_ver, sizeof(unsigned long));
+    break;
   case MIYOO_LAY_SET_VER:
     miyoo_layout = arg;
     printk("miyoo keypad layout config as v%d\n", (int)miyoo_layout);
+    break;
+  case MIYOO_LAY_GET_VER:
+    ret = copy_to_user((void*)arg, &miyoo_layout, sizeof(unsigned long));
     break;
   case MIYOO_KBD_LOCK_KEY:
     lockkey = arg;

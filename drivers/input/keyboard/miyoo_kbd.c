@@ -913,7 +913,7 @@ static int myclose(struct inode *inode, struct file *file)
 
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-  uint32_t ret;
+  int ret;
 
   switch(cmd){
   case MIYOO_KBD_GET_HOTKEY:

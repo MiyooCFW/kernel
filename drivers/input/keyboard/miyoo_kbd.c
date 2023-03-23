@@ -922,14 +922,18 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     break;
   case MIYOO_KBD_SET_VER:
     miyoo_ver = arg;
+#if defined(DEBUG)
     printk("miyoo keypad version config as v%d\n", (int)miyoo_ver);
+#endif
     break;
   case MIYOO_KBD_GET_VER:
     ret = copy_to_user((void*)arg, &miyoo_ver, sizeof(unsigned long));
     break;
   case MIYOO_LAY_SET_VER:
     miyoo_layout = arg;
+#if defined(DEBUG)  
     printk("miyoo keypad layout config as v%d\n", (int)miyoo_layout);
+#endif
     break;
   case MIYOO_LAY_GET_VER:
     ret = copy_to_user((void*)arg, &miyoo_layout, sizeof(unsigned long));

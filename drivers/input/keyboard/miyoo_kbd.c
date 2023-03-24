@@ -393,10 +393,10 @@ static void scan_handler(unsigned long unused)
               val|= MY_RIGHT;
           }
           if(gpio_get_value(IN_A_M3) == 1){
-              val|= MY_TA;
+              val|= MY_A;
           }
           if(gpio_get_value(IN_PA1) == 1){
-              val|= MY_A;
+              val|= MY_TA;
           }
 
           gpio_direction_input(IN_4);
@@ -438,10 +438,10 @@ static void scan_handler(unsigned long unused)
           gpio_direction_input(IN_L1_Q8);
 
           if(gpio_get_value(IN_1) == 0){
-              val|= MY_TA;
+              val|= MY_A;
           }
           if(gpio_get_value(IN_A_M3) == 0){
-              val|= MY_A;
+              val|= MY_TA;
           }
           if(gpio_get_value(IN_2) == 0){
               val|= MY_TB;
@@ -603,7 +603,7 @@ static void scan_handler(unsigned long unused)
       hotkey_actioned = true;
     }
   } else if(miyoo_ver == 4) {
-    if((val & MY_R) && (val & MY_TA)) {
+    if((val & MY_R) && (val & MY_A)) {
       if(!hotkey_down) {
         static char * shutdown8_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
         call_usermodehelper(shutdown8_argv[0], shutdown8_argv, NULL, UMH_NO_WAIT);
@@ -611,7 +611,7 @@ static void scan_handler(unsigned long unused)
       }
       hotkey_actioned = true;
     }
-    if((val & MY_R) && (val & MY_A)) {
+    if((val & MY_R) && (val & MY_TA)) {
       if(!hotkey_down) {
         static char * screenshot_argv[] = {"/bin/sh", "-c", "/mnt/apps/fbgrab/screenshot.sh", NULL};
         call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
@@ -847,25 +847,46 @@ static void scan_handler(unsigned long unused)
     report_key(pre, MY_R, KEY_RIGHTCTRL); // "HOME/RESET" button
     switch (miyoo_layout) {
         case 1:
-            //MiyooCFW 2.0 default layout
-            report_key(pre, MY_A, KEY_LEFTCTRL); // "B" for PocketGO - bottom face button
-            report_key(pre, MY_B, KEY_SPACE); // "Y" for PocketGO - left face button
-            report_key(pre, MY_TA, KEY_LEFTALT); // "A" for PocketGO - right face button
-            report_key(pre, MY_TB, KEY_LEFTSHIFT); // "X" for PocketGO - upper face button
+            //MiyooCFW 2.0 default layout (as seen on PocketGO)
+            report_key(pre, MY_A, KEY_LEFTCTRL); // "B" - bottom face button
+            report_key(pre, MY_B, KEY_SPACE); // "Y" - left face button
+            report_key(pre, MY_TA, KEY_LEFTALT); // "A" - right face button
+            report_key(pre, MY_TB, KEY_LEFTSHIFT); // "X" - upper face button
             break;
         case 2:
-            //CFW 1.3.3 Bittboy layout (A-TA & B-TB are swapped)
+            //CFW 1.3.3 legacy layout (swapped A-B & Y-X)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_LEFTSHIFT);
             report_key(pre, MY_TA, KEY_LEFTCTRL);
             report_key(pre, MY_TB, KEY_SPACE);
             break;
         case 3:
-            //Bittboy original layout
+            //Bittboy & M3S layout (swapped A-Y & B-X)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_LEFTCTRL);
             report_key(pre, MY_TA, KEY_LEFTSHIFT);
             report_key(pre, MY_TB, KEY_SPACE);
+            break;
+        case 4:
+            //SUP M3 & XYC Q8 layout (swapped A-B )
+            report_key(pre, MY_A, KEY_LEFTALT);
+            report_key(pre, MY_B, KEY_SPACE);
+            report_key(pre, MY_TA, KEY_LEFTCTRL);
+            report_key(pre, MY_TB, KEY_LEFTSHIFT);
+            break;
+        case 5:
+            //Custom I (swapped Y-X)
+            report_key(pre, MY_A, KEY_LEFTCTRL);
+            report_key(pre, MY_B, KEY_LEFTSHIFT);
+            report_key(pre, MY_TA, KEY_LEFTALT);
+            report_key(pre, MY_TB, KEY_SPACE);
+            break;
+        case 6:
+            //Custom II (moved A->X & Y->A & X->Y)
+            report_key(pre, MY_A, KEY_LEFTCTRL);
+            report_key(pre, MY_B, KEY_LEFTSHIFT);
+            report_key(pre, MY_TA, KEY_SPACE);
+            report_key(pre, MY_TB, KEY_LEFTALT);
             break;
     }
 

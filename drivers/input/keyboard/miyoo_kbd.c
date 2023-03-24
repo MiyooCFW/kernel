@@ -861,7 +861,7 @@ static void scan_handler(unsigned long unused)
             report_key(pre, MY_TB, KEY_SPACE);
             break;
         case 3:
-            //Bittboy & M3S layout (swapped A-Y & B-X)
+            //Bittboy layout (moved A->B B->Y & Y->X)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_LEFTCTRL);
             report_key(pre, MY_TA, KEY_LEFTSHIFT);
@@ -872,7 +872,7 @@ static void scan_handler(unsigned long unused)
             report_key(pre, MY_A, KEY_LEFTALT);
             report_key(pre, MY_B, KEY_SPACE);
             report_key(pre, MY_TA, KEY_LEFTCTRL);
-            report_key(pre, MY_TB, KEY_LEFTSHIFT);
+            report_key(pre, MY_TB, KEY_LEFTSHIFT); 
             break;
         case 5:
             //Custom I (swapped Y-X)

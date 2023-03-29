@@ -77,6 +77,9 @@ module_param(flip,bool,0660);
 static bool lowcurrent=false;
 module_param(lowcurrent,bool,0660);
 
+static bool tefix=true;
+module_param(tefix,bool,0660);
+
 struct myfb_app{
     uint32_t yoffset;
     uint32_t vsync_count;
@@ -261,23 +264,28 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
 
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
-    suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+	if(tefix)
+      suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
     lcdc_wr_cmd(0x45);
     lcdc_rd_dat();
     lcdc_rd_dat();
-    for (i=firstScanLine;i<=lastScanLine;i++) {
+	if(!tefix)
+		lastScanLine=5;
+      for (i=firstScanLine;i<=lastScanLine;i++) {
         lcdc_wr_cmd(0x45);
         lcdc_rd_dat();
         lcdc_rd_dat();
         vsync = lcdc_rd_dat();
         if (vsync > 0) {
             refresh_lcd(arg);
-            suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+			if(tefix)
+              suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
             suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
             return IRQ_HANDLED;
         }
-    }
-    suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+      }
+    if(tefix)
+      suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
     suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
     return IRQ_HANDLED;
 }
@@ -315,9 +323,11 @@ static void init_lcd(void)
     lcdc_wr_dat(0xef);
         
     // ST7789S Frame rate setting
-    lcdc_wr_cmd(0xb2);
-    lcdc_wr_dat(8); // bp 0x0a
-    lcdc_wr_dat(126); // fp 0x0b
+	if(tefix) {
+		lcdc_wr_cmd(0xb2);
+		lcdc_wr_dat(8); // bp 0x0a
+		lcdc_wr_dat(126); // fp 0x0b
+	}
     lcdc_wr_dat(0x00);        			
     lcdc_wr_dat(0x33);
     lcdc_wr_dat(0x33);
@@ -413,8 +423,12 @@ static void suniv_lcdc_init(struct myfb_par *par)
     uint32_t h_front_porch = 8;
     uint32_t h_back_porch = 8;
     uint32_t h_sync_len = 1;
-    uint32_t v_front_porch = 64;
-    uint32_t v_back_porch = 64;
+    uint32_t v_front_porch = 8;
+    uint32_t v_back_porch = 8;
+	if(tefix){
+	    v_front_porch = 64;
+        v_back_porch = 64;
+	}
     uint32_t v_sync_len = 1;
 
     writel(0, iomm.lcdc + TCON_CTRL_REG);

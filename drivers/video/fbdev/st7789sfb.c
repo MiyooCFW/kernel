@@ -77,6 +77,9 @@ module_param(flip,bool,0660);
 static bool lowcurrent=false;
 module_param(lowcurrent,bool,0660);
 
+static bool tefix=true;
+module_param(tefix,bool,0660);
+
 struct myfb_app{
     uint32_t yoffset;
     uint32_t vsync_count;
@@ -261,11 +264,12 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
 
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
-    suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-    lcdc_wr_cmd(0x45);
-    lcdc_rd_dat();
-    lcdc_rd_dat();
-    for (i=firstScanLine;i<=lastScanLine;i++) {
+	if(tefix) {
+      suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+      lcdc_wr_cmd(0x45);
+      lcdc_rd_dat();
+      lcdc_rd_dat();
+	  for (i=firstScanLine;i<=lastScanLine;i++) {
         lcdc_wr_cmd(0x45);
         lcdc_rd_dat();
         lcdc_rd_dat();
@@ -276,10 +280,14 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
             suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
             return IRQ_HANDLED;
         }
-    }
+      }
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
     suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
     return IRQ_HANDLED;
+	}
+    refresh_lcd(arg);
+    suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+    return IRQ_HANDLED;	
 }
 
 static void init_lcd(void)
@@ -315,12 +323,15 @@ static void init_lcd(void)
     lcdc_wr_dat(0xef);
         
     // ST7789S Frame rate setting
-    lcdc_wr_cmd(0xb2);
-    lcdc_wr_dat(8); // bp 0x0a
-    lcdc_wr_dat(126); // fp 0x0b
-    lcdc_wr_dat(0x00);        			
-    lcdc_wr_dat(0x33);
-    lcdc_wr_dat(0x33);
+	if(tefix) {
+		lcdc_wr_cmd(0xb2);
+		lcdc_wr_dat(8); // bp 0x0a
+		lcdc_wr_dat(122); // fp 0x0b
+		lcdc_wr_dat(0x00);        			
+		lcdc_wr_dat(0x33);
+		lcdc_wr_dat(0x33);
+	}
+
 
 //    // Gate Control
 //    lcdc_wr_cmd(0xb7);
@@ -348,8 +359,8 @@ static void init_lcd(void)
 //    lcdc_wr_cmd(0xc4);
 //    lcdc_wr_dat(0x20);
 //
-//    lcdc_wr_cmd(0xc6);
-//    lcdc_wr_dat(0x04); // 0x04, 0x1f
+    lcdc_wr_cmd(0xc6);
+    lcdc_wr_dat(0x03); // 0x04, 0x1f
 //
 //    lcdc_wr_cmd(0xd0);
 //    lcdc_wr_dat(0xa4);
@@ -413,8 +424,12 @@ static void suniv_lcdc_init(struct myfb_par *par)
     uint32_t h_front_porch = 8;
     uint32_t h_back_porch = 8;
     uint32_t h_sync_len = 1;
-    uint32_t v_front_porch = 64;
-    uint32_t v_back_porch = 64;
+    uint32_t v_front_porch = 8;
+    uint32_t v_back_porch = 8;
+	if(tefix){
+	    v_front_porch = 60;
+        v_back_porch = 60;
+	}
     uint32_t v_sync_len = 1;
 
     writel(0, iomm.lcdc + TCON_CTRL_REG);
@@ -885,4 +900,3 @@ module_exit(fb_cleanup);
 MODULE_DESCRIPTION("Framebuffer driver for ST7789S");
 MODULE_AUTHOR("Steward Fu <steward.fu@gmail.com>");
 MODULE_LICENSE("GPL");
-

@@ -69,6 +69,7 @@
 #define DRIVER_NAME  "ST7789S-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
+#define MIYOO_FB0_SET_FPBP    _IOWR(0x104, 0, unsigned long)
 DECLARE_WAIT_QUEUE_HEAD(wait_vsync_queue);
 
 static bool flip=false;
@@ -114,6 +115,7 @@ struct suniv_iomm {
     uint8_t *intc;
     uint8_t *timer;
 };
+
 static int major = -1;
 static struct cdev mycdev;
 static struct class *myclass = NULL;
@@ -121,7 +123,7 @@ struct timer_list mytimer;
 static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
-static uint16_t lastScanLine = 164;
+static uint16_t lastScanLine = 104;
 static uint16_t  firstScanLine = 5;
 uint16_t x, i, scanline, vsync;
 
@@ -323,15 +325,17 @@ static void init_lcd(void)
     lcdc_wr_dat(0xef);
         
     // ST7789S Frame rate setting
+	lcdc_wr_cmd(0xb2);
 	if(tefix) {
-		lcdc_wr_cmd(0xb2);
 		lcdc_wr_dat(8); // bp 0x0a
 		lcdc_wr_dat(122); // fp 0x0b
+	} else {
+		lcdc_wr_dat(9); // bp 0x0a
+		lcdc_wr_dat(10); // fp 0x0b
+	}
 		lcdc_wr_dat(0x00);        			
 		lcdc_wr_dat(0x33);
 		lcdc_wr_dat(0x33);
-	}
-
 
 //    // Gate Control
 //    lcdc_wr_cmd(0xb7);
@@ -417,9 +421,21 @@ static void init_lcd(void)
     memset(mypar->vram_virt, 0, 320*240*4);
 }
 
-static void suniv_lcdc_init(struct myfb_par *par)
+static void suniv_fb_addr_init(struct myfb_par *par)
 {
+    writel((uint32_t)(par->vram_phys + 320*240*2*0) << 3, iomm.debe + DEBE_LAY0_FB_ADDR_REG);
+    writel((uint32_t)(par->vram_phys + 320*240*2*1) << 3, iomm.debe + DEBE_LAY1_FB_ADDR_REG);
+    writel((uint32_t)(par->vram_phys + 320*240*2*2) << 3, iomm.debe + DEBE_LAY2_FB_ADDR_REG);
+    writel((uint32_t)(par->vram_phys + 320*240*2*3) << 3, iomm.debe + DEBE_LAY3_FB_ADDR_REG);
 
+    writel((uint32_t)(par->vram_phys + 320*240*2*0) >> 29, iomm.debe + DEBE_LAY0_FB_HI_ADDR_REG);
+    writel((uint32_t)(par->vram_phys + 320*240*2*1) >> 29, iomm.debe + DEBE_LAY1_FB_HI_ADDR_REG);
+    writel((uint32_t)(par->vram_phys + 320*240*2*2) >> 29, iomm.debe + DEBE_LAY2_FB_HI_ADDR_REG);
+    writel((uint32_t)(par->vram_phys + 320*240*2*3) >> 29, iomm.debe + DEBE_LAY3_FB_HI_ADDR_REG);	
+}
+
+static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
+{
     uint32_t ret=0, bp=0, total=0;
     uint32_t h_front_porch = 8;
     uint32_t h_back_porch = 8;
@@ -441,15 +457,15 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel(0xffffffff, iomm.lcdc + TCON1_IO_CTRL_REG1);
 
     suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 0));
-    writel(par->mode.xres << 4, iomm.debe + DEBE_LAY0_LINEWIDTH_REG);
-    writel(par->mode.xres << 4, iomm.debe + DEBE_LAY1_LINEWIDTH_REG);
-    writel(par->mode.xres << 4, iomm.debe + DEBE_LAY2_LINEWIDTH_REG);
-    writel(par->mode.xres << 4, iomm.debe + DEBE_LAY3_LINEWIDTH_REG);
-    writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_DISP_SIZE_REG);
-    writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY0_SIZE_REG);
-    writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY1_SIZE_REG);
-    writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY2_SIZE_REG);
-    writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY3_SIZE_REG);
+    writel(xres << 4, iomm.debe + DEBE_LAY0_LINEWIDTH_REG);
+    writel(xres << 4, iomm.debe + DEBE_LAY1_LINEWIDTH_REG);
+    writel(xres << 4, iomm.debe + DEBE_LAY2_LINEWIDTH_REG);
+    writel(xres << 4, iomm.debe + DEBE_LAY3_LINEWIDTH_REG);
+    writel((((yres) - 1) << 16) | (((xres) - 1) << 0), iomm.debe + DEBE_DISP_SIZE_REG);
+    writel((((yres) - 1) << 16) | (((xres) - 1) << 0), iomm.debe + DEBE_LAY0_SIZE_REG);
+    writel((((yres) - 1) << 16) | (((xres) - 1) << 0), iomm.debe + DEBE_LAY1_SIZE_REG);
+    writel((((yres) - 1) << 16) | (((xres) - 1) << 0), iomm.debe + DEBE_LAY2_SIZE_REG);
+    writel((((yres) - 1) << 16) | (((xres) - 1) << 0), iomm.debe + DEBE_LAY3_SIZE_REG);
     writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
     writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
     writel((5 << 8), iomm.debe + DEBE_LAY2_ATT_CTRL_REG1);
@@ -463,27 +479,17 @@ static void suniv_lcdc_init(struct myfb_par *par)
     writel(ret, iomm.lcdc + TCON_CTRL_REG);
     ret = (v_front_porch + v_back_porch + v_sync_len);
 
-    writel((uint32_t)(par->vram_phys + 320*240*2*0) << 3, iomm.debe + DEBE_LAY0_FB_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2*1) << 3, iomm.debe + DEBE_LAY1_FB_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2*2) << 3, iomm.debe + DEBE_LAY2_FB_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2*3) << 3, iomm.debe + DEBE_LAY3_FB_ADDR_REG);
-
-    writel((uint32_t)(par->vram_phys + 320*240*2*0) >> 29, iomm.debe + DEBE_LAY0_FB_HI_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2*1) >> 29, iomm.debe + DEBE_LAY1_FB_HI_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2*2) >> 29, iomm.debe + DEBE_LAY2_FB_HI_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2*3) >> 29, iomm.debe + DEBE_LAY3_FB_HI_ADDR_REG);
-
     writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
     writel((0xf << 28) | (6 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); //6, 15, 25
     writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
     writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
 
-    writel(((par->mode.xres - 1) << 16) | ((par->mode.yres - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG0);
+    writel(((xres - 1) << 16) | ((yres - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG0);
     bp = h_sync_len + h_back_porch;
-    total = par->mode.xres * 1 + h_front_porch + bp;
+    total = xres * 1 + h_front_porch + bp;
     writel(((total - 1) << 16) | ((h_back_porch) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG1);
     bp = v_sync_len + v_back_porch;
-    total = par->mode.yres + v_front_porch + bp;
+    total = yres + v_front_porch + bp;
     writel(((total * 2) << 16) | ((v_back_porch) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG2);
     writel(((h_sync_len) << 16) | ((v_sync_len) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG3);
     writel(0, iomm.lcdc + TCON0_HV_TIMING_REG);
@@ -551,7 +557,8 @@ static void suniv_cpu_init(struct myfb_par *par)
 static void lcd_delay_init(unsigned long param)
 {
     suniv_cpu_init(mypar);
-    suniv_lcdc_init(mypar);
+	suniv_fb_addr_init(mypar);
+    suniv_lcdc_init(mypar->mode.xres, mypar->mode.yres);
     mypar->lcdc_ready = 1;
     suniv_enable_irq(mypar);
 }
@@ -631,7 +638,7 @@ static int myfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
     switch(cmd){
         case FBIO_WAITFORVSYNC:
             wait_for_vsync(par);
-            break;
+            break;			
     }
     return 0;
 }
@@ -843,6 +850,7 @@ static int myclose(struct inode *inode, struct file *file)
 {
     return 0;
 }
+
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     int32_t w, bpp;
@@ -862,6 +870,16 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
             }
             break;
+        case MIYOO_FB0_SET_FPBP:
+			printk("st7789sfb: set TE fix to: %d", (int)arg);
+			if (arg == 1){
+				tefix=true;
+				suniv_lcdc_init(320, 240);
+			} else {
+				tefix=false;
+				suniv_lcdc_init(320, 240);
+			}
+			break;				
     }
     return 0;
 }

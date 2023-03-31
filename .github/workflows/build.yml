@@ -25,7 +25,7 @@ jobs:
       id: cache-key
       run: |
         cd ${{ inputs.submodule }}
-        echo "key=${{ inputs.submodule }}-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        echo "key=${{ inputs.submodule }}-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
       
     - uses: actions/cache@v3
       if: inputs.submodule

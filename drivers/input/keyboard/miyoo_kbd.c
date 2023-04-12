@@ -44,12 +44,13 @@
 
 //Keypad type
 // CONFIG_KEYBOARD_MIYOO_TYPE:
-//   1 -> "RS97" meaning ABXY flipped southwest <-> northeast
+//   1 -> "BittBoy" meaning ABXY flipped southwest <-> northeast
 //   2 -> "POCKETGOV1" meaning ABXY flipped southeast <-> northwest
 //   3 -> "SUP M3" meaning AB flipped - matrix multiplexation for inputs.
 //   4 -> "XYC Q8" meaning AB flipped & with echo and debounce code - mapping through GPIO reads except from HOME/START/VOLUME 
 //   5 -> V90 meaning additional L2/R2 physical buttons
 //   6 -> Q20 meaning Lfunction/Rfunction button (similarly to Q90)
+//   7 -> HYBRID meaning BittBoy shell with PocketGo components.
 
 /* 
  * Hardware map (as observed from the working code)
@@ -245,7 +246,7 @@ static void scan_handler(unsigned long unused)
           case 1:
             gpio_direction_output(OUT_2, 0);
             break;
-	  case 2: case 5: case 6:
+	  case 2: case 5: case 6: case 7:
             gpio_direction_output(OUT_3, 0);
             break;
           }
@@ -304,7 +305,7 @@ static void scan_handler(unsigned long unused)
         }
         #endif
     break;
-      case 2: case 5:
+      case 2: case 5: case 7:
           gpio_direction_input(IN_1);
           gpio_direction_input(IN_2);
           gpio_direction_input(IN_3);

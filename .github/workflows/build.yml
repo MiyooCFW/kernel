@@ -11,9 +11,9 @@ on:
 
 jobs:   
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     container:
-      image: nfriedly/miyoo-toolchain:steward
+      image: miyoocfw/toolchain-shared-uclibc:master
     steps:
     - uses: actions/checkout@v3
     

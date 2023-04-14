@@ -78,8 +78,8 @@ module_param(flip,bool,0660);
 static bool lowcurrent=false;
 module_param(lowcurrent,bool,0660);
 
-static bool tefix=true;
-module_param(tefix,bool,0660);
+static int tefix=1;
+module_param(tefix,int,0660);
 
 struct myfb_app{
     uint32_t yoffset;
@@ -326,7 +326,7 @@ static void init_lcd(void)
         
     // ST7789S Frame rate setting
 	lcdc_wr_cmd(0xb2);
-	if(tefix) {
+	if(tefix==1) {
 		lcdc_wr_dat(8); // bp 0x0a
 		lcdc_wr_dat(122); // fp 0x0b
 	} else {
@@ -442,7 +442,7 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
     uint32_t h_sync_len = 1;
     uint32_t v_front_porch = 8;
     uint32_t v_back_porch = 8;
-	if(tefix){
+	if(tefix==1){
 	    v_front_porch = 60;
         v_back_porch = 60;
 	}
@@ -536,7 +536,8 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
+    if (tefix==1)
+      writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
     while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
     while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
 
@@ -546,7 +547,9 @@ static void suniv_cpu_init(struct myfb_par *par)
 
     suniv_setbits(iomm.ccm + FE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BE_CLK_REG, (1 << 31));
-    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31) | (1 << 25));
+    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
+    if (tefix==1)
+	suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 25));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     for(i=0x0800; i<0x1000; i+=4){
@@ -872,11 +875,17 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             break;
         case MIYOO_FB0_SET_FPBP:
 			printk("st7789sfb: set TE fix to: %d", (int)arg);
-			if (arg == 1){
-				tefix=true;
+			switch (arg){
+			    case 1:
+				tefix=1;
 				suniv_lcdc_init(320, 240);
-			} else {
-				tefix=false;
+				break;
+			    case 2:
+				tefix=2;
+				suniv_lcdc_init(320, 240);
+				break;
+			    default:
+				tefix=0;
 				suniv_lcdc_init(320, 240);
 			}
 			break;				

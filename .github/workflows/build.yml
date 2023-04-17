@@ -11,6 +11,7 @@ on:
 
 jobs:   
   build:
+    name: kernel for MiyooCFW (uClibc)
     runs-on: ubuntu-22.04
     container:
       image: miyoocfw/toolchain-shared-uclibc:master

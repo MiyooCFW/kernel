@@ -268,21 +268,21 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
 	if(tefix) {
       suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-      lcdc_wr_cmd(0x45);
-      lcdc_rd_dat();
-      lcdc_rd_dat();
-	  for (i=firstScanLine;i<=lastScanLine;i++) {
-        lcdc_wr_cmd(0x45);
-        lcdc_rd_dat();
-        lcdc_rd_dat();
-        vsync = lcdc_rd_dat();
-        if (vsync > 0) {
-            refresh_lcd(arg);
-            suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-            suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-            return IRQ_HANDLED;
-        }
-      }
+          lcdc_wr_cmd(0x45);
+          lcdc_rd_dat();
+          lcdc_rd_dat();
+          for (i = firstScanLine; i <= lastScanLine; i++) {
+              lcdc_wr_cmd(0x45);
+              lcdc_rd_dat();
+              lcdc_rd_dat();
+              vsync = lcdc_rd_dat();
+              if (vsync > 0) {
+                  refresh_lcd(arg);
+                  suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+                  suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+                  return IRQ_HANDLED;
+              }
+          }
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
     suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
     return IRQ_HANDLED;
@@ -294,6 +294,12 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 
 static void init_lcd(void)
 {
+    if(tefix==1)
+        lastScanLine = 104;
+    if(tefix==2)
+        lastScanLine = 164;
+    if(tefix==3)
+        lastScanLine = 130;
     suniv_gpio_init();
     suniv_clrbits(iomm.lcdc + PE_DATA, (1 << 11));
     mdelay(150);
@@ -326,13 +332,19 @@ static void init_lcd(void)
         
     // ST7789S Frame rate setting
 	lcdc_wr_cmd(0xb2);
-	if(tefix==1) {
+	if(tefix == 1) {
 		lcdc_wr_dat(8); // bp 0x0a
 		lcdc_wr_dat(122); // fp 0x0b
+    } else if (tefix == 2) {
+        lcdc_wr_dat(8); // bp 0x0a
+        lcdc_wr_dat(120); // fp 0x0b
+	} else if (tefix == 3) {
+		lcdc_wr_dat(90); // bp 0x0a
+		lcdc_wr_dat(20); // fp 0x0b
 	} else {
-		lcdc_wr_dat(9); // bp 0x0a
-		lcdc_wr_dat(10); // fp 0x0b
-	}
+        lcdc_wr_dat(9); // bp 0x0a
+        lcdc_wr_dat(10); // fp 0x0b
+    }
 		lcdc_wr_dat(0x00);        			
 		lcdc_wr_dat(0x33);
 		lcdc_wr_dat(0x33);
@@ -364,7 +376,14 @@ static void init_lcd(void)
 //    lcdc_wr_dat(0x20);
 //
     lcdc_wr_cmd(0xc6);
-    lcdc_wr_dat(0x03); // 0x04, 0x1f
+    if(tefix==1)
+        lcdc_wr_dat(0x03); // 0x04, 0x1f
+    else if(tefix==2)
+        lcdc_wr_dat(0x04);
+    else if(tefix==3)
+        lcdc_wr_dat(0x03);
+    else
+        lcdc_wr_dat(0x03); // 0x04, 0x1f
 //
 //    lcdc_wr_cmd(0xd0);
 //    lcdc_wr_dat(0xa4);
@@ -442,11 +461,23 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
     uint32_t h_sync_len = 1;
     uint32_t v_front_porch = 8;
     uint32_t v_back_porch = 8;
-	if(tefix==1){
-	    v_front_porch = 60;
-        v_back_porch = 60;
-	}
     uint32_t v_sync_len = 1;
+    if (tefix == 1) {
+        v_front_porch = 10;
+        v_back_porch = 110;
+    } else if(tefix == 2){
+        v_front_porch = 10;
+        v_back_porch = 110;
+    } else if(tefix == 3){
+        h_front_porch = 45;
+        h_back_porch = 45;
+	    v_front_porch = 4;
+        v_back_porch = 16;
+        v_sync_len = 3;
+        h_sync_len = 3;
+	}
+
+
 
     writel(0, iomm.lcdc + TCON_CTRL_REG);
     writel(0, iomm.lcdc + TCON_INT_REG0);
@@ -536,7 +567,7 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    if (tefix==1)
+    if (tefix==1 || tefix==2)
       writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
     while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
     while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
@@ -548,8 +579,8 @@ static void suniv_cpu_init(struct myfb_par *par)
     suniv_setbits(iomm.ccm + FE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
-    if (tefix==1)
-	suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 25));
+    if (tefix==1 || tefix==2)
+	    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 25));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     for(i=0x0800; i<0x1000; i+=4){
@@ -884,6 +915,10 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				tefix=2;
 				suniv_lcdc_init(320, 240);
 				break;
+                case 3:
+                tefix=3;
+                suniv_lcdc_init(320, 240);
+                break;
 			    default:
 				tefix=0;
 				suniv_lcdc_init(320, 240);

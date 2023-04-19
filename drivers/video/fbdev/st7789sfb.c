@@ -126,6 +126,7 @@ static struct fb_var_screeninfo myfb_var={0};
 static uint16_t lastScanLine = 104;
 static uint16_t  firstScanLine = 5;
 uint16_t x, i, scanline, vsync;
+uint32_t cpuclock;
 
 static struct fb_fix_screeninfo myfb_fix = {
         .id = DRIVER_NAME,
@@ -271,6 +272,26 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
           lcdc_wr_cmd(0x45);
           lcdc_rd_dat();
           lcdc_rd_dat();
+		  cpuclock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
+		  switch (cpuclock) {
+			  case 0x90001110:
+					lastScanLine = 280;
+					break;
+			  case 0x90001010:
+					lastScanLine = 240;
+					break;					
+			  case 0x90000f10:
+					lastScanLine = 200;
+					break;
+			  case 0x90000e10:
+					lastScanLine = 160;
+					break;
+			  case 0x90000d10:
+					lastScanLine = 120;
+					break;
+              default:
+					lastScanLine = 120;			  
+		  }
           for (i = firstScanLine; i <= lastScanLine; i++) {
               lcdc_wr_cmd(0x45);
               lcdc_rd_dat();

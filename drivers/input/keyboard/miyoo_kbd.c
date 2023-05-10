@@ -817,7 +817,7 @@ static void scan_handler(unsigned long unused)
 		}
 		else if((val & MY_R) && (val & MY_START)){
       if(!hotkey_down) {
-        static char * screenshot_argv[] = {"/bin/sh", "-c", "sh -c name=/mnt/system; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png", NULL};
+        static char * screenshot_argv[] = {"/bin/sh", "-c", "name=/mnt/system; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png", NULL};
         call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }

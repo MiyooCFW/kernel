@@ -34,6 +34,13 @@
 #include <linux/uaccess.h>
 #include <linux/unistd.h>
 
+//Hotkeys
+#define KILL_HK 
+#define KILL_HARD_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")"
+#define KILL_SOFT_HK "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")"
+#define POWEROFF_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff"
+#define SCREENSHOT_HK "/bin/sh", "-c", "mkdir - p /mnt/screenshots ; name=/mnt/screenshots/system ; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png"
+
 //#define DEBUG
 #define MIYOO_KBD_GET_HOTKEY  _IOWR(0x100, 0, unsigned long)
 #define MIYOO_KBD_SET_VER     _IOWR(0x101, 0, unsigned long)
@@ -606,7 +613,7 @@ static void scan_handler(unsigned long unused)
   } else if(miyoo_ver == 4) {
     if((val & MY_R) && (val & MY_A)) {
       if(!hotkey_down) {
-        static char * shutdown8_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
+        static char * shutdown8_argv[] = {KILL_HK, NULL};
         call_usermodehelper(shutdown8_argv[0], shutdown8_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
@@ -614,7 +621,7 @@ static void scan_handler(unsigned long unused)
     }
     if((val & MY_R) && (val & MY_TA)) {
       if(!hotkey_down) {
-        static char * screenshot_argv[] = {"/bin/sh", "-c", "mkdir - p /mnt/screenshots ; name=/mnt/screenshots/system ; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png", NULL};
+        static char * screenshot_argv[] = {SCREENSHOT_HK, NULL};
         call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
@@ -647,8 +654,8 @@ static void scan_handler(unsigned long unused)
   } else if(miyoo_ver == 5) {
     if((val & MY_R) && (val & MY_L2)) {
 		if(!hotkey_down) {
-			static char * shutdown_argv[] = { "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
-			static char * shutdown2_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/hard/\")" , NULL };
+			static char * shutdown_argv[] = {KILL_SOFT_HK, NULL};
+			static char * shutdown2_argv[] = {KILL_HARD_HK, NULL };
 			call_usermodehelper(shutdown_argv[0], shutdown_argv, NULL, UMH_NO_WAIT);
 			call_usermodehelper(shutdown2_argv[0], shutdown2_argv, NULL, UMH_NO_WAIT);
 			hotkey_down = true;
@@ -657,7 +664,7 @@ static void scan_handler(unsigned long unused)
     }
     if((val & MY_R) && (val & MY_R2)) {
        		if(!hotkey_down) {
-			static char * shutdown3_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff",  NULL };
+			static char * shutdown3_argv[] = {POWEROFF_HK,  NULL };
 			call_usermodehelper(shutdown3_argv[0], shutdown3_argv, NULL, UMH_NO_WAIT);
 			hotkey_down = true;
       }
@@ -808,7 +815,7 @@ static void scan_handler(unsigned long unused)
 		}
 		else if((val & MY_R) && (val & MY_SELECT)){
       if(!hotkey_down) {
-	static char * shutdown4_argv[] = { "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")" , NULL };
+	static char * shutdown4_argv[] = {KILL_HK , NULL };
 	call_usermodehelper(shutdown4_argv[0], shutdown4_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
@@ -817,7 +824,7 @@ static void scan_handler(unsigned long unused)
 		}
 		else if((val & MY_R) && (val & MY_START)){
       if(!hotkey_down) {
-        static char * screenshot_argv[] = {"/bin/sh", "-c", "mkdir - p /mnt/screenshots ; name=/mnt/screenshots/system ; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png", NULL};
+        static char * screenshot_argv[] = {SCREENSHOT_HK, NULL};
         call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }

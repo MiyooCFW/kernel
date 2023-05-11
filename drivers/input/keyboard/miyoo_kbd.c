@@ -35,9 +35,9 @@
 #include <linux/unistd.h>
 
 //Hotkeys
-#define KILL_HK 
-#define KILL_HARD_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")"
+#define KILL_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")"
 #define KILL_SOFT_HK "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")"
+#define KILL_HARD_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/hard/\")"
 #define POWEROFF_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\" | /bin/grep -v \"/kernel/\" | /usr/bin/tr -s [:blank:] | /usr/bin/cut -d \" \" -f 2) ; /bin/sleep 0.1 ; /bin/sync ; /bin/swapoff -a ; /sbin/poweroff"
 #define SCREENSHOT_HK "/bin/sh", "-c", "mkdir - p /mnt/screenshots ; name=/mnt/screenshots/system ; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png"
 

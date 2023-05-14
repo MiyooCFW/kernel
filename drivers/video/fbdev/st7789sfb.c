@@ -922,8 +922,7 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             if((bpp != 16)){
                 writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
                 writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
-            }
-            else{
+            } else {
                 writel((7 << 8) | 4, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
                 writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
             }
@@ -931,14 +930,13 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         case MIYOO_FB0_SET_TEFIX:
             tefix = arg;
 #if defined(DEBUG)
-			printk("st7789sfb: set TE fix to: %d", (int)tefix);
+            printk("st7789sfb: set TE fix to: %d", (int)tefix);
 #endif
-				suniv_lcdc_init(320, 240);
-			}
+            suniv_lcdc_init(320, 240);
             break;
         case MIYOO_FB0_GET_TEFIX:
             ret = copy_to_user((void*)arg, &tefix, sizeof(unsigned long));	
-			break;				
+            break;				
     }
     return 0;
 }

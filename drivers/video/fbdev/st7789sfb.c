@@ -929,30 +929,15 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             }
             break;
         case MIYOO_FB0_SET_TEFIX:
-            miyoo_tefix = arg;
+            tefix = arg;
 #if defined(DEBUG)
-			printk("st7789sfb: set TE fix to: %d", (int)miyoo_tefix);
+			printk("st7789sfb: set TE fix to: %d", (int)tefix);
 #endif
-			switch (miyoo_tefix){
-			    case 1:
-				tefix=1;
-				suniv_lcdc_init(320, 240);
-				break;
-			    case 2:
-				tefix=2;
-				suniv_lcdc_init(320, 240);
-				break;
-                case 3:
-                tefix=3;
-                suniv_lcdc_init(320, 240);
-                break;
-			    default:
-				tefix=0;
 				suniv_lcdc_init(320, 240);
 			}
             break;
         case MIYOO_FB0_GET_TEFIX:
-            ret = copy_to_user((void*)arg, &miyoo_tefix, sizeof(unsigned long));	
+            ret = copy_to_user((void*)arg, &tefix, sizeof(unsigned long));	
 			break;				
     }
     return 0;

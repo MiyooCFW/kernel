@@ -70,6 +70,8 @@
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
 #define MIYOO_FB0_SET_FPBP    _IOWR(0x104, 0, unsigned long)
+#define MIYOO_FB0_SET_TEFIX   _IOWR(0x102, 0, unsigned long)
+#define MIYOO_FB0_GET_TEFIX   _IOWR(0x103, 0, unsigned long)
 DECLARE_WAIT_QUEUE_HEAD(wait_vsync_queue);
 
 static bool flip=false;
@@ -908,6 +910,7 @@ static int myclose(struct inode *inode, struct file *file)
 
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
+    int ret;
     int32_t w, bpp;
 
     switch(cmd){
@@ -925,9 +928,12 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
             }
             break;
-        case MIYOO_FB0_SET_FPBP:
-			printk("st7789sfb: set TE fix to: %d", (int)arg);
-			switch (arg){
+        case MIYOO_FB0_SET_TEFIX:
+            miyoo_tefix = arg;
+#if defined(DEBUG)
+			printk("st7789sfb: set TE fix to: %d", (int)miyoo_tefix);
+#endif
+			switch (miyoo_tefix){
 			    case 1:
 				tefix=1;
 				suniv_lcdc_init(320, 240);
@@ -944,6 +950,9 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				tefix=0;
 				suniv_lcdc_init(320, 240);
 			}
+            break;
+        case MIYOO_FB0_GET_TEFIX:
+            ret = copy_to_user((void*)arg, &miyoo_tefix, sizeof(unsigned long));	
 			break;				
     }
     return 0;

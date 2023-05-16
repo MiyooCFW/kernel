@@ -80,7 +80,7 @@ module_param(flip,bool,0660);
 static bool lowcurrent=false;
 module_param(lowcurrent,bool,0660);
 
-static int tefix=1;
+static int tefix = 1;
 module_param(tefix,int,0660);
 
 struct myfb_app{
@@ -269,31 +269,35 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
 
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
-	if(tefix) {
+	if(tefix != 0) {
       suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
           lcdc_wr_cmd(0x45);
           lcdc_rd_dat();
           lcdc_rd_dat();
-		  cpuclock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-		  switch (cpuclock) {
-			  case 0x90001110:
+		  if(tefix == 3){
+            cpuclock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
+		    switch (cpuclock) {
+			  case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
 					lastScanLine = 280;
 					break;
-			  case 0x90001010:
+			  case 0x90000A20: case 0x90001010: //==[792, 816]MHz
 					lastScanLine = 240;
 					break;					
-			  case 0x90000f10:
+			  case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
 					lastScanLine = 200;
 					break;
-			  case 0x90000e10:
-					lastScanLine = 160;
+			  case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
+					lastScanLine = 164;
 					break;
-			  case 0x90000d10:
-					lastScanLine = 120;
+			  case 0x90001B00: //==672MHz
+					lastScanLine = 130;
 					break;
-              default:
-					lastScanLine = 120;			  
-		  }
+			  default: // < 672Mhz
+					lastScanLine = 104;			  
+		      }
+          	} else {
+			  lastScanLine = 104;
+		}
           for (i = firstScanLine; i <= lastScanLine; i++) {
               lcdc_wr_cmd(0x45);
               lcdc_rd_dat();
@@ -317,12 +321,6 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 
 static void init_lcd(void)
 {
-    if(tefix==1)
-        lastScanLine = 104;
-    if(tefix==2)
-        lastScanLine = 164;
-    if(tefix==3)
-        lastScanLine = 130;
     suniv_gpio_init();
     suniv_clrbits(iomm.lcdc + PE_DATA, (1 << 11));
     mdelay(150);
@@ -399,11 +397,11 @@ static void init_lcd(void)
 //    lcdc_wr_dat(0x20);
 //
     lcdc_wr_cmd(0xc6);
-    if(tefix==1)
+    if(tefix == 1)
         lcdc_wr_dat(0x03); // 0x04, 0x1f
-    else if(tefix==2)
+    else if(tefix == 2)
         lcdc_wr_dat(0x04);
-    else if(tefix==3)
+    else if(tefix == 3)
         lcdc_wr_dat(0x03);
     else
         lcdc_wr_dat(0x03); // 0x04, 0x1f
@@ -590,7 +588,7 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    if (tefix==1 || tefix==2)
+    if (tefix == 1 || tefix == 2)
       writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
     while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
     while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
@@ -602,7 +600,7 @@ static void suniv_cpu_init(struct myfb_par *par)
     suniv_setbits(iomm.ccm + FE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
-    if (tefix==1 || tefix==2)
+    if (tefix == 1 || tefix == 2)
 	    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 25));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));

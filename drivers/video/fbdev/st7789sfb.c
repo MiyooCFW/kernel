@@ -80,7 +80,7 @@ module_param(flip,bool,0660);
 static bool lowcurrent=false;
 module_param(lowcurrent,bool,0660);
 
-static int tefix = 1;
+static int tefix = 0; //DEFAULT_TEFIX
 module_param(tefix,int,0660);
 
 struct myfb_app{

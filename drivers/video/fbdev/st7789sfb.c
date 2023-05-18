@@ -70,8 +70,8 @@
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
 #define MIYOO_FB0_SET_FPBP    _IOWR(0x104, 0, unsigned long)
-#define MIYOO_FB0_SET_TEFIX   _IOWR(0x102, 0, unsigned long)
-#define MIYOO_FB0_GET_TEFIX   _IOWR(0x103, 0, unsigned long)
+#define MIYOO_FB0_SET_TEFIX   _IOWR(0x106, 0, unsigned long)
+#define MIYOO_FB0_GET_TEFIX   _IOWR(0x107, 0, unsigned long)
 DECLARE_WAIT_QUEUE_HEAD(wait_vsync_queue);
 
 static bool flip=false;

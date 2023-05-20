@@ -128,7 +128,8 @@ static struct fb_var_screeninfo myfb_var={0};
 static uint16_t lastScanLine = 104;
 static uint16_t  firstScanLine = 5;
 uint16_t x, i, scanline, vsync;
-uint32_t cpuclock;
+uint32_t cpu_clock;
+uint32_t video_clock;
 
 static struct fb_fix_screeninfo myfb_fix = {
         .id = DRIVER_NAME,
@@ -275,8 +276,8 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
           lcdc_rd_dat();
           lcdc_rd_dat();
 		  if(tefix == 3){
-            cpuclock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-		    switch (cpuclock) {
+            cpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
+		    switch (cpu_clock) {
 			  case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
 					lastScanLine = 280;
 					break;
@@ -588,8 +589,11 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    if (tefix == 1 || tefix == 2)
-      writel(0x91001307, iomm.ccm + PLL_VIDEO_CTRL_REG);
+    if (tefix == 1 || tefix == 2) {
+        writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
+    } else {
+        writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
+    }
     while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
     while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
 
@@ -600,8 +604,6 @@ static void suniv_cpu_init(struct myfb_par *par)
     suniv_setbits(iomm.ccm + FE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BE_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
-    if (tefix == 1 || tefix == 2)
-	    suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 25));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     for(i=0x0800; i<0x1000; i+=4){
@@ -930,11 +932,22 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 #if defined(DEBUG)
             printk("st7789sfb: set TE fix to: %d", (int)tefix);
 #endif
+            if (tefix == 1 || tefix == 2) {
+            	writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
+		while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
+            } else {
+            	writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
+		while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
+            }
             suniv_lcdc_init(320, 240);
             break;
         case MIYOO_FB0_GET_TEFIX:
-            ret = copy_to_user((void*)arg, &tefix, sizeof(unsigned long));	
-            break;				
+            ret = copy_to_user((void*)arg, &tefix, sizeof(unsigned long));
+#if defined(DEBUG)
+	    video_clock = readl(iomm.ccm + PLL_VIDEO_CTRL_REG);
+	    printk("VIDEO_clock set to 0x%x", (uint32_t)video_clock);
+#endif
+	    break;				
     }
     return 0;
 }

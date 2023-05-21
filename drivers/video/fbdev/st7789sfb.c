@@ -347,13 +347,13 @@ static void init_lcd(void)
         
     // ST7789S Frame rate setting
 	lcdc_wr_cmd(0xb2);
-	if(tefix == 1) {
+	if(tefix == 3) {
 		lcdc_wr_dat(8); // bp 0x0a
 		lcdc_wr_dat(122); // fp 0x0b
     } else if (tefix == 2) {
         lcdc_wr_dat(8); // bp 0x0a
         lcdc_wr_dat(120); // fp 0x0b
-	} else if (tefix == 3) {
+	} else if (tefix == 1) {
 		lcdc_wr_dat(90); // bp 0x0a
 		lcdc_wr_dat(20); // fp 0x0b
 	} else {
@@ -391,11 +391,11 @@ static void init_lcd(void)
 //    lcdc_wr_dat(0x20);
 //
     lcdc_wr_cmd(0xc6);
-    if(tefix == 1)
+    if(tefix == 3)
         lcdc_wr_dat(0x03); // 0x04, 0x1f
     else if(tefix == 2)
         lcdc_wr_dat(0x04);
-    else if(tefix == 3)
+    else if(tefix == 1)
         lcdc_wr_dat(0x03);
     else
         lcdc_wr_dat(0x03); // 0x04, 0x1f
@@ -477,13 +477,13 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
     uint32_t v_front_porch = 8;
     uint32_t v_back_porch = 8;
     uint32_t v_sync_len = 1;
-    if (tefix == 1) {
+    if (tefix == 3) {
         v_front_porch = 10;
         v_back_porch = 110;
     } else if(tefix == 2){
         v_front_porch = 10;
         v_back_porch = 110;
-    } else if(tefix == 3){
+    } else if(tefix == 1){
         h_front_porch = 45;
         h_back_porch = 45;
 	    v_front_porch = 4;
@@ -582,7 +582,7 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    if (tefix == 1 || tefix == 2) {
+    if (tefix == 3 || tefix == 2) {
         writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
     } else {
         writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
@@ -925,7 +925,7 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 #if defined(DEBUG)
             printk("st7789sfb: set TE fix to: %d", (int)tefix);
 #endif
-            if (tefix == 1 || tefix == 2) {
+            if (tefix == 3 || tefix == 2) {
             	writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
 		while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
             } else {

@@ -125,7 +125,7 @@ struct timer_list mytimer;
 static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
-static uint16_t lastScanLine = 104;
+static uint16_t lastScanLine = 120;
 static uint16_t  firstScanLine = 5;
 uint16_t x, i, scanline, vsync;
 uint32_t cpu_clock;
@@ -275,30 +275,23 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
           lcdc_wr_cmd(0x45);
           lcdc_rd_dat();
           lcdc_rd_dat();
-		  if(tefix == 3){
-            cpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-		    switch (cpu_clock) {
-			  case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
-					lastScanLine = 280;
-					break;
-			  case 0x90000A20: case 0x90001010: //==[792, 816]MHz
-					lastScanLine = 240;
-					break;					
-			  case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
-					lastScanLine = 200;
-					break;
-			  case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
-					lastScanLine = 164;
-					break;
-			  case 0x90001B00: //==672MHz
-					lastScanLine = 130;
-					break;
-			  default: // < 672Mhz
-					lastScanLine = 104;			  
-		      }
-          	} else {
-			  lastScanLine = 104;
-		}
+          cpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
+	    switch (cpu_clock) {
+		  case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
+				lastScanLine = 280;
+				break;
+		  case 0x90000A20: case 0x90001010: //==[792, 816]MHz
+				lastScanLine = 240;
+				break;					
+		  case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
+				lastScanLine = 200;
+				break;
+		  case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
+				lastScanLine = 164;
+				break;
+		  default: // < 696Mhz
+				lastScanLine = 120;
+	      }
           for (i = firstScanLine; i <= lastScanLine; i++) {
               lcdc_wr_cmd(0x45);
               lcdc_rd_dat();

@@ -927,11 +927,10 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 #endif
             if (tefix == 3 || tefix == 2) {
             	writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
-		while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
             } else {
             	writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
-		while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
             }
+            while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
             suniv_lcdc_init(320, 240);
             break;
         case MIYOO_FB0_GET_TEFIX:

@@ -65,6 +65,7 @@
 #include <asm/arch-suniv/clock.h>
 #include <asm/arch-suniv/common.h>
 
+//#define DEBUG
 #define PALETTE_SIZE 256
 #define DRIVER_NAME  "ST7789S-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
@@ -322,7 +323,7 @@ static void init_lcd(void)
     mdelay(250);
                   
     lcdc_wr_cmd(0x36);
-    if (flip){
+    if (flip) {
         lcdc_wr_dat(0x70); //screen direction //0x70 for 3.5, 0xB0 for pg
     } else {
         lcdc_wr_dat(0xB0); //screen direction //0x70 for 3.5, 0xB0 for pg

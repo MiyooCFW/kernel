@@ -168,7 +168,7 @@ static void suniv_gpio_init(void)
     r|= 0x22222222;
     writel(r, iomm.gpio + PD_CFG2);
 
-    if (lowcurrent){
+    if (lowcurrent) {
     writel(0x00000000, iomm.gpio + PD_DRV0);
     }
 
@@ -190,12 +190,11 @@ static uint32_t lcdc_wait_busy(void)
 
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 0));
     ndelay(10);
-    while(1){
-        if(readl(iomm.lcdc + TCON0_CPU_IF_REG) & 0x00c00000){
-            if(cnt > 200){
+    while (1) {
+        if (readl(iomm.lcdc + TCON0_CPU_IF_REG) & 0x00c00000) {
+            if (cnt > 200) {
                 return -1;
-            }
-            else{
+            } else {
                 cnt+= 1;
             }
         }
@@ -211,14 +210,13 @@ static uint32_t extend_16b_to_24b(uint32_t value)
 
 static void lcdc_wr(uint8_t is_data, uint32_t data)
 {
-    while(lcdc_wait_busy());
-    if(is_data){
+    while (lcdc_wait_busy());
+    if (is_data) {
         suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 25));
-    }
-    else{
+    } else {
         suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 25));
     }
-    while(lcdc_wait_busy());
+    while (lcdc_wait_busy());
     writel(extend_16b_to_24b(data), iomm.lcdc + TCON0_CPU_WR_REG);
 }
 
@@ -239,22 +237,21 @@ static uint32_t extend_24b_to_16b(uint32_t value)
 
 static uint32_t lcdc_rd_dat(void)
 {
-	while(lcdc_wait_busy());
+	while (lcdc_wait_busy());
 	suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 25)); // ca=1
-	while(lcdc_wait_busy());
+	while (lcdc_wait_busy());
 	return extend_24b_to_16b(readl(iomm.lcdc + TCON0_CPU_RD_REG));
 }
 
 static void refresh_lcd(struct myfb_par *par)
 {
-    if(par->lcdc_ready) {
+    if (par->lcdc_ready) {
         lcdc_wr_cmd(0x2c);
   
-        if(par->app_virt->yoffset == 0){
+        if (par->app_virt->yoffset == 0) {
 	        suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
 	        suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
-        }
-        else{
+        } else {
 	        suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
 	        suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
         }
@@ -270,26 +267,26 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
 
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
-	if(tefix != 0) {
+	if (tefix != 0) {
       suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
           lcdc_wr_cmd(0x45);
           lcdc_rd_dat();
           lcdc_rd_dat();
           cpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-	    switch (cpu_clock) {
-		  case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
+	        switch (cpu_clock) {
+		    case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
 				lastScanLine = 280;
 				break;
-		  case 0x90000A20: case 0x90001010: //==[792, 816]MHz
+		    case 0x90000A20: case 0x90001010: //==[792, 816]MHz
 				lastScanLine = 240;
 				break;					
-		  case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
+		    case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
 				lastScanLine = 200;
 				break;
-		  case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
+		    case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
 				lastScanLine = 164;
 				break;
-		  default: // < 696Mhz
+		    default: // < 696Mhz
 				lastScanLine = 120;
 	      }
           for (i = firstScanLine; i <= lastScanLine; i++) {
@@ -325,7 +322,7 @@ static void init_lcd(void)
     mdelay(250);
                   
     lcdc_wr_cmd(0x36);
-    if(flip){
+    if (flip){
         lcdc_wr_dat(0x70); //screen direction //0x70 for 3.5, 0xB0 for pg
     } else {
         lcdc_wr_dat(0xB0); //screen direction //0x70 for 3.5, 0xB0 for pg
@@ -347,7 +344,7 @@ static void init_lcd(void)
         
     // ST7789S Frame rate setting
 	lcdc_wr_cmd(0xb2);
-	if(tefix == 3) {
+	if (tefix == 3) {
 		lcdc_wr_dat(8); // bp 0x0a
 		lcdc_wr_dat(122); // fp 0x0b
     } else if (tefix == 2) {
@@ -391,11 +388,11 @@ static void init_lcd(void)
 //    lcdc_wr_dat(0x20);
 //
     lcdc_wr_cmd(0xc6);
-    if(tefix == 3)
+    if (tefix == 3)
         lcdc_wr_dat(0x03); // 0x04, 0x1f
-    else if(tefix == 2)
+    else if (tefix == 2)
         lcdc_wr_dat(0x04);
-    else if(tefix == 1)
+    else if (tefix == 1)
         lcdc_wr_dat(0x03);
     else
         lcdc_wr_dat(0x03); // 0x04, 0x1f
@@ -480,10 +477,10 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
     if (tefix == 3) {
         v_front_porch = 10;
         v_back_porch = 110;
-    } else if(tefix == 2){
+    } else if (tefix == 2) {
         v_front_porch = 10;
         v_back_porch = 110;
-    } else if(tefix == 1){
+    } else if (tefix == 1) {
         h_front_porch = 45;
         h_back_porch = 45;
 	    v_front_porch = 4;
@@ -491,8 +488,6 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
         v_sync_len = 3;
         h_sync_len = 3;
 	}
-
-
 
     writel(0, iomm.lcdc + TCON_CTRL_REG);
     writel(0, iomm.lcdc + TCON_INT_REG0);
@@ -554,25 +549,22 @@ static void suniv_enable_irq(struct myfb_par *par)
 {
     int ret=0;
 
-
     par->gpio_irq = gpio_to_irq(((32 * 4) + 10));
-    if(par->gpio_irq < 0){
+    if (par->gpio_irq < 0) {
         printk("%s, failed to get irq number for gpio irq\n", __func__);
-    }
-    else{
+    } else {
         ret = request_irq(par->gpio_irq, gpio_irq_handler, IRQF_TRIGGER_RISING, "gpio_irq", par);
-        if(ret){
+        if (ret) {
             printk("%s, failed to register gpio interrupt(%d)\n", __func__, par->gpio_irq);
         }
     }
 
         par->lcdc_irq = platform_get_irq(par->pdev, 0);
-        if(par->lcdc_irq < 0){
+        if (par->lcdc_irq < 0) {
             printk("%s, failed to get irq number for lcdc irq\n", __func__);
-        }
-        else{
+        } else {
             ret = request_irq(par->lcdc_irq, lcdc_irq_handler, IRQF_SHARED, "lcdc_irq", par);
-            if(ret){
+            if (ret) {
                 printk("%s, failed to register lcdc interrupt(%d)\n", __func__, par->lcdc_irq);
             }
         }
@@ -587,8 +579,8 @@ static void suniv_cpu_init(struct myfb_par *par)
     } else {
         writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
     }
-    while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
-    while((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
+    while ((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
+    while ((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
 
     ret = readl(iomm.ccm + DRAM_GATING_REG);
     ret|= (1 << 26) | (1 << 24);
@@ -599,7 +591,7 @@ static void suniv_cpu_init(struct myfb_par *par)
     suniv_setbits(iomm.ccm + TCON_CLK_REG, (1 << 31));
     suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG1, (1 << 14) | (1 << 12) | (1 << 4));
     suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG1, (1 << 14) | (1 << 12) | (1 << 4));
-    for(i=0x0800; i<0x1000; i+=4){
+    for (i=0x0800; i<0x1000; i+=4) {
         writel(0, iomm.debe + i);
     }
 }
@@ -630,7 +622,7 @@ static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
     struct myfb_par *par = info->par;
     unsigned long line_size = var->xres_virtual * bpp;
 
-    if((var->xres != 320) || (var->yres != 240) || (var->bits_per_pixel != 16)){
+    if ((var->xres != 320) || (var->yres != 240) || (var->bits_per_pixel != 16)) {
         return -EINVAL;
     }
 
@@ -646,19 +638,19 @@ static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
     var->green.msb_right = 0;
     var->blue.msb_right = 0;
     var->transp.msb_right = 0;
-    if(line_size * var->yres_virtual > par->vram_size){
+    if (line_size * var->yres_virtual > par->vram_size) {
         var->yres_virtual = par->vram_size / line_size;
     }
-    if(var->yres > var->yres_virtual){
+    if (var->yres > var->yres_virtual) {
         var->yres = var->yres_virtual;
     }
-    if(var->xres > var->xres_virtual){
+    if (var->xres > var->xres_virtual) {
         var->xres = var->xres_virtual;
     }
-    if(var->xres + var->xoffset > var->xres_virtual){
+    if (var->xres + var->xoffset > var->xres_virtual) {
         var->xoffset = var->xres_virtual - var->xres;
     }
-    if(var->yres + var->yoffset > var->yres_virtual){
+    if (var->yres + var->yoffset > var->yres_virtual) {
         var->yoffset = var->yres_virtual - var->yres;
     }
     return 0;
@@ -680,12 +672,10 @@ static int myfb_set_par(struct fb_info *info)
     return 0;
 }
 
-
-
 static int myfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
     struct myfb_par *par = info->par;
-    switch(cmd){
+    switch (cmd) {
         case FBIO_WAITFORVSYNC:
             wait_for_vsync(par);
             break;			
@@ -698,11 +688,11 @@ static int myfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
     const unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
     const unsigned long size = vma->vm_end - vma->vm_start;
 
-    if(offset + size > info->fix.smem_len){
+    if (offset + size > info->fix.smem_len) {
         return -EINVAL;
     }
 
-    if(remap_pfn_range(vma, vma->vm_start, (info->fix.smem_start + offset) >> PAGE_SHIFT, size, vma->vm_page_prot)){
+    if (remap_pfn_range(vma, vma->vm_start, (info->fix.smem_start + offset) >> PAGE_SHIFT, size, vma->vm_page_prot)) {
         return -EAGAIN;
     }
     return 0;
@@ -740,7 +730,7 @@ static int myfb_probe(struct platform_device *device)
     struct fb_videomode *mode=NULL;
 
     mode = devm_kzalloc(&device->dev, sizeof(struct fb_videomode), GFP_KERNEL);
-    if(mode == NULL){
+    if (mode == NULL) {
         return -ENOMEM;
     }
     mode->name = "320x240";
@@ -751,7 +741,7 @@ static int myfb_probe(struct platform_device *device)
     pm_runtime_get_sync(&device->dev);
 
     info = framebuffer_alloc(sizeof(struct myfb_par), &device->dev);
-    if(!info){
+    if (!info) {
         return -ENOMEM;
     }
 
@@ -763,7 +753,7 @@ static int myfb_probe(struct platform_device *device)
 
     par->vram_size = (320 * 240 * 2 * 4) + 4096;
     par->vram_virt = dma_alloc_coherent(NULL, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
-    if(!par->vram_virt){
+    if (!par->vram_virt) {
         return -EINVAL;
     }
     info->screen_base = (char __iomem*)par->vram_virt;
@@ -773,7 +763,7 @@ static int myfb_probe(struct platform_device *device)
     par->app_virt = (struct myfb_app*)((uint8_t*)par->vram_virt + (320 * 240 * 2 * 4));
 
     par->v_palette_base = dma_alloc_coherent(NULL, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
-    if(!par->v_palette_base){
+    if (!par->v_palette_base) {
         return -EINVAL;
     }
     memset(par->v_palette_base, 0, PALETTE_SIZE);
@@ -787,7 +777,7 @@ static int myfb_probe(struct platform_device *device)
     info->pseudo_palette = par->pseudo_palette;
     info->fix.visual = (info->var.bits_per_pixel <= 8) ? FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR;
     ret = fb_alloc_cmap(&info->cmap, PALETTE_SIZE, 0);
-    if(ret){
+    if (ret) {
         return -EINVAL;
     }
     info->cmap.len = 32;
@@ -795,14 +785,14 @@ static int myfb_probe(struct platform_device *device)
     myfb_var.activate = FB_ACTIVATE_FORCE;
     fb_set_var(info, &myfb_var);
     dev_set_drvdata(&device->dev, info);
-    if(register_framebuffer(info) < 0){
+    if (register_framebuffer(info) < 0) {
         return -EINVAL;
     }
 
     mypar = par;
     mypar->lcdc_ready = 0;
     mypar->app_virt->vsync_count = 0;
-    for(ret=0; ret<of_clk_get_parent_count(device->dev.of_node); ret++){
+    for (ret=0; ret<of_clk_get_parent_count(device->dev.of_node); ret++) {
         clk_prepare_enable(of_clk_get(device->dev.of_node, ret));
     }
     init_waitqueue_head(&wait_vsync_queue);
@@ -816,7 +806,7 @@ static int myfb_remove(struct platform_device *dev)
     struct fb_info *info = dev_get_drvdata(&dev->dev);
     struct myfb_par *par = info->par;
 
-    if(info){
+    if (info) {
         free_irq(par->lcdc_irq, par);
         free_irq(par->gpio_irq, par);
         del_timer(&mytimer);
@@ -906,13 +896,13 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     int ret;
     int32_t w, bpp;
 
-    switch(cmd){
+    switch (cmd) {
         case MIYOO_FB0_PUT_OSD:
             break;
         case MIYOO_FB0_SET_MODE:
             w = (arg >> 16);
             bpp = (arg & 0xffff);
-            if((bpp != 16)){
+            if ((bpp != 16)) {
                 writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
                 writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
             } else {
@@ -930,7 +920,7 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             } else {
             	writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
             }
-            while((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
+            while ((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
             suniv_lcdc_init(320, 240);
             break;
         case MIYOO_FB0_GET_TEFIX:

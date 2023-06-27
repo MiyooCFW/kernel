@@ -349,8 +349,7 @@ static int get_motor_pin(int ver)
   switch(ver){
   case 1:
     return ((32 * 4) + 1);
-  case 4:
-  case 3:
+  case 2: case 3: case 4:
     return ((32 * 4) + 12);
   }
   return -1;

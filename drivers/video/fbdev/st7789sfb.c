@@ -70,6 +70,7 @@
 #define DRIVER_NAME  "ST7789S-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
+#define MIYOO_FB0_GET_VER     _IOWR(0x102, 0, unsigned long)
 #define MIYOO_FB0_SET_FPBP    _IOWR(0x104, 0, unsigned long)
 #define MIYOO_FB0_SET_TEFIX   _IOWR(0x106, 0, unsigned long)
 #define MIYOO_FB0_GET_TEFIX   _IOWR(0x107, 0, unsigned long)
@@ -122,6 +123,7 @@ struct suniv_iomm {
 static int major = -1;
 static struct cdev mycdev;
 static struct class *myclass = NULL;
+static uint32_t miyoo_ver = 2;
 struct timer_list mytimer;
 static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
@@ -910,6 +912,9 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 writel((7 << 8) | 4, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
                 writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
             }
+            break;
+        case MIYOO_FB0_GET_VER:
+            w = copy_to_user((void*)arg, &miyoo_ver, sizeof(uint32_t));
             break;
         case MIYOO_FB0_SET_TEFIX:
             tefix = arg;

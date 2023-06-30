@@ -483,7 +483,7 @@ static int suniv_pwm_probe(struct platform_device *pdev)
   cdev_init(&mycdev, &myfops);
   cdev_add(&mycdev, major, 1); 
 
-  motor_ver = 1;
+// motor_ver = 1;
   do_gpio_request(motor_ver);
   return 0;
 }

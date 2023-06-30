@@ -109,6 +109,7 @@ struct suniv_pwm_chip {
 
 static int major = -1;
 static int motor_ver = 3;
+module_param(motor_ver,int,0660);
 static struct cdev mycdev;
 static struct class *myclass = NULL;
 

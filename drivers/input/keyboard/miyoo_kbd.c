@@ -41,6 +41,7 @@
 #define SCREENSHOT_HK "/bin/sh", "-c", "mkdir - p /mnt/screenshots ; name=/mnt/screenshots/system ; if test -e $name.png ; then i=1 ; while test -e $name-$i.png ; do i=$((i+1)) ; done; name=\"$name-$i\" ; fi ; /usr/bin/fbgrab \"$name\".png"
 
 //#define DEBUG
+#define MIYOO_KBD_SET_HOTKEY  _IOWR(0x106, 0, unsigned long)
 #define MIYOO_KBD_GET_HOTKEY  _IOWR(0x100, 0, unsigned long)
 #define MIYOO_KBD_SET_VER     _IOWR(0x101, 0, unsigned long)
 #define MIYOO_KBD_LOCK_KEY    _IOWR(0x102, 0, unsigned long)
@@ -158,6 +159,7 @@ static uint8_t *touch = NULL;
 bool hotkey_mod_last=false;
 bool hotkey_actioned=false;
 bool hotkey_down=false;
+bool hotkey_custom=false;
 bool non_hotkey_first=false;
 bool non_hotkey_menu=false;
 module_param(miyoo_ver,uint,0660);
@@ -749,45 +751,51 @@ static void scan_handler(unsigned long unused)
 	  if((val & MY_R) && (val & MY_B)){
       if(miyoo_ver == 5 || miyoo_ver == 6)  {
 			  hotkey_actioned = true;
-	  	  hotkey = hotkey == 0 ? 3 : hotkey;
+        if (hotkey_custom)
+	  	    hotkey = hotkey == 0 ? 3 : hotkey;
       }
 	 	}
 	 	else if((val & MY_R) && (val & MY_A)){
       if(miyoo_ver == 2 || miyoo_ver == 3 || miyoo_ver == 5 || miyoo_ver == 6)  {
 	  	  hotkey_actioned = true;
-	  	  hotkey = hotkey == 0 ? 4 : hotkey;
+        if (hotkey_custom)
+	  	    hotkey = hotkey == 0 ? 4 : hotkey;
       }
 	 	}
 		else if((val & MY_R) && (val & MY_TB)){
       if(miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
-        hotkey = hotkey == 0 ? 1 : hotkey;
+        if (hotkey_custom)
+          hotkey = hotkey == 0 ? 1 : hotkey;
       }
 		}
 		else if((val & MY_R) && (val & MY_TA)){
       if(miyoo_ver == 2 || miyoo_ver == 3 || miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
-        hotkey = hotkey == 0 ? 2 : hotkey;
+        if (hotkey_custom)
+          hotkey = hotkey == 0 ? 2 : hotkey;
       }
 		}
 		else if((val & MY_R) && (val & MY_UP)){
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         MIYOO_INCREASE_VOLUME();
         hotkey_down = true;
       }
 			hotkey_actioned = true;
-			//hotkey = hotkey == 0 ? 5 : hotkey;
+			if (hotkey_custom)
+        hotkey = hotkey == 0 ? 5 : hotkey;
 		}
 		else if((val & MY_R) && (val & MY_DOWN)){
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         MIYOO_DECREASE_VOLUME();
         hotkey_down = true;
       }
 			hotkey_actioned = true;
-			//hotkey = hotkey == 0 ? 6 : hotkey;
+      if (hotkey_custom)
+			  hotkey = hotkey == 0 ? 6 : hotkey;
 		}
 		else if((val & MY_R) && (val & MY_LEFT)){
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         bd = backlight_device_get_by_type(BACKLIGHT_RAW);
         if(bd->props.brightness > 1) {
           backlight_device_set_brightness(bd, bd->props.brightness - 1);
@@ -795,10 +803,11 @@ static void scan_handler(unsigned long unused)
         hotkey_down = true;
       }
 			hotkey_actioned = true;
-			//hotkey = hotkey == 0 ? 7 : hotkey;
+			if (hotkey_custom)
+        hotkey = hotkey == 0 ? 7 : hotkey;
 		}
 	 else if((val & MY_R) && (val & MY_RIGHT)){
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         bd = backlight_device_get_by_type(BACKLIGHT_RAW);
         if(bd->props.brightness < 2) {
           backlight_device_set_brightness(bd, 3);
@@ -808,23 +817,26 @@ static void scan_handler(unsigned long unused)
         hotkey_down = true;
       }
 			hotkey_actioned = true;
-			//hotkey = hotkey == 0 ? 8 : hotkey;
+			if (hotkey_custom)
+        hotkey = hotkey == 0 ? 8 : hotkey;
 		}
 		else if((val & MY_R) && (val & MY_SELECT)){
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
 	      call_usermodehelper(kill_argv[0], kill_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
 			hotkey_actioned = true;
-			//hotkey = hotkey == 0 ? 9 : hotkey;
+			if (hotkey_custom)
+        hotkey = hotkey == 0 ? 9 : hotkey;
 		}
 		else if((val & MY_R) && (val & MY_START)){
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
 			hotkey_actioned = true;
-      //hotkey = hotkey == 0 ? 10 : hotkey;
+      if (hotkey_custom)
+        hotkey = hotkey == 0 ? 10 : hotkey;
 		}
     hotkey_mod_last = true;
 
@@ -943,6 +955,10 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
   case MIYOO_KBD_GET_HOTKEY:
     ret = copy_to_user((void*)arg, &hotkey, sizeof(unsigned long));
     hotkey = 0;
+    break;
+  case MIYOO_KBD_SET_HOTKEY:
+    hotkey_custom = arg;
+    printk("miyoo hotkey custom is =%d\n", (bool)hotkey_custom);
     break;
   case MIYOO_KBD_SET_VER:
     miyoo_ver = arg;

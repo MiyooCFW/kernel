@@ -617,18 +617,22 @@ static void scan_handler(unsigned long unused)
     }
   } else if(miyoo_ver == 4) {
     if((val & MY_R) && (val & MY_A)) {
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         call_usermodehelper(kill_argv[0], kill_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
       hotkey_actioned = true;
+      if (hotkey_custom)
+        hotkey = hotkey == 0 ? 4 : hotkey;
     }
     if((val & MY_R) && (val & MY_TA)) {
-      if(!hotkey_down) {
+      if(!hotkey_down && !hotkey_custom) {
         call_usermodehelper(screenshot_argv[0], screenshot_argv, NULL, UMH_NO_WAIT);
         hotkey_down = true;
       }
-      hotkey_actioned = true;   
+      hotkey_actioned = true;
+      if (hotkey_custom)
+        hotkey = hotkey == 0 ? 2 : hotkey;   
     }
     if((val & MY_R) && (val & MY_B)) {
       val&= ~MY_R;
@@ -656,18 +660,22 @@ static void scan_handler(unsigned long unused)
     }
   } else if(miyoo_ver == 5) {
     if((val & MY_R) && (val & MY_L2)) {
-		  if(!hotkey_down) {
+		  if(!hotkey_down && !hotkey_custom) {
 			  call_usermodehelper(kill_soft_argv[0], kill_soft_argv, NULL, UMH_NO_WAIT);
 			  hotkey_down = true;
       }
 			hotkey_actioned = true;
+     if (hotkey_custom)
+          hotkey = hotkey == 0 ? 11 : hotkey;
     }
     if((val & MY_R) && (val & MY_R2)) {
-       	if(!hotkey_down) {
+       	if(!hotkey_down && !hotkey_custom) {
 			  call_usermodehelper(shutdown_argv[0], shutdown_argv, NULL, UMH_NO_WAIT);
 			  hotkey_down = true;
       }
-			hotkey_actioned = true;	  
+			hotkey_actioned = true;
+      if (hotkey_custom)
+          hotkey = hotkey == 0 ? 12 : hotkey;
     }
 	if((val & MY_R) && (val & MY_L1)) {
       val&= ~MY_R;
@@ -751,28 +759,28 @@ static void scan_handler(unsigned long unused)
 	  if((val & MY_R) && (val & MY_B)){
       if(miyoo_ver == 5 || miyoo_ver == 6)  {
 			  hotkey_actioned = true;
-        if (hotkey_custom)
+      //  if (hotkey_custom)
 	  	    hotkey = hotkey == 0 ? 3 : hotkey;
       }
 	 	}
 	 	else if((val & MY_R) && (val & MY_A)){
       if(miyoo_ver == 2 || miyoo_ver == 3 || miyoo_ver == 5 || miyoo_ver == 6)  {
 	  	  hotkey_actioned = true;
-        if (hotkey_custom)
+      //  if (hotkey_custom)
 	  	    hotkey = hotkey == 0 ? 4 : hotkey;
       }
 	 	}
 		else if((val & MY_R) && (val & MY_TB)){
       if(miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
-        if (hotkey_custom)
+      //  if (hotkey_custom)
           hotkey = hotkey == 0 ? 1 : hotkey;
       }
 		}
 		else if((val & MY_R) && (val & MY_TA)){
       if(miyoo_ver == 2 || miyoo_ver == 3 || miyoo_ver == 5 || miyoo_ver == 6)  {
         hotkey_actioned = true;
-        if (hotkey_custom)
+      //  if (hotkey_custom)
           hotkey = hotkey == 0 ? 2 : hotkey;
       }
 		}

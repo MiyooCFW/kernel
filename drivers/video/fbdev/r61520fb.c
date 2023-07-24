@@ -48,6 +48,7 @@
 #include <asm/arch-suniv/clock.h>
 #include <asm/arch-suniv/common.h>
 
+//#define DEBUG
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
 #define MIYOO_FB0_GET_VER     _IOWR(0x102, 0, unsigned long)
@@ -134,6 +135,7 @@ static int def_fp=8;
 uint32_t ret;
 int x, y;
 uint16_t *p;
+uint32_t ddr_clock;
 
 struct myfb_par *mypar;
 static struct fb_var_screeninfo myfb_var;
@@ -1353,10 +1355,12 @@ static void suniv_cpu_init(struct myfb_par *par)
     writel(0, iomm.debe + i);
   }
 
-  //writel(0x90000c00, iomm.ccm + PLL_DDR_CTRL_REG);
-  //writel(0x90001223, iomm.ccm + PLL_DDR_CTRL_REG);
-  writel(0x90001c01, iomm.ccm + PLL_DDR_CTRL_REG);
-  while((readl(iomm.ccm + PLL_DDR_CTRL_REG) & (1 << 28)) == 0){}
+  //writel(0x90001c01, iomm.ccm + PLL_DDR_CTRL_REG);
+  //while((readl(iomm.ccm + PLL_DDR_CTRL_REG) & (1 << 28)) == 0){}
+  ddr_clock = readl(iomm.ccm + PLL_DDR_CTRL_REG);
+#if defined(DEBUG)
+  printk("DDR_clock set to 0x%x", (uint32_t)ddr_clock);
+#endif
 }
 
 #define CNVT_TOHW(val, width) ((((val) << (width)) + 0x7FFF - (val)) >> 16)

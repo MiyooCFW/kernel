@@ -553,11 +553,6 @@ static void suniv_cpu_init(struct myfb_par *par)
   for(i=0x0800; i<0x1000; i+=4){
     writel(0, iomm.debe + i);
   }
-
-  //writel(0x90000c00, iomm.ccm + PLL_DDR_CTRL_REG);
-  //writel(0x90001223, iomm.ccm + PLL_DDR_CTRL_REG);
-  writel(0x90001c01, iomm.ccm + PLL_DDR_CTRL_REG);
-  while((readl(iomm.ccm + PLL_DDR_CTRL_REG) & (1 << 28)) == 0){}
 }
 
 #define CNVT_TOHW(val, width) ((((val) << (width)) + 0x7FFF - (val)) >> 16)

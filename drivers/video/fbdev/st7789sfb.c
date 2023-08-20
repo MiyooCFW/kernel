@@ -85,6 +85,9 @@ module_param(lowcurrent,bool,0660);
 static int tefix = 0; //DEFAULT_TEFIX
 module_param(tefix,int,0660);
 
+static bool invert=false;
+module_param(invert,bool,0660);
+
 struct myfb_app{
     uint32_t yoffset;
     uint32_t vsync_count;
@@ -390,6 +393,12 @@ static void init_lcd(void)
 //    lcdc_wr_cmd(0xc4);
 //    lcdc_wr_dat(0x20);
 //
+    if (invert) {
+        lcdc_wr_cmd(0x21); // Display Inversion On (INVON for colors)
+    } else {
+        lcdc_wr_cmd(0x20); //  Display Inversion Off (INVOFF for colors)
+    }
+
     lcdc_wr_cmd(0xc6);
     if (tefix == 3)
         lcdc_wr_dat(0x03); // 0x04, 0x1f

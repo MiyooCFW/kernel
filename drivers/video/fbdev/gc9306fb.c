@@ -55,6 +55,9 @@
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
 
+static bool invert=false;
+module_param(invert,bool,0660);
+
 struct myfb_par {
     struct device *dev;
     struct platform_device *pdev;
@@ -274,6 +277,11 @@ static void init_lcd(void)
     lcdc_wr_dat(0x00);
     lcdc_wr_dat(0x00);
     lcdc_wr_dat(0xef);      // 0x013F = 319
+    if (invert) {
+        lcdc_wr_cmd(0x21); // Display Inversion On (for colors)
+    } else {
+        lcdc_wr_cmd(0x20); //  Display Inversion Off (for colors)
+    }
     //    lcdc_wr_cmd(0x2c);
     //--------end display window --------------//
     //------------gamma setting------------------//

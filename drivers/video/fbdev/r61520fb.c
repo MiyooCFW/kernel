@@ -682,7 +682,9 @@ if(debug){
     gpio_wr_cmd(0x13);
 
     if (invert) {
-        gpio_wr_cmd(0x21); // invert colors
+      gpio_wr_cmd(0x21); // enter_invert_mode for colors
+    } else {
+      gpio_wr_cmd(0x20); // exit_invert_mode for colors
     }
 
     gpio_wr_cmd(0x35);
@@ -781,6 +783,12 @@ if(debug){
 
     gpio_wr_cmd(0xc3);
     gpio_wr_dat(0x13); // or 0x0b?
+
+    if (invert) {
+      gpio_wr_cmd(0x21); // Display Inversion On (INVON for colors)
+    } else {
+      gpio_wr_cmd(0x20); //  Display Inversion Off (INVOFF for colors)
+    }
 
     gpio_wr_cmd(0xc4);
     gpio_wr_dat(0x20);

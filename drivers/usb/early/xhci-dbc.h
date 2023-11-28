@@ -90,8 +90,8 @@ struct xdbc_context {
 
 #define XDBC_INFO_CONTEXT_SIZE		48
 #define XDBC_MAX_STRING_LENGTH		64
-#define XDBC_STRING_MANUFACTURER	"Linux"
-#define XDBC_STRING_PRODUCT		"Remote GDB"
+#define XDBC_STRING_MANUFACTURER	"Linux Foundation"
+#define XDBC_STRING_PRODUCT		"Linux USB GDB Target"
 #define XDBC_STRING_SERIAL		"0001"
 
 struct xdbc_strings {
@@ -103,7 +103,7 @@ struct xdbc_strings {
 
 #define XDBC_PROTOCOL		1	/* GNU Remote Debug Command Set */
 #define XDBC_VENDOR_ID		0x1d6b	/* Linux Foundation 0x1d6b */
-#define XDBC_PRODUCT_ID		0x0004	/* __le16 idProduct; device 0004 */
+#define XDBC_PRODUCT_ID		0x0011	/* __le16 idProduct; device 0011 */
 #define XDBC_DEVICE_REV		0x0010	/* 0.10 */
 
 /*
@@ -123,8 +123,22 @@ struct xdbc_ring {
 	u32			cycle_state;
 };
 
-#define XDBC_EPID_OUT		2
-#define XDBC_EPID_IN		3
+/*
+ * These are the "Endpoint ID" (also known as "Context Index") values for the
+ * OUT Transfer Ring and the IN Transfer Ring of a Debug Capability Context data
+ * structure.
+ * According to the "eXtensible Host Controller Interface for Universal Serial
+ * Bus (xHCI)" specification, section "7.6.3.2 Endpoint Contexts and Transfer
+ * Rings", these should be 0 and 1, and those are the values AMD machines give
+ * you; but Intel machines seem to use the formula from section "4.5.1 Device
+ * Context Index", which is supposed to be used for the Device Context only.
+ * Luckily the values from Intel don't overlap with those from AMD, so we can
+ * just test for both.
+ */
+#define XDBC_EPID_OUT		0
+#define XDBC_EPID_IN		1
+#define XDBC_EPID_OUT_INTEL	2
+#define XDBC_EPID_IN_INTEL	3
 
 struct xdbc_state {
 	u16			vendor;

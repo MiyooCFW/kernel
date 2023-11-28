@@ -40,6 +40,8 @@ typedef struct { pteval_t pte; } pte_t;
 #define P4D_SIZE	(_AC(1, UL) << P4D_SHIFT)
 #define P4D_MASK	(~(P4D_SIZE - 1))
 
+#define MAX_POSSIBLE_PHYSMEM_BITS	52
+
 #else /* CONFIG_X86_5LEVEL */
 
 /*
@@ -75,33 +77,56 @@ typedef struct { pteval_t pte; } pte_t;
 #define PGDIR_SIZE	(_AC(1, UL) << PGDIR_SHIFT)
 #define PGDIR_MASK	(~(PGDIR_SIZE - 1))
 
-/* See Documentation/x86/x86_64/mm.txt for a description of the memory map. */
-#define MAXMEM		_AC(__AC(1, UL) << MAX_PHYSMEM_BITS, UL)
+/*
+ * See Documentation/x86/x86_64/mm.txt for a description of the memory map.
+ *
+ * Be very careful vs. KASLR when changing anything here. The KASLR address
+ * range must not overlap with anything except the KASAN shadow area, which
+ * is correct as KASAN disables KASLR.
+ */
+#define MAXMEM			_AC(__AC(1, UL) << MAX_PHYSMEM_BITS, UL)
+
 #ifdef CONFIG_X86_5LEVEL
-#define VMALLOC_SIZE_TB _AC(16384, UL)
-#define __VMALLOC_BASE	_AC(0xff92000000000000, UL)
-#define __VMEMMAP_BASE	_AC(0xffd4000000000000, UL)
+# define VMALLOC_SIZE_TB	_AC(12800, UL)
+# define __VMALLOC_BASE		_AC(0xffa0000000000000, UL)
+# define __VMEMMAP_BASE		_AC(0xffd4000000000000, UL)
 #else
-#define VMALLOC_SIZE_TB	_AC(32, UL)
-#define __VMALLOC_BASE	_AC(0xffffc90000000000, UL)
-#define __VMEMMAP_BASE	_AC(0xffffea0000000000, UL)
+# define VMALLOC_SIZE_TB	_AC(32, UL)
+# define __VMALLOC_BASE		_AC(0xffffc90000000000, UL)
+# define __VMEMMAP_BASE		_AC(0xffffea0000000000, UL)
 #endif
+
+#define GUARD_HOLE_PGD_ENTRY	-256UL
+#define GUARD_HOLE_SIZE		(16UL << PGDIR_SHIFT)
+#define GUARD_HOLE_BASE_ADDR	(GUARD_HOLE_PGD_ENTRY << PGDIR_SHIFT)
+#define GUARD_HOLE_END_ADDR	(GUARD_HOLE_BASE_ADDR + GUARD_HOLE_SIZE)
+
+#define LDT_PGD_ENTRY		-240UL
+#define LDT_BASE_ADDR		(LDT_PGD_ENTRY << PGDIR_SHIFT)
+
 #ifdef CONFIG_RANDOMIZE_MEMORY
-#define VMALLOC_START	vmalloc_base
-#define VMEMMAP_START	vmemmap_base
+# define VMALLOC_START		vmalloc_base
+# define VMEMMAP_START		vmemmap_base
 #else
-#define VMALLOC_START	__VMALLOC_BASE
-#define VMEMMAP_START	__VMEMMAP_BASE
+# define VMALLOC_START		__VMALLOC_BASE
+# define VMEMMAP_START		__VMEMMAP_BASE
 #endif /* CONFIG_RANDOMIZE_MEMORY */
-#define VMALLOC_END	(VMALLOC_START + _AC((VMALLOC_SIZE_TB << 40) - 1, UL))
-#define MODULES_VADDR    (__START_KERNEL_map + KERNEL_IMAGE_SIZE)
+
+#define VMALLOC_END		(VMALLOC_START + _AC((VMALLOC_SIZE_TB << 40) - 1, UL))
+
+#define MODULES_VADDR		(__START_KERNEL_map + KERNEL_IMAGE_SIZE)
 /* The module sections ends with the start of the fixmap */
-#define MODULES_END   __fix_to_virt(__end_of_fixed_addresses + 1)
-#define MODULES_LEN   (MODULES_END - MODULES_VADDR)
-#define ESPFIX_PGD_ENTRY _AC(-2, UL)
-#define ESPFIX_BASE_ADDR (ESPFIX_PGD_ENTRY << P4D_SHIFT)
-#define EFI_VA_START	 ( -4 * (_AC(1, UL) << 30))
-#define EFI_VA_END	 (-68 * (_AC(1, UL) << 30))
+#define MODULES_END		_AC(0xffffffffff000000, UL)
+#define MODULES_LEN		(MODULES_END - MODULES_VADDR)
+
+#define ESPFIX_PGD_ENTRY	_AC(-2, UL)
+#define ESPFIX_BASE_ADDR	(ESPFIX_PGD_ENTRY << P4D_SHIFT)
+
+#define CPU_ENTRY_AREA_PGD	_AC(-4, UL)
+#define CPU_ENTRY_AREA_BASE	(CPU_ENTRY_AREA_PGD << P4D_SHIFT)
+
+#define EFI_VA_START		( -4 * (_AC(1, UL) << 30))
+#define EFI_VA_END		(-68 * (_AC(1, UL) << 30))
 
 #define EARLY_DYNAMIC_PAGE_TABLES	64
 

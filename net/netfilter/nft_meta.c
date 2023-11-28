@@ -229,7 +229,7 @@ void nft_meta_set_eval(const struct nft_expr *expr,
 	struct sk_buff *skb = pkt->skb;
 	u32 *sreg = &regs->data[meta->sreg];
 	u32 value = *sreg;
-	u8 pkt_type;
+	u8 value8;
 
 	switch (meta->key) {
 	case NFT_META_MARK:
@@ -239,15 +239,17 @@ void nft_meta_set_eval(const struct nft_expr *expr,
 		skb->priority = value;
 		break;
 	case NFT_META_PKTTYPE:
-		pkt_type = nft_reg_load8(sreg);
+		value8 = nft_reg_load8(sreg);
 
-		if (skb->pkt_type != pkt_type &&
-		    skb_pkt_type_ok(pkt_type) &&
+		if (skb->pkt_type != value8 &&
+		    skb_pkt_type_ok(value8) &&
 		    skb_pkt_type_ok(skb->pkt_type))
-			skb->pkt_type = pkt_type;
+			skb->pkt_type = value8;
 		break;
 	case NFT_META_NFTRACE:
-		skb->nf_trace = !!value;
+		value8 = nft_reg_load8(sreg);
+
+		skb->nf_trace = !!value8;
 		break;
 	default:
 		WARN_ON(1);
@@ -312,9 +314,8 @@ int nft_meta_get_init(const struct nft_ctx *ctx,
 		return -EOPNOTSUPP;
 	}
 
-	priv->dreg = nft_parse_register(tb[NFTA_META_DREG]);
-	return nft_validate_register_store(ctx, priv->dreg, NULL,
-					   NFT_DATA_VALUE, len);
+	return nft_parse_register_store(ctx, tb[NFTA_META_DREG], &priv->dreg,
+					NULL, NFT_DATA_VALUE, len);
 }
 EXPORT_SYMBOL_GPL(nft_meta_get_init);
 
@@ -372,8 +373,7 @@ int nft_meta_set_init(const struct nft_ctx *ctx,
 		return -EOPNOTSUPP;
 	}
 
-	priv->sreg = nft_parse_register(tb[NFTA_META_SREG]);
-	err = nft_validate_register_load(priv->sreg, len);
+	err = nft_parse_register_load(tb[NFTA_META_SREG], &priv->sreg, len);
 	if (err < 0)
 		return err;
 

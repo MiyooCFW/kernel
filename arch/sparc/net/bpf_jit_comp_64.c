@@ -12,8 +12,6 @@
 
 #include "bpf_jit_64.h"
 
-int bpf_jit_enable __read_mostly;
-
 static inline bool is_simm13(unsigned int value)
 {
 	return value + 0x1000 < 0x2000;
@@ -1245,14 +1243,16 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 		u8 *func = ((u8 *)__bpf_call_base) + imm;
 
 		ctx->saw_call = true;
+		if (ctx->saw_ld_abs_ind && bpf_helper_changes_pkt_data(func))
+			emit_reg_move(bpf2sparc[BPF_REG_1], L7, ctx);
 
 		emit_call((u32 *)func, ctx);
 		emit_nop(ctx);
 
 		emit_reg_move(O0, bpf2sparc[BPF_REG_0], ctx);
 
-		if (bpf_helper_changes_pkt_data(func) && ctx->saw_ld_abs_ind)
-			load_skb_regs(ctx, bpf2sparc[BPF_REG_6]);
+		if (ctx->saw_ld_abs_ind && bpf_helper_changes_pkt_data(func))
+			load_skb_regs(ctx, L7);
 		break;
 	}
 
@@ -1326,6 +1326,9 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 		const u8 tmp2 = bpf2sparc[TMP_REG_2];
 		u32 opcode = 0, rs2;
 
+		if (insn->dst_reg == BPF_REG_FP)
+			ctx->saw_frame_pointer = true;
+
 		ctx->tmp_2_used = true;
 		emit_loadimm(imm, tmp2, ctx);
 
@@ -1364,6 +1367,9 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 		const u8 tmp = bpf2sparc[TMP_REG_1];
 		u32 opcode = 0, rs2;
 
+		if (insn->dst_reg == BPF_REG_FP)
+			ctx->saw_frame_pointer = true;
+
 		switch (BPF_SIZE(code)) {
 		case BPF_W:
 			opcode = ST32;
@@ -1396,6 +1402,9 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 		const u8 tmp2 = bpf2sparc[TMP_REG_2];
 		const u8 tmp3 = bpf2sparc[TMP_REG_3];
 
+		if (insn->dst_reg == BPF_REG_FP)
+			ctx->saw_frame_pointer = true;
+
 		ctx->tmp_1_used = true;
 		ctx->tmp_2_used = true;
 		ctx->tmp_3_used = true;
@@ -1415,6 +1424,9 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 		const u8 tmp = bpf2sparc[TMP_REG_1];
 		const u8 tmp2 = bpf2sparc[TMP_REG_2];
 		const u8 tmp3 = bpf2sparc[TMP_REG_3];
+
+		if (insn->dst_reg == BPF_REG_FP)
+			ctx->saw_frame_pointer = true;
 
 		ctx->tmp_1_used = true;
 		ctx->tmp_2_used = true;

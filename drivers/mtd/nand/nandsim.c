@@ -520,11 +520,16 @@ static int nandsim_debugfs_create(struct nandsim *dev)
 	struct dentry *root = nsmtd->dbg.dfs_dir;
 	struct dentry *dent;
 
-	if (!IS_ENABLED(CONFIG_DEBUG_FS))
+	/*
+	 * Just skip debugfs initialization when the debugfs directory is
+	 * missing.
+	 */
+	if (IS_ERR_OR_NULL(root)) {
+		if (IS_ENABLED(CONFIG_DEBUG_FS) &&
+		    !IS_ENABLED(CONFIG_MTD_PARTITIONED_MASTER))
+			NS_WARN("CONFIG_MTD_PARTITIONED_MASTER must be enabled to expose debugfs stuff\n");
 		return 0;
-
-	if (IS_ERR_OR_NULL(root))
-		return -1;
+	}
 
 	dent = debugfs_create_file("nandsim_wear_report", S_IRUSR,
 				   root, dev, &dfs_fops);
@@ -2351,7 +2356,7 @@ static int __init ns_init_module(void)
 
 err_exit:
 	free_nandsim(nand);
-	nand_release(nsmtd);
+	nand_release(chip);
 	for (i = 0;i < ARRAY_SIZE(nand->partitions); ++i)
 		kfree(nand->partitions[i].name);
 error:
@@ -2373,7 +2378,7 @@ static void __exit ns_cleanup_module(void)
 	int i;
 
 	free_nandsim(ns);    /* Free nandsim private resources */
-	nand_release(nsmtd); /* Unregister driver */
+	nand_release(chip); /* Unregister driver */
 	for (i = 0;i < ARRAY_SIZE(ns->partitions); ++i)
 		kfree(ns->partitions[i].name);
 	kfree(mtd_to_nand(nsmtd));        /* Free other structures */

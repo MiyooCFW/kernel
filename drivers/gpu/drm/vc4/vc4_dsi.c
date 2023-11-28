@@ -846,11 +846,9 @@ static bool vc4_dsi_encoder_mode_fixup(struct drm_encoder *encoder,
 	/* Find what divider gets us a faster clock than the requested
 	 * pixel clock.
 	 */
-	for (divider = 1; divider < 8; divider++) {
-		if (parent_rate / divider < pll_clock) {
-			divider--;
+	for (divider = 1; divider < 255; divider++) {
+		if (parent_rate / (divider + 1) < pll_clock)
 			break;
-		}
 	}
 
 	/* Now that we've picked a PLL divider, calculate back to its
@@ -866,7 +864,8 @@ static bool vc4_dsi_encoder_mode_fixup(struct drm_encoder *encoder,
 	adjusted_mode->clock = pixel_clock_hz / 1000 + 1;
 
 	/* Given the new pixel clock, adjust HFP to keep vrefresh the same. */
-	adjusted_mode->htotal = pixel_clock_hz / (mode->vrefresh * mode->vtotal);
+	adjusted_mode->htotal = adjusted_mode->clock * mode->htotal /
+				mode->clock;
 	adjusted_mode->hsync_end += adjusted_mode->htotal - mode->htotal;
 	adjusted_mode->hsync_start += adjusted_mode->htotal - mode->htotal;
 

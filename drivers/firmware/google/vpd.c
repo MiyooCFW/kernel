@@ -100,8 +100,8 @@ static int vpd_section_check_key_name(const u8 *key, s32 key_len)
 	return VPD_OK;
 }
 
-static int vpd_section_attrib_add(const u8 *key, s32 key_len,
-				  const u8 *value, s32 value_len,
+static int vpd_section_attrib_add(const u8 *key, u32 key_len,
+				  const u8 *value, u32 value_len,
 				  void *arg)
 {
 	int ret;
@@ -246,6 +246,7 @@ static int vpd_section_destroy(struct vpd_section *sec)
 		sysfs_remove_bin_file(vpd_kobj, &sec->bin_attr);
 		kfree(sec->raw_name);
 		memunmap(sec->baseaddr);
+		sec->enabled = false;
 	}
 
 	return 0;
@@ -279,8 +280,10 @@ static int vpd_sections_init(phys_addr_t physaddr)
 		ret = vpd_section_init("rw", &rw_vpd,
 				       physaddr + sizeof(struct vpd_cbmem) +
 				       header.ro_size, header.rw_size);
-		if (ret)
+		if (ret) {
+			vpd_section_destroy(&ro_vpd);
 			return ret;
+		}
 	}
 
 	return 0;
@@ -295,38 +298,60 @@ static int vpd_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	return vpd_sections_init(entry.cbmem_addr);
+	vpd_kobj = kobject_create_and_add("vpd", firmware_kobj);
+	if (!vpd_kobj)
+		return -ENOMEM;
+
+	ret = vpd_sections_init(entry.cbmem_addr);
+	if (ret) {
+		kobject_put(vpd_kobj);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int vpd_remove(struct platform_device *pdev)
+{
+	vpd_section_destroy(&ro_vpd);
+	vpd_section_destroy(&rw_vpd);
+
+	kobject_put(vpd_kobj);
+
+	return 0;
 }
 
 static struct platform_driver vpd_driver = {
 	.probe = vpd_probe,
+	.remove = vpd_remove,
 	.driver = {
 		.name = "vpd",
 	},
 };
 
+static struct platform_device *vpd_pdev;
+
 static int __init vpd_platform_init(void)
 {
-	struct platform_device *pdev;
+	int ret;
 
-	pdev = platform_device_register_simple("vpd", -1, NULL, 0);
-	if (IS_ERR(pdev))
-		return PTR_ERR(pdev);
+	ret = platform_driver_register(&vpd_driver);
+	if (ret)
+		return ret;
 
-	vpd_kobj = kobject_create_and_add("vpd", firmware_kobj);
-	if (!vpd_kobj)
-		return -ENOMEM;
-
-	platform_driver_register(&vpd_driver);
+	vpd_pdev = platform_device_register_simple("vpd", -1, NULL, 0);
+	if (IS_ERR(vpd_pdev)) {
+		platform_driver_unregister(&vpd_driver);
+		return PTR_ERR(vpd_pdev);
+	}
 
 	return 0;
 }
 
 static void __exit vpd_platform_exit(void)
 {
-	vpd_section_destroy(&ro_vpd);
-	vpd_section_destroy(&rw_vpd);
-	kobject_put(vpd_kobj);
+	platform_device_unregister(vpd_pdev);
+	platform_driver_unregister(&vpd_driver);
 }
 
 module_init(vpd_platform_init);

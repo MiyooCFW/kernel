@@ -88,7 +88,7 @@ struct acpi_gpio_info {
 };
 
 /* gpio suffixes used for ACPI and device tree lookup */
-static const char * const gpio_suffixes[] = { "gpios", "gpio" };
+static __maybe_unused const char * const gpio_suffixes[] = { "gpios", "gpio" };
 
 #ifdef CONFIG_OF_GPIO
 struct gpio_desc *of_find_gpio(struct device *dev,
@@ -224,7 +224,8 @@ static inline int gpio_chip_hwgpio(const struct gpio_desc *desc)
 	return desc - &desc->gdev->descs[0];
 }
 
-void devprop_gpiochip_set_names(struct gpio_chip *chip);
+void devprop_gpiochip_set_names(struct gpio_chip *chip,
+				const struct fwnode_handle *fwnode);
 
 /* With descriptor prefix */
 

@@ -434,7 +434,7 @@ config PWM_STMPE
 	  This enables support for the PWMs found in the STMPE I/O
 	  expanders.
 
-config PWM_SUNIV
+config PWM_SUN4I
 	tristate "Allwinner PWM support"
 	depends on ARCH_SUNXI || COMPILE_TEST
 	depends on HAS_IOMEM && COMMON_CLK

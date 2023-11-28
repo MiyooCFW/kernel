@@ -83,8 +83,9 @@ static int fsl_dcu_drm_connector_get_modes(struct drm_connector *connector)
 	return num_modes;
 }
 
-static int fsl_dcu_drm_connector_mode_valid(struct drm_connector *connector,
-					    struct drm_display_mode *mode)
+static enum drm_mode_status
+fsl_dcu_drm_connector_mode_valid(struct drm_connector *connector,
+				 struct drm_display_mode *mode)
 {
 	if (mode->hdisplay & 0xf)
 		return MODE_ERROR;
@@ -102,7 +103,6 @@ static int fsl_dcu_attach_panel(struct fsl_dcu_drm_device *fsl_dev,
 {
 	struct drm_encoder *encoder = &fsl_dev->encoder;
 	struct drm_connector *connector = &fsl_dev->connector.base;
-	struct drm_mode_config *mode_config = &fsl_dev->drm->mode_config;
 	int ret;
 
 	fsl_dev->connector.encoder = encoder;
@@ -121,10 +121,6 @@ static int fsl_dcu_attach_panel(struct fsl_dcu_drm_device *fsl_dev,
 	ret = drm_mode_connector_attach_encoder(connector, encoder);
 	if (ret < 0)
 		goto err_sysfs;
-
-	drm_object_property_set_value(&connector->base,
-				      mode_config->dpms_property,
-				      DRM_MODE_DPMS_OFF);
 
 	ret = drm_panel_attach(panel, connector);
 	if (ret) {

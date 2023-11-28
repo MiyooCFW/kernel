@@ -35,23 +35,41 @@ static int ttyport_receive_buf(struct tty_port *port, const unsigned char *cp,
 {
 	struct serdev_controller *ctrl = port->client_data;
 	struct serport *serport = serdev_controller_get_drvdata(ctrl);
+	int ret;
 
 	if (!test_bit(SERPORT_ACTIVE, &serport->flags))
 		return 0;
 
-	return serdev_controller_receive_buf(ctrl, cp, count);
+	ret = serdev_controller_receive_buf(ctrl, cp, count);
+
+	dev_WARN_ONCE(&ctrl->dev, ret < 0 || ret > count,
+				"receive_buf returns %d (count = %zu)\n",
+				ret, count);
+	if (ret < 0)
+		return 0;
+	else if (ret > count)
+		return count;
+
+	return ret;
 }
 
 static void ttyport_write_wakeup(struct tty_port *port)
 {
 	struct serdev_controller *ctrl = port->client_data;
 	struct serport *serport = serdev_controller_get_drvdata(ctrl);
+	struct tty_struct *tty;
 
-	if (test_and_clear_bit(TTY_DO_WRITE_WAKEUP, &port->tty->flags) &&
+	tty = tty_port_tty_get(port);
+	if (!tty)
+		return;
+
+	if (test_and_clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags) &&
 	    test_bit(SERPORT_ACTIVE, &serport->flags))
 		serdev_controller_write_wakeup(ctrl);
 
-	wake_up_interruptible_poll(&port->tty->write_wait, POLLOUT);
+	wake_up_interruptible_poll(&tty->write_wait, POLLOUT);
+
+	tty_kref_put(tty);
 }
 
 static const struct tty_port_client_operations client_ops = {
@@ -102,10 +120,10 @@ static int ttyport_open(struct serdev_controller *ctrl)
 		return PTR_ERR(tty);
 	serport->tty = tty;
 
-	if (tty->ops->open)
-		tty->ops->open(serport->tty, NULL);
-	else
-		tty_port_open(serport->port, tty, NULL);
+	if (!tty->ops->open)
+		goto err_unlock;
+
+	tty->ops->open(serport->tty, NULL);
 
 	/* Bring the UART into a known 8 bits no parity hw fc state */
 	ktermios = tty->termios;
@@ -122,6 +140,12 @@ static int ttyport_open(struct serdev_controller *ctrl)
 
 	tty_unlock(serport->tty);
 	return 0;
+
+err_unlock:
+	tty_unlock(tty);
+	tty_release_struct(tty, serport->tty_idx);
+
+	return -ENODEV;
 }
 
 static void ttyport_close(struct serdev_controller *ctrl)
@@ -131,8 +155,10 @@ static void ttyport_close(struct serdev_controller *ctrl)
 
 	clear_bit(SERPORT_ACTIVE, &serport->flags);
 
+	tty_lock(tty);
 	if (tty->ops->close)
 		tty->ops->close(tty, NULL);
+	tty_unlock(tty);
 
 	tty_release_struct(tty, serport->tty_idx);
 }
@@ -212,7 +238,6 @@ struct device *serdev_tty_port_register(struct tty_port *port,
 					struct device *parent,
 					struct tty_driver *drv, int idx)
 {
-	const struct tty_port_client_operations *old_ops;
 	struct serdev_controller *ctrl;
 	struct serport *serport;
 	int ret;
@@ -231,7 +256,6 @@ struct device *serdev_tty_port_register(struct tty_port *port,
 
 	ctrl->ops = &ctrl_ops;
 
-	old_ops = port->client_ops;
 	port->client_ops = &client_ops;
 	port->client_data = ctrl;
 
@@ -244,7 +268,7 @@ struct device *serdev_tty_port_register(struct tty_port *port,
 
 err_reset_data:
 	port->client_data = NULL;
-	port->client_ops = old_ops;
+	port->client_ops = &tty_port_default_client_ops;
 	serdev_controller_put(ctrl);
 
 	return ERR_PTR(ret);
@@ -259,8 +283,8 @@ int serdev_tty_port_unregister(struct tty_port *port)
 		return -ENODEV;
 
 	serdev_controller_remove(ctrl);
-	port->client_ops = NULL;
 	port->client_data = NULL;
+	port->client_ops = &tty_port_default_client_ops;
 	serdev_controller_put(ctrl);
 
 	return 0;

@@ -42,8 +42,11 @@ static int ulpi_match(struct device *dev, struct device_driver *driver)
 	struct ulpi *ulpi = to_ulpi_dev(dev);
 	const struct ulpi_device_id *id;
 
-	/* Some ULPI devices don't have a vendor id so rely on OF match */
-	if (ulpi->id.vendor == 0)
+	/*
+	 * Some ULPI devices don't have a vendor id
+	 * or provide an id_table so rely on OF match.
+	 */
+	if (ulpi->id.vendor == 0 || !drv->id_table)
 		return of_driver_match_device(dev, driver);
 
 	for (id = drv->id_table; id->vendor; id++)
@@ -132,6 +135,7 @@ static const struct attribute_group *ulpi_dev_attr_groups[] = {
 
 static void ulpi_dev_release(struct device *dev)
 {
+	of_node_put(dev->of_node);
 	kfree(to_ulpi_dev(dev));
 }
 
@@ -183,9 +187,9 @@ static int ulpi_of_register(struct ulpi *ulpi)
 	/* Find a ulpi bus underneath the parent or the grandparent */
 	parent = ulpi->dev.parent;
 	if (parent->of_node)
-		np = of_find_node_by_name(parent->of_node, "ulpi");
+		np = of_get_child_by_name(parent->of_node, "ulpi");
 	else if (parent->parent && parent->parent->of_node)
-		np = of_find_node_by_name(parent->parent->of_node, "ulpi");
+		np = of_get_child_by_name(parent->parent->of_node, "ulpi");
 	if (!np)
 		return 0;
 
@@ -210,7 +214,7 @@ static int ulpi_read_id(struct ulpi *ulpi)
 
 	ret = ulpi_read(ulpi, ULPI_SCRATCH);
 	if (ret < 0)
-		return ret;
+		goto err;
 
 	if (ret != 0xaa)
 		goto err;
@@ -248,12 +252,16 @@ static int ulpi_register(struct device *dev, struct ulpi *ulpi)
 		return ret;
 
 	ret = ulpi_read_id(ulpi);
-	if (ret)
+	if (ret) {
+		of_node_put(ulpi->dev.of_node);
 		return ret;
+	}
 
 	ret = device_register(&ulpi->dev);
-	if (ret)
+	if (ret) {
+		put_device(&ulpi->dev);
 		return ret;
+	}
 
 	dev_dbg(&ulpi->dev, "registered ULPI PHY: vendor %04x, product %04x\n",
 		ulpi->id.vendor, ulpi->id.product);
@@ -300,7 +308,6 @@ EXPORT_SYMBOL_GPL(ulpi_register_interface);
  */
 void ulpi_unregister_interface(struct ulpi *ulpi)
 {
-	of_node_put(ulpi->dev.of_node);
 	device_unregister(&ulpi->dev);
 }
 EXPORT_SYMBOL_GPL(ulpi_unregister_interface);

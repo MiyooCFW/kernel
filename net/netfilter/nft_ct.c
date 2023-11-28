@@ -27,8 +27,8 @@ struct nft_ct {
 	enum nft_ct_keys	key:8;
 	enum ip_conntrack_dir	dir:8;
 	union {
-		enum nft_registers	dreg:8;
-		enum nft_registers	sreg:8;
+		u8		dreg;
+		u8		sreg;
 	};
 };
 
@@ -483,9 +483,8 @@ static int nft_ct_get_init(const struct nft_ctx *ctx,
 		}
 	}
 
-	priv->dreg = nft_parse_register(tb[NFTA_CT_DREG]);
-	err = nft_validate_register_store(ctx, priv->dreg, NULL,
-					  NFT_DATA_VALUE, len);
+	err = nft_parse_register_store(ctx, tb[NFTA_CT_DREG], &priv->dreg, NULL,
+				       NFT_DATA_VALUE, len);
 	if (err < 0)
 		return err;
 
@@ -578,8 +577,7 @@ static int nft_ct_set_init(const struct nft_ctx *ctx,
 		}
 	}
 
-	priv->sreg = nft_parse_register(tb[NFTA_CT_SREG]);
-	err = nft_validate_register_load(priv->sreg, len);
+	err = nft_parse_register_load(tb[NFTA_CT_SREG], &priv->sreg, len);
 	if (err < 0)
 		goto err1;
 
@@ -875,21 +873,25 @@ static int nft_ct_helper_obj_dump(struct sk_buff *skb,
 				  struct nft_object *obj, bool reset)
 {
 	const struct nft_ct_helper_obj *priv = nft_obj_data(obj);
-	const struct nf_conntrack_helper *helper = priv->helper4;
+	const struct nf_conntrack_helper *helper;
 	u16 family;
+
+	if (priv->helper4 && priv->helper6) {
+		family = NFPROTO_INET;
+		helper = priv->helper4;
+	} else if (priv->helper6) {
+		family = NFPROTO_IPV6;
+		helper = priv->helper6;
+	} else {
+		family = NFPROTO_IPV4;
+		helper = priv->helper4;
+	}
 
 	if (nla_put_string(skb, NFTA_CT_HELPER_NAME, helper->name))
 		return -1;
 
 	if (nla_put_u8(skb, NFTA_CT_HELPER_L4PROTO, priv->l4proto))
 		return -1;
-
-	if (priv->helper4 && priv->helper6)
-		family = NFPROTO_INET;
-	else if (priv->helper6)
-		family = NFPROTO_IPV6;
-	else
-		family = NFPROTO_IPV4;
 
 	if (nla_put_be16(skb, NFTA_CT_HELPER_L3PROTO, htons(family)))
 		return -1;

@@ -11,6 +11,7 @@
  * published by the Free Software Foundation.
  */
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/init.h>
 #include <linux/compiler.h>
 #include <linux/slab.h>
@@ -367,10 +368,17 @@ static int x86_vector_alloc_irqs(struct irq_domain *domain, unsigned int virq,
 		irq_data->chip = &lapic_controller;
 		irq_data->chip_data = data;
 		irq_data->hwirq = virq + i;
+
+		/* Don't invoke affinity setter on deactivated interrupts */
+		irqd_set_affinity_on_activate(irq_data);
+
 		err = assign_irq_vector_policy(virq + i, node, data, info,
 					       irq_data);
-		if (err)
+		if (err) {
+			irq_data->chip_data = NULL;
+			free_apic_chip_data(data);
 			goto error;
+		}
 		/*
 		 * If the apic destination mode is physical, then the
 		 * effective affinity is restricted to a single target
@@ -383,7 +391,7 @@ static int x86_vector_alloc_irqs(struct irq_domain *domain, unsigned int virq,
 	return 0;
 
 error:
-	x86_vector_free_irqs(domain, virq, i + 1);
+	x86_vector_free_irqs(domain, virq, i);
 	return err;
 }
 
@@ -453,7 +461,6 @@ int __init arch_early_irq_init(void)
 	x86_vector_domain = irq_domain_create_tree(fn, &x86_vector_domain_ops,
 						   NULL);
 	BUG_ON(x86_vector_domain == NULL);
-	irq_domain_free_fwnode(fn);
 	irq_set_default_host(x86_vector_domain);
 
 	arch_init_msi_domain(x86_vector_domain);

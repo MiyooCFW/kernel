@@ -23,6 +23,9 @@
  */
 #undef CONFIG_AMD_MEM_ENCRYPT
 
+/* No PAGE_TABLE_ISOLATION support needed either: */
+#undef CONFIG_PAGE_TABLE_ISOLATION
+
 #include "misc.h"
 
 /* These actually do the work of building the kernel identity maps. */
@@ -32,9 +35,6 @@
 #undef __PAGE_OFFSET
 #define __PAGE_OFFSET __PAGE_OFFSET_BASE
 #include "../../mm/ident_map.c"
-
-/* Used by pgtable.h asm code to force instruction serialization. */
-unsigned long __force_order;
 
 /* Used to track our page table allocation area. */
 struct alloc_pgt_data {

@@ -59,12 +59,6 @@ static bool check_atom_bios(uint8_t *bios, size_t size)
 		return false;
 	}
 
-	tmp = bios[0x18] | (bios[0x19] << 8);
-	if (bios[tmp + 0x14] != 0x0) {
-		DRM_INFO("Not an x86 BIOS ROM\n");
-		return false;
-	}
-
 	bios_header_start = bios[0x48] | (bios[0x49] << 8);
 	if (!bios_header_start) {
 		DRM_INFO("Can't locate bios header\n");
@@ -313,6 +307,7 @@ static bool amdgpu_atrm_get_bios(struct amdgpu_device *adev)
 
 	if (!found)
 		return false;
+	pci_dev_put(pdev);
 
 	adev->bios = kmalloc(size, GFP_KERNEL);
 	if (!adev->bios) {

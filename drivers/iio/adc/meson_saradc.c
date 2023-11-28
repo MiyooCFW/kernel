@@ -75,7 +75,7 @@
 	#define MESON_SAR_ADC_REG3_PANEL_DETECT_COUNT_MASK	GENMASK(20, 18)
 	#define MESON_SAR_ADC_REG3_PANEL_DETECT_FILTER_TB_MASK	GENMASK(17, 16)
 	#define MESON_SAR_ADC_REG3_ADC_CLK_DIV_SHIFT		10
-	#define MESON_SAR_ADC_REG3_ADC_CLK_DIV_WIDTH		5
+	#define MESON_SAR_ADC_REG3_ADC_CLK_DIV_WIDTH		6
 	#define MESON_SAR_ADC_REG3_BLOCK_DLY_SEL_MASK		GENMASK(9, 8)
 	#define MESON_SAR_ADC_REG3_BLOCK_DLY_MASK		GENMASK(7, 0)
 
@@ -221,8 +221,10 @@ enum meson_sar_adc_chan7_mux_sel {
 
 struct meson_sar_adc_data {
 	bool					has_bl30_integration;
+	u32					bandgap_reg;
 	unsigned int				resolution;
 	const char				*name;
+	const struct regmap_config		*regmap_config;
 };
 
 struct meson_sar_adc_priv {
@@ -242,11 +244,18 @@ struct meson_sar_adc_priv {
 	int					calibscale;
 };
 
-static const struct regmap_config meson_sar_adc_regmap_config = {
+static const struct regmap_config meson_sar_adc_regmap_config_gxbb = {
 	.reg_bits = 8,
 	.val_bits = 32,
 	.reg_stride = 4,
 	.max_register = MESON_SAR_ADC_REG13,
+};
+
+static const struct regmap_config meson_sar_adc_regmap_config_meson8 = {
+	.reg_bits = 8,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register = MESON_SAR_ADC_DELTA_10,
 };
 
 static unsigned int meson_sar_adc_get_fifo_count(struct iio_dev *indio_dev)
@@ -453,8 +462,10 @@ static int meson_sar_adc_lock(struct iio_dev *indio_dev)
 			regmap_read(priv->regmap, MESON_SAR_ADC_DELAY, &val);
 		} while (val & MESON_SAR_ADC_DELAY_BL30_BUSY && timeout--);
 
-		if (timeout < 0)
+		if (timeout < 0) {
+			mutex_unlock(&indio_dev->mlock);
 			return -ETIMEDOUT;
+		}
 	}
 
 	return 0;
@@ -572,8 +583,11 @@ static int meson_sar_adc_clk_init(struct iio_dev *indio_dev,
 	struct clk_init_data init;
 	const char *clk_parents[1];
 
-	init.name = devm_kasprintf(&indio_dev->dev, GFP_KERNEL, "%pOF#adc_div",
-				   indio_dev->dev.of_node);
+	init.name = devm_kasprintf(&indio_dev->dev, GFP_KERNEL, "%s#adc_div",
+				   dev_name(indio_dev->dev.parent));
+	if (!init.name)
+		return -ENOMEM;
+
 	init.flags = 0;
 	init.ops = &clk_divider_ops;
 	clk_parents[0] = __clk_get_name(priv->clkin);
@@ -591,8 +605,11 @@ static int meson_sar_adc_clk_init(struct iio_dev *indio_dev,
 	if (WARN_ON(IS_ERR(priv->adc_div_clk)))
 		return PTR_ERR(priv->adc_div_clk);
 
-	init.name = devm_kasprintf(&indio_dev->dev, GFP_KERNEL, "%pOF#adc_en",
-				   indio_dev->dev.of_node);
+	init.name = devm_kasprintf(&indio_dev->dev, GFP_KERNEL, "%s#adc_en",
+				   dev_name(indio_dev->dev.parent));
+	if (!init.name)
+		return -ENOMEM;
+
 	init.flags = CLK_SET_RATE_PARENT;
 	init.ops = &clk_gate_ops;
 	clk_parents[0] = __clk_get_name(priv->adc_div_clk);
@@ -600,7 +617,7 @@ static int meson_sar_adc_clk_init(struct iio_dev *indio_dev,
 	init.num_parents = 1;
 
 	priv->clk_gate.reg = base + MESON_SAR_ADC_REG3;
-	priv->clk_gate.bit_idx = fls(MESON_SAR_ADC_REG3_CLK_EN);
+	priv->clk_gate.bit_idx = __ffs(MESON_SAR_ADC_REG3_CLK_EN);
 	priv->clk_gate.hw.init = &init;
 
 	priv->adc_clk = devm_clk_register(&indio_dev->dev, &priv->clk_gate.hw);
@@ -685,6 +702,20 @@ static int meson_sar_adc_init(struct iio_dev *indio_dev)
 	return 0;
 }
 
+static void meson_sar_adc_set_bandgap(struct iio_dev *indio_dev, bool on_off)
+{
+	struct meson_sar_adc_priv *priv = iio_priv(indio_dev);
+	u32 enable_mask;
+
+	if (priv->data->bandgap_reg == MESON_SAR_ADC_REG11)
+		enable_mask = MESON_SAR_ADC_REG11_BANDGAP_EN;
+	else
+		enable_mask = MESON_SAR_ADC_DELTA_10_TS_VBG_EN;
+
+	regmap_update_bits(priv->regmap, priv->data->bandgap_reg, enable_mask,
+			   on_off ? enable_mask : 0);
+}
+
 static int meson_sar_adc_hw_enable(struct iio_dev *indio_dev)
 {
 	struct meson_sar_adc_priv *priv = iio_priv(indio_dev);
@@ -717,9 +748,9 @@ static int meson_sar_adc_hw_enable(struct iio_dev *indio_dev)
 	regval = FIELD_PREP(MESON_SAR_ADC_REG0_FIFO_CNT_IRQ_MASK, 1);
 	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG0,
 			   MESON_SAR_ADC_REG0_FIFO_CNT_IRQ_MASK, regval);
-	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG11,
-			   MESON_SAR_ADC_REG11_BANDGAP_EN,
-			   MESON_SAR_ADC_REG11_BANDGAP_EN);
+
+	meson_sar_adc_set_bandgap(indio_dev, true);
+
 	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG3,
 			   MESON_SAR_ADC_REG3_ADC_EN,
 			   MESON_SAR_ADC_REG3_ADC_EN);
@@ -739,8 +770,7 @@ static int meson_sar_adc_hw_enable(struct iio_dev *indio_dev)
 err_adc_clk:
 	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG3,
 			   MESON_SAR_ADC_REG3_ADC_EN, 0);
-	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG11,
-			   MESON_SAR_ADC_REG11_BANDGAP_EN, 0);
+	meson_sar_adc_set_bandgap(indio_dev, false);
 	clk_disable_unprepare(priv->sana_clk);
 err_sana_clk:
 	clk_disable_unprepare(priv->core_clk);
@@ -765,8 +795,8 @@ static int meson_sar_adc_hw_disable(struct iio_dev *indio_dev)
 
 	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG3,
 			   MESON_SAR_ADC_REG3_ADC_EN, 0);
-	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG11,
-			   MESON_SAR_ADC_REG11_BANDGAP_EN, 0);
+
+	meson_sar_adc_set_bandgap(indio_dev, false);
 
 	clk_disable_unprepare(priv->sana_clk);
 	clk_disable_unprepare(priv->core_clk);
@@ -845,30 +875,40 @@ static const struct iio_info meson_sar_adc_iio_info = {
 
 static const struct meson_sar_adc_data meson_sar_adc_meson8_data = {
 	.has_bl30_integration = false,
+	.bandgap_reg = MESON_SAR_ADC_DELTA_10,
+	.regmap_config = &meson_sar_adc_regmap_config_meson8,
 	.resolution = 10,
 	.name = "meson-meson8-saradc",
 };
 
 static const struct meson_sar_adc_data meson_sar_adc_meson8b_data = {
 	.has_bl30_integration = false,
+	.bandgap_reg = MESON_SAR_ADC_DELTA_10,
+	.regmap_config = &meson_sar_adc_regmap_config_meson8,
 	.resolution = 10,
 	.name = "meson-meson8b-saradc",
 };
 
 static const struct meson_sar_adc_data meson_sar_adc_gxbb_data = {
 	.has_bl30_integration = true,
+	.bandgap_reg = MESON_SAR_ADC_REG11,
+	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 10,
 	.name = "meson-gxbb-saradc",
 };
 
 static const struct meson_sar_adc_data meson_sar_adc_gxl_data = {
 	.has_bl30_integration = true,
+	.bandgap_reg = MESON_SAR_ADC_REG11,
+	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 12,
 	.name = "meson-gxl-saradc",
 };
 
 static const struct meson_sar_adc_data meson_sar_adc_gxm_data = {
 	.has_bl30_integration = true,
+	.bandgap_reg = MESON_SAR_ADC_REG11,
+	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 12,
 	.name = "meson-gxm-saradc",
 };
@@ -936,6 +976,11 @@ static int meson_sar_adc_probe(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
+	priv->regmap = devm_regmap_init_mmio(&pdev->dev, base,
+					     priv->data->regmap_config);
+	if (IS_ERR(priv->regmap))
+		return PTR_ERR(priv->regmap);
+
 	irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
 	if (!irq)
 		return -EINVAL;
@@ -944,11 +989,6 @@ static int meson_sar_adc_probe(struct platform_device *pdev)
 			       dev_name(&pdev->dev), indio_dev);
 	if (ret)
 		return ret;
-
-	priv->regmap = devm_regmap_init_mmio(&pdev->dev, base,
-					     &meson_sar_adc_regmap_config);
-	if (IS_ERR(priv->regmap))
-		return PTR_ERR(priv->regmap);
 
 	priv->clkin = devm_clk_get(&pdev->dev, "clkin");
 	if (IS_ERR(priv->clkin)) {

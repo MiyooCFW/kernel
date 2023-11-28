@@ -725,7 +725,8 @@ u64 kvmppc_xive_get_icp(struct kvm_vcpu *vcpu)
 
 	/* Return the per-cpu state for state saving/migration */
 	return (u64)xc->cppr << KVM_REG_PPC_ICP_CPPR_SHIFT |
-	       (u64)xc->mfrr << KVM_REG_PPC_ICP_MFRR_SHIFT;
+	       (u64)xc->mfrr << KVM_REG_PPC_ICP_MFRR_SHIFT |
+	       (u64)0xff << KVM_REG_PPC_ICP_PPRI_SHIFT;
 }
 
 int kvmppc_xive_set_icp(struct kvm_vcpu *vcpu, u64 icpval)
@@ -1000,20 +1001,22 @@ void kvmppc_xive_cleanup_vcpu(struct kvm_vcpu *vcpu)
 	/* Mask the VP IPI */
 	xive_vm_esb_load(&xc->vp_ipi_data, XIVE_ESB_SET_PQ_01);
 
-	/* Disable the VP */
-	xive_native_disable_vp(xc->vp_id);
-
-	/* Free the queues & associated interrupts */
+	/* Free escalations */
 	for (i = 0; i < KVMPPC_XIVE_Q_COUNT; i++) {
-		struct xive_q *q = &xc->queues[i];
-
-		/* Free the escalation irq */
 		if (xc->esc_virq[i]) {
 			free_irq(xc->esc_virq[i], vcpu);
 			irq_dispose_mapping(xc->esc_virq[i]);
 			kfree(xc->esc_virq_names[i]);
 		}
-		/* Free the queue */
+	}
+
+	/* Disable the VP */
+	xive_native_disable_vp(xc->vp_id);
+
+	/* Free the queues */
+	for (i = 0; i < KVMPPC_XIVE_Q_COUNT; i++) {
+		struct xive_q *q = &xc->queues[i];
+
 		xive_native_disable_queue(xc->vp_id, q, i);
 		if (q->qpage) {
 			free_pages((unsigned long)q->qpage,
@@ -1558,7 +1561,7 @@ static int xive_set_source(struct kvmppc_xive *xive, long irq, u64 addr)
 
 	/*
 	 * Restore P and Q. If the interrupt was pending, we
-	 * force both P and Q, which will trigger a resend.
+	 * force Q and !P, which will trigger a resend.
 	 *
 	 * That means that a guest that had both an interrupt
 	 * pending (queued) and Q set will restore with only
@@ -1566,7 +1569,7 @@ static int xive_set_source(struct kvmppc_xive *xive, long irq, u64 addr)
 	 * is perfectly fine as coalescing interrupts that haven't
 	 * been presented yet is always allowed.
 	 */
-	if (val & KVM_XICS_PRESENTED || val & KVM_XICS_PENDING)
+	if (val & KVM_XICS_PRESENTED && !(val & KVM_XICS_PENDING))
 		state->old_p = true;
 	if (val & KVM_XICS_QUEUED || val & KVM_XICS_PENDING)
 		state->old_q = true;
@@ -1674,7 +1677,6 @@ static void kvmppc_xive_cleanup_irq(u32 hw_num, struct xive_irq_data *xd)
 {
 	xive_vm_esb_load(xd, XIVE_ESB_SET_PQ_01);
 	xive_native_configure_irq(hw_num, 0, MASKED, 0);
-	xive_cleanup_irq_data(xd);
 }
 
 static void kvmppc_xive_free_sources(struct kvmppc_xive_src_block *sb)
@@ -1688,9 +1690,10 @@ static void kvmppc_xive_free_sources(struct kvmppc_xive_src_block *sb)
 			continue;
 
 		kvmppc_xive_cleanup_irq(state->ipi_number, &state->ipi_data);
+		xive_cleanup_irq_data(&state->ipi_data);
 		xive_native_free_irq(state->ipi_number);
 
-		/* Pass-through, cleanup too */
+		/* Pass-through, cleanup too but keep IRQ hw data */
 		if (state->pt_number)
 			kvmppc_xive_cleanup_irq(state->pt_number, state->pt_data);
 

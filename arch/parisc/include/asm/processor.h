@@ -108,7 +108,6 @@ struct cpuinfo_parisc {
 	unsigned long cpu_loc;      /* CPU location from PAT firmware */
 	unsigned int state;
 	struct parisc_device *dev;
-	unsigned long loops_per_jiffy;
 };
 
 extern struct system_cpuinfo_parisc boot_cpu_data;
@@ -315,6 +314,8 @@ extern int _parisc_requires_coherency;
 #else
 #define parisc_requires_coherency()	(0)
 #endif
+
+extern int running_on_qemu;
 
 #endif /* __ASSEMBLY__ */
 

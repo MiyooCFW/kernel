@@ -90,7 +90,6 @@ sunxi_pinctrl_desc_find_function_by_name(struct sunxi_pinctrl *pctl,
 			}
 		}
 	}
-
 	return NULL;
 }
 

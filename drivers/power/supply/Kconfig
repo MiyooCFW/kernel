@@ -611,4 +611,10 @@ config CHARGER_RT9455
 	help
 	  Say Y to enable support for Richtek RT9455 battery charger.
 
+config BATTERY_MIYOO
+	tristate "Miyoo battery driver"
+	depends on MACH_SUNIV
+	help
+	  Say Y to enable support for the battery on Miyoo handheld.
+
 endif # POWER_SUPPLY

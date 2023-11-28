@@ -130,6 +130,13 @@ obj-$(CONFIG_FB_PUV3_UNIGFX)      += fb-puv3.o
 obj-$(CONFIG_FB_HYPERV)		  += hyperv_fb.o
 obj-$(CONFIG_FB_OPENCORES)	  += ocfb.o
 obj-$(CONFIG_FB_SM712)		  += sm712fb.o
+obj-$(CONFIG_FB_R61520)		  += r61520fb.o
+obj-$(CONFIG_FB_GC9306)		  += gc9306fb.o
+obj-$(CONFIG_FB_ST7789S)		  += st7789sfb.o
+obj-$(CONFIG_FB_ST7789S_TE)		  += st7789sTEfb.o
+obj-$(CONFIG_FB_RM68090)		  += rm68090fb.o
+obj-$(CONFIG_FB_HX8347D)		  += hx8347dfb.o
+obj-$(CONFIG_FB_TVOUT)		  += miyoo-tvout.o
 
 # Platform or fallback drivers go here
 obj-$(CONFIG_FB_UVESA)            += uvesafb.o

@@ -54,7 +54,8 @@ scm_version()
 			# If only the short version is requested, don't bother
 			# running further git commands
 			if $short; then
-				echo "+"
+			#comment next line to make local kernel work with your upstream build
+				#echo "+"
 				return
 			fi
 			# If we are past a tagged commit (like

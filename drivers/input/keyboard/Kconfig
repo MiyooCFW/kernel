@@ -756,4 +756,13 @@ config KEYBOARD_BCM
 	  To compile this driver as a module, choose M here: the
 	  module will be called bcm-keypad.
 
+config KEYBOARD_MIYOO
+	tristate "Keypad driver for Miyoo handheld"
+	help
+	  Say Y here if you want to use keypad for Miyoo handheld.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called bcm-keypad.
+
 endif
+

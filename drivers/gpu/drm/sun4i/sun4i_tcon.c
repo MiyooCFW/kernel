@@ -625,6 +625,14 @@ static int sun4i_tcon_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct sun4i_tcon_quirks suniv_f1c100s_quirks = {
+	/*
+	 * The F1C100s SoC has a second channel in TCON, but the clock input of
+	 * it is not documented.
+	 */
+	/* .has_channel_1	= true, */
+};
+
 static const struct sun4i_tcon_quirks sun5i_a13_quirks = {
 	.has_unknown_mux = true,
 	.has_channel_1	= true,
@@ -647,6 +655,7 @@ static const struct sun4i_tcon_quirks sun8i_v3s_quirks = {
 };
 
 static const struct of_device_id sun4i_tcon_of_table[] = {
+	{ .compatible = "allwinner,suniv-f1c100s-tcon", .data = &suniv_f1c100s_quirks },
 	{ .compatible = "allwinner,sun5i-a13-tcon", .data = &sun5i_a13_quirks },
 	{ .compatible = "allwinner,sun6i-a31-tcon", .data = &sun6i_a31_quirks },
 	{ .compatible = "allwinner,sun6i-a31s-tcon", .data = &sun6i_a31s_quirks },

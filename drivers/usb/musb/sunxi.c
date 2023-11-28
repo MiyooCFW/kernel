@@ -655,6 +655,18 @@ static struct musb_fifo_cfg sunxi_musb_mode_cfg_h3[] = {
 	MUSB_EP_FIFO_SINGLE(4, FIFO_RX, 512),
 };
 
+/* SUNIV OTG supports only 3 endpoints */
+#define SUNXI_MUSB_MAX_EP_NUM_SUNIV	4
+
+static struct musb_fifo_cfg sunxi_musb_mode_cfg_suniv[] = {
+        	MUSB_EP_FIFO_SINGLE(1, FIFO_TX, 512),
+        	MUSB_EP_FIFO_SINGLE(1, FIFO_RX, 512),
+        	MUSB_EP_FIFO_SINGLE(2, FIFO_TX, 512),
+        	MUSB_EP_FIFO_SINGLE(2, FIFO_RX, 512),
+        	MUSB_EP_FIFO_SINGLE(3, FIFO_TX, 512),
+        	MUSB_EP_FIFO_SINGLE(3, FIFO_RX, 512),
+};
+
 static const struct musb_hdrc_config sunxi_musb_hdrc_config = {
 	.fifo_cfg       = sunxi_musb_mode_cfg,
 	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg),
@@ -675,6 +687,15 @@ static struct musb_hdrc_config sunxi_musb_hdrc_config_h3 = {
 	.num_eps	= SUNXI_MUSB_MAX_EP_NUM_H3,
 	.ram_bits	= SUNXI_MUSB_RAM_BITS,
 	.dma		= 0,
+};
+
+static struct musb_hdrc_config sunxi_musb_hdrc_config_suniv = {
+        	.fifo_cfg       = sunxi_musb_mode_cfg_suniv,
+        	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg_suniv),
+        	.multipoint	= true,
+        	.dyn_fifo	= true,
+        	.num_eps	= SUNXI_MUSB_MAX_EP_NUM_SUNIV,
+        	.ram_bits	= SUNXI_MUSB_RAM_BITS,
 };
 
 
@@ -720,23 +741,27 @@ static int sunxi_musb_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 	pdata.platform_ops	= &sunxi_musb_ops;
-	if (!of_device_is_compatible(np, "allwinner,sun8i-h3-musb"))
-		pdata.config = &sunxi_musb_hdrc_config;
-	else
-		pdata.config = &sunxi_musb_hdrc_config_h3;
+    pdata.config = &sunxi_musb_hdrc_config;
+    if (of_device_is_compatible(np, "allwinner,sun8i-h3-musb"))
+        pdata.config = &sunxi_musb_hdrc_config_h3;
+    if (of_device_is_compatible(np, "allwinner,suniv-f1c100s-musb"))
+        		pdata.config = &sunxi_musb_hdrc_config_suniv;
 
 	glue->dev = &pdev->dev;
 	INIT_WORK(&glue->work, sunxi_musb_work);
 	glue->host_nb.notifier_call = sunxi_musb_host_notifier;
 
-	if (of_device_is_compatible(np, "allwinner,sun4i-a10-musb"))
+	if (of_device_is_compatible(np, "allwinner,sun4i-a10-musb") ||
+	    of_device_is_compatible(np, "allwinner,suniv-f1c100s-musb")) {
 		set_bit(SUNXI_MUSB_FL_HAS_SRAM, &glue->flags);
+	}
 
 	if (of_device_is_compatible(np, "allwinner,sun6i-a31-musb"))
 		set_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags);
 
 	if (of_device_is_compatible(np, "allwinner,sun8i-a33-musb") ||
-	    of_device_is_compatible(np, "allwinner,sun8i-h3-musb")) {
+	    of_device_is_compatible(np, "allwinner,sun8i-h3-musb") ||
+	    of_device_is_compatible(np, "allwinner,suniv-f1c100s-musb")) {
 		set_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags);
 		set_bit(SUNXI_MUSB_FL_NO_CONFIGDATA, &glue->flags);
 	}
@@ -827,6 +852,7 @@ static int sunxi_musb_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id sunxi_musb_match[] = {
+	{ .compatible = "allwinner,suniv-f1c100s-musb", },
 	{ .compatible = "allwinner,sun4i-a10-musb", },
 	{ .compatible = "allwinner,sun6i-a31-musb", },
 	{ .compatible = "allwinner,sun8i-a33-musb", },

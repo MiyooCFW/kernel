@@ -2495,3 +2495,66 @@ config FB_SM712
 	  This driver is also available as a module. The module will be
 	  called sm712fb. If you want to compile it as a module, say M
 	  here and read <file:Documentation/kbuild/modules.txt>.
+
+config FB_R61520
+	tristate "Renesas R61520 SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for Renesas R61520 SLCD panel.
+
+config FB_GC9306
+	tristate "GC9306 SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for GC9306 SLCD panel.
+
+config FB_ST7789S
+	tristate "ST7789S SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for ST7789S SLCD panel.
+
+config FB_ST7789S_TE
+	tristate "ST7789S SLCD framebuffer support with TE pin"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for ST7789S SLCD panel.
+
+config FB_RM68090
+	tristate "RM68090 SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for RM68090 SLCD panel.
+
+config FB_HX8347D
+	tristate "HX8347D SLCD framebuffer support"
+	depends on FB
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	help
+	  Framebuffer driver for HX8347D SLCD panel.
+
+config FB_TVOUT
+tristate "TVOUT support"
+depends on FB
+        select FB_SYS_FILLRECT
+        select FB_SYS_COPYAREA
+        select FB_SYS_IMAGEBLIT
+        help
+Framebuffer driver for TVOUT.

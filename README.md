@@ -1,5 +1,5 @@
 # Kernel MiyooCFW
-
+Current version in use is 4.14.330 as of commit: [c553b51](https://github.com/MiyooCFW/kernel/commit/c553b518318595231feaedca83272657393bb425)
 ## Build instructions:
 Usually you have to be the root user and for stability reasons it is recommended to use uClibc:
 

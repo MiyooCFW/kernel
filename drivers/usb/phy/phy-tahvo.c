@@ -368,7 +368,8 @@ static int tahvo_usb_probe(struct platform_device *pdev)
 	tu->extcon = devm_extcon_dev_allocate(&pdev->dev, tahvo_cable);
 	if (IS_ERR(tu->extcon)) {
 		dev_err(&pdev->dev, "failed to allocate memory for extcon\n");
-		return -ENOMEM;
+		ret = PTR_ERR(tu->extcon);
+		goto err_disable_clk;
 	}
 
 	ret = devm_extcon_dev_register(&pdev->dev, tu->extcon);
@@ -403,7 +404,9 @@ static int tahvo_usb_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, tu);
 
-	tu->irq = platform_get_irq(pdev, 0);
+	tu->irq = ret = platform_get_irq(pdev, 0);
+	if (ret < 0)
+		goto err_remove_phy;
 	ret = request_threaded_irq(tu->irq, NULL, tahvo_usb_vbus_interrupt,
 				   IRQF_ONESHOT,
 				   "tahvo-vbus", tu);

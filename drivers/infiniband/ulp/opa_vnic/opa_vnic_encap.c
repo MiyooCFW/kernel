@@ -139,6 +139,7 @@ void opa_vnic_release_mac_tbl(struct opa_vnic_adapter *adapter)
 	rcu_assign_pointer(adapter->mactbl, NULL);
 	synchronize_rcu();
 	opa_vnic_free_mac_tbl(mactbl);
+	adapter->info.vport.mac_tbl_digest = 0;
 	mutex_unlock(&adapter->mactbl_lock);
 }
 
@@ -350,7 +351,8 @@ static uint32_t opa_vnic_get_dlid(struct opa_vnic_adapter *adapter,
 			if (unlikely(!dlid))
 				v_warn("Null dlid in MAC address\n");
 		} else if (def_port != OPA_VNIC_INVALID_PORT) {
-			dlid = info->vesw.u_ucast_dlid[def_port];
+			if (def_port < OPA_VESW_MAX_NUM_DEF_PORT)
+				dlid = info->vesw.u_ucast_dlid[def_port];
 		}
 	}
 

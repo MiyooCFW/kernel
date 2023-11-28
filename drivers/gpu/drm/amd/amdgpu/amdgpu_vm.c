@@ -1201,7 +1201,7 @@ static void amdgpu_vm_invalidate_level(struct amdgpu_vm_pt *parent)
 int amdgpu_vm_update_directories(struct amdgpu_device *adev,
 				 struct amdgpu_vm *vm)
 {
-	int r;
+	int r = 0;
 
 	r = amdgpu_vm_update_level(adev, vm, &vm->root, 0);
 	if (r)
@@ -2074,8 +2074,8 @@ int amdgpu_vm_bo_map(struct amdgpu_device *adev,
 	uint64_t eaddr;
 
 	/* validate the parameters */
-	if (saddr & AMDGPU_GPU_PAGE_MASK || offset & AMDGPU_GPU_PAGE_MASK ||
-	    size == 0 || size & AMDGPU_GPU_PAGE_MASK)
+	if (saddr & ~PAGE_MASK || offset & ~PAGE_MASK ||
+	    size == 0 || size & ~PAGE_MASK)
 		return -EINVAL;
 
 	/* make sure object fit at this offset */
@@ -2142,8 +2142,8 @@ int amdgpu_vm_bo_replace_map(struct amdgpu_device *adev,
 	int r;
 
 	/* validate the parameters */
-	if (saddr & AMDGPU_GPU_PAGE_MASK || offset & AMDGPU_GPU_PAGE_MASK ||
-	    size == 0 || size & AMDGPU_GPU_PAGE_MASK)
+	if (saddr & ~PAGE_MASK || offset & ~PAGE_MASK ||
+	    size == 0 || size & ~PAGE_MASK)
 		return -EINVAL;
 
 	/* make sure object fit at this offset */
@@ -2285,7 +2285,7 @@ int amdgpu_vm_bo_clear_mappings(struct amdgpu_device *adev,
 			after->start = eaddr + 1;
 			after->last = tmp->last;
 			after->offset = tmp->offset;
-			after->offset += after->start - tmp->start;
+			after->offset += (after->start - tmp->start) << PAGE_SHIFT;
 			after->flags = tmp->flags;
 			list_add(&after->list, &tmp->list);
 		}
@@ -2586,7 +2586,8 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 {
 	struct amdgpu_bo_va_mapping *mapping, *tmp;
 	bool prt_fini_needed = !!adev->gart.gart_funcs->set_prt;
-	int i;
+	struct amdgpu_bo *root;
+	int i, r;
 
 	amd_sched_entity_fini(vm->entity.sched, &vm->entity);
 
@@ -2609,7 +2610,15 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 		amdgpu_vm_free_mapping(adev, vm, mapping, NULL);
 	}
 
-	amdgpu_vm_free_levels(&vm->root);
+	root = amdgpu_bo_ref(vm->root.bo);
+	r = amdgpu_bo_reserve(root, true);
+	if (r) {
+		dev_err(adev->dev, "Leaking page tables because BO reservation failed\n");
+	} else {
+		amdgpu_vm_free_levels(&vm->root);
+		amdgpu_bo_unreserve(root);
+	}
+	amdgpu_bo_unref(&root);
 	dma_fence_put(vm->last_dir_update);
 	for (i = 0; i < AMDGPU_MAX_VMHUBS; i++)
 		amdgpu_vm_free_reserved_vmid(adev, vm, i);
@@ -2702,6 +2711,10 @@ int amdgpu_vm_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 	struct amdgpu_device *adev = dev->dev_private;
 	struct amdgpu_fpriv *fpriv = filp->driver_priv;
 	int r;
+
+	/* No valid flags defined yet */
+	if (args->in.flags)
+		return -EINVAL;
 
 	switch (args->in.op) {
 	case AMDGPU_VM_OP_RESERVE_VMID:

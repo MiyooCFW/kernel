@@ -257,10 +257,6 @@ void __init efi_arch_mem_reserve(phys_addr_t addr, u64 size)
 		return;
 	}
 
-	/* No need to reserve regions that will never be freed. */
-	if (md.attribute & EFI_MEMORY_RUNTIME)
-		return;
-
 	size += addr % EFI_PAGE_SIZE;
 	size = round_up(size, EFI_PAGE_SIZE);
 	addr = round_down(addr, EFI_PAGE_SIZE);
@@ -280,7 +276,8 @@ void __init efi_arch_mem_reserve(phys_addr_t addr, u64 size)
 		return;
 	}
 
-	new = early_memremap(new_phys, new_size);
+	new = early_memremap_prot(new_phys, new_size,
+				  pgprot_val(pgprot_encrypted(FIXMAP_PAGE_NORMAL)));
 	if (!new) {
 		pr_err("Failed to map new boot services memmap\n");
 		return;
@@ -290,6 +287,8 @@ void __init efi_arch_mem_reserve(phys_addr_t addr, u64 size)
 	early_memunmap(new, new_size);
 
 	efi_memmap_install(new_phys, num_entries);
+	e820__range_update(addr, size, E820_TYPE_RAM, E820_TYPE_RESERVED);
+	e820__update_table(e820_table);
 }
 
 /*
@@ -592,7 +591,18 @@ static int qrk_capsule_setup_info(struct capsule_info *cap_info, void **pkbuff,
 	/*
 	 * Update the first page pointer to skip over the CSH header.
 	 */
-	cap_info->pages[0] += csh->headersize;
+	cap_info->phys[0] += csh->headersize;
+
+	/*
+	 * cap_info->capsule should point at a virtual mapping of the entire
+	 * capsule, starting at the capsule header. Our image has the Quark
+	 * security header prepended, so we cannot rely on the default vmap()
+	 * mapping created by the generic capsule code.
+	 * Given that the Quark firmware does not appear to care about the
+	 * virtual mapping, let's just point cap_info->capsule at our copy
+	 * of the capsule header.
+	 */
+	cap_info->capsule = &cap_info->header;
 
 	return 1;
 }

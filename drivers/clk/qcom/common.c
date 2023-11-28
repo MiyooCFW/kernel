@@ -37,6 +37,9 @@ struct freq_tbl *qcom_find_freq(const struct freq_tbl *f, unsigned long rate)
 	if (!f)
 		return NULL;
 
+	if (!f->freq)
+		return f;
+
 	for (; f->freq; f++)
 		if (rate <= f->freq)
 			return f;
@@ -143,8 +146,10 @@ static int _qcom_cc_register_board_clk(struct device *dev, const char *path,
 	int ret;
 
 	clocks_node = of_find_node_by_path("/clocks");
-	if (clocks_node)
-		node = of_find_node_by_name(clocks_node, path);
+	if (clocks_node) {
+		node = of_get_child_by_name(clocks_node, path);
+		of_node_put(clocks_node);
+	}
 
 	if (!node) {
 		fixed = devm_kzalloc(dev, sizeof(*fixed), GFP_KERNEL);

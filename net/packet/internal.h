@@ -70,7 +70,10 @@ struct packet_ring_buffer {
 
 	unsigned int __percpu	*pending_refcnt;
 
-	struct tpacket_kbdq_core	prb_bdqc;
+	union {
+		unsigned long			*rx_owner_map;
+		struct tpacket_kbdq_core	prb_bdqc;
+	};
 };
 
 extern struct mutex fanout_mutex;
@@ -95,7 +98,6 @@ struct packet_fanout {
 
 struct packet_rollover {
 	int			sock;
-	struct rcu_head		rcu;
 	atomic_long_t		num;
 	atomic_long_t		num_huge;
 	atomic_long_t		num_failed;
@@ -113,10 +115,11 @@ struct packet_sock {
 	int			copy_thresh;
 	spinlock_t		bind_lock;
 	struct mutex		pg_vec_lock;
-	unsigned int		running:1,	/* prot_hook is attached*/
-				auxdata:1,
-				origdev:1,
-				has_vnet_hdr:1;
+	unsigned long		flags;
+	unsigned int		running;	/* bind_lock must be held */
+	unsigned int		has_vnet_hdr:1, /* writer must hold sock lock */
+				tp_loss:1,
+				tp_tx_has_off:1;
 	int			pressure;
 	int			ifindex;	/* bound device		*/
 	__be16			num;
@@ -126,9 +129,8 @@ struct packet_sock {
 	enum tpacket_versions	tp_version;
 	unsigned int		tp_hdrlen;
 	unsigned int		tp_reserve;
-	unsigned int		tp_loss:1;
-	unsigned int		tp_tx_has_off:1;
 	unsigned int		tp_tstamp;
+	struct completion	skb_completion;
 	struct net_device __rcu	*cached_dev;
 	int			(*xmit)(struct sk_buff *skb);
 	struct packet_type	prot_hook ____cacheline_aligned_in_smp;
@@ -137,6 +139,27 @@ struct packet_sock {
 static struct packet_sock *pkt_sk(struct sock *sk)
 {
 	return (struct packet_sock *)sk;
+}
+
+enum packet_sock_flags {
+	PACKET_SOCK_ORIGDEV,
+	PACKET_SOCK_AUXDATA,
+};
+
+static inline void packet_sock_flag_set(struct packet_sock *po,
+					enum packet_sock_flags flag,
+					bool val)
+{
+	if (val)
+		set_bit(flag, &po->flags);
+	else
+		clear_bit(flag, &po->flags);
+}
+
+static inline bool packet_sock_flag(const struct packet_sock *po,
+				    enum packet_sock_flags flag)
+{
+	return test_bit(flag, &po->flags);
 }
 
 #endif

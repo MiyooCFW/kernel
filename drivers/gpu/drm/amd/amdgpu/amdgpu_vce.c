@@ -231,6 +231,8 @@ int amdgpu_vce_suspend(struct amdgpu_device *adev)
 {
 	int i;
 
+	cancel_delayed_work_sync(&adev->vce.idle_work);
+
 	if (adev->vce.vcpu_bo == NULL)
 		return 0;
 
@@ -241,7 +243,6 @@ int amdgpu_vce_suspend(struct amdgpu_device *adev)
 	if (i == AMDGPU_MAX_VCE_HANDLES)
 		return 0;
 
-	cancel_delayed_work_sync(&adev->vce.idle_work);
 	/* TODO: suspending running encoding sessions isn't supported */
 	return -EINVAL;
 }
@@ -647,7 +648,7 @@ int amdgpu_vce_ring_parse_cs(struct amdgpu_cs_parser *p, uint32_t ib_idx)
 	uint32_t allocated = 0;
 	uint32_t tmp, handle = 0;
 	uint32_t *size = &tmp;
-	int i, r, idx = 0;
+	int i, r = 0, idx = 0;
 
 	p->job->vm = NULL;
 	ib->gpu_addr = amdgpu_sa_bo_gpu_addr(ib->sa_bo);

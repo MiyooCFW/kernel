@@ -809,7 +809,7 @@ timeout:
 	return 0;
 }
 
-int ipoib_ib_dev_stop(struct net_device *dev)
+void ipoib_ib_dev_stop(struct net_device *dev)
 {
 	struct ipoib_dev_priv *priv = ipoib_priv(dev);
 
@@ -817,8 +817,6 @@ int ipoib_ib_dev_stop(struct net_device *dev)
 
 	clear_bit(IPOIB_FLAG_INITIALIZED, &priv->flags);
 	ipoib_flush_ah(dev);
-
-	return 0;
 }
 
 void ipoib_ib_tx_timer_func(unsigned long ctx)
@@ -1205,8 +1203,10 @@ static void __ipoib_ib_dev_flush(struct ipoib_dev_priv *priv,
 	if (level == IPOIB_FLUSH_HEAVY) {
 		if (test_bit(IPOIB_FLAG_INITIALIZED, &priv->flags))
 			ipoib_ib_dev_stop(dev);
-		if (ipoib_ib_dev_open(dev) != 0)
+
+		if (ipoib_ib_dev_open(dev))
 			return;
+
 		if (netif_queue_stopped(dev))
 			netif_start_queue(dev);
 	}
@@ -1244,7 +1244,9 @@ void ipoib_ib_dev_flush_heavy(struct work_struct *work)
 	struct ipoib_dev_priv *priv =
 		container_of(work, struct ipoib_dev_priv, flush_heavy);
 
+	rtnl_lock();
 	__ipoib_ib_dev_flush(priv, IPOIB_FLUSH_HEAVY, 0);
+	rtnl_unlock();
 }
 
 void ipoib_ib_dev_cleanup(struct net_device *dev)

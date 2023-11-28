@@ -630,8 +630,8 @@ static void dax_mapping_entry_mkclean(struct address_space *mapping,
 			set_pmd_at(vma->vm_mm, address, pmdp, pmd);
 			mmu_notifier_invalidate_range(vma->vm_mm, start, end);
 unlock_pmd:
-			spin_unlock(ptl);
 #endif
+			spin_unlock(ptl);
 		} else {
 			if (pfn != pte_pfn(*ptep))
 				goto unlock_pte;
@@ -1057,6 +1057,9 @@ dax_iomap_rw(struct kiocb *iocb, struct iov_iter *iter,
 		lockdep_assert_held(&inode->i_rwsem);
 	}
 
+	if (iocb->ki_flags & IOCB_NOWAIT)
+		flags |= IOMAP_NOWAIT;
+
 	while (iov_iter_count(iter)) {
 		ret = iomap_apply(inode, pos, iov_iter_count(iter), flags, ops,
 				iter, dax_iomap_actor);
@@ -1327,7 +1330,7 @@ static int dax_iomap_pmd_fault(struct vm_fault *vmf,
 	 * this is a reliable test.
 	 */
 	pgoff = linear_page_index(vma, pmd_addr);
-	max_pgoff = (i_size_read(inode) - 1) >> PAGE_SHIFT;
+	max_pgoff = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
 
 	trace_dax_pmd_fault(inode, vmf, max_pgoff, 0);
 
@@ -1351,13 +1354,13 @@ static int dax_iomap_pmd_fault(struct vm_fault *vmf,
 	if ((pmd_addr + PMD_SIZE) > vma->vm_end)
 		goto fallback;
 
-	if (pgoff > max_pgoff) {
+	if (pgoff >= max_pgoff) {
 		result = VM_FAULT_SIGBUS;
 		goto out;
 	}
 
 	/* If the PMD would extend beyond the file size */
-	if ((pgoff | PG_PMD_COLOUR) > max_pgoff)
+	if ((pgoff | PG_PMD_COLOUR) >= max_pgoff)
 		goto fallback;
 
 	/*

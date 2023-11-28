@@ -27,7 +27,7 @@ static struct ctl_table page_table_sysctl[] = {
 		.data		= &page_table_allocate_pgste,
 		.maxlen		= sizeof(int),
 		.mode		= S_IRUGO | S_IWUSR,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &page_table_allocate_pgste_min,
 		.extra2		= &page_table_allocate_pgste_max,
 	},
@@ -85,8 +85,6 @@ int crst_table_upgrade(struct mm_struct *mm, unsigned long end)
 
 	/* upgrade should only happen from 3 to 4, 3 to 5, or 4 to 5 levels */
 	VM_BUG_ON(mm->context.asce_limit < _REGION2_SIZE);
-	if (end >= TASK_SIZE_MAX)
-		return -ENOMEM;
 	rc = 0;
 	notify = 0;
 	while (mm->context.asce_limit < end) {

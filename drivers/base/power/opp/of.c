@@ -397,12 +397,14 @@ static int _of_add_opp_table_v2(struct device *dev, struct device_node *opp_np)
 			dev_err(dev, "%s: Failed to add OPP, %d\n", __func__,
 				ret);
 			_dev_pm_opp_remove_table(opp_table, dev, false);
+			of_node_put(np);
 			goto put_opp_table;
 		}
 	}
 
-	/* There should be one of more OPP defined */
-	if (WARN_ON(!count)) {
+	/* There should be one or more OPPs defined */
+	if (!count) {
+		dev_err(dev, "%s: no supported OPPs", __func__);
 		ret = -ENOENT;
 		goto put_opp_table;
 	}

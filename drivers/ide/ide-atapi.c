@@ -213,7 +213,6 @@ void ide_prep_sense(ide_drive_t *drive, struct request *rq)
 	sense_rq->rq_disk = rq->rq_disk;
 	sense_rq->cmd_flags = REQ_OP_DRV_IN;
 	ide_req(sense_rq)->type = ATA_PRIV_SENSE;
-	sense_rq->rq_flags |= RQF_PREEMPT;
 
 	req->cmd[0] = GPCMD_REQUEST_SENSE;
 	req->cmd[4] = cmd_len;
@@ -282,7 +281,7 @@ int ide_cd_expiry(ide_drive_t *drive)
 	struct request *rq = drive->hwif->rq;
 	unsigned long wait = 0;
 
-	debug_log("%s: rq->cmd[0]: 0x%x\n", __func__, rq->cmd[0]);
+	debug_log("%s: scsi_req(rq)->cmd[0]: 0x%x\n", __func__, scsi_req(rq)->cmd[0]);
 
 	/*
 	 * Some commands are *slow* and normally take a long time to complete.
@@ -463,7 +462,7 @@ static ide_startstop_t ide_pc_intr(ide_drive_t *drive)
 				return ide_do_reset(drive);
 			}
 
-			debug_log("[cmd %x]: check condition\n", rq->cmd[0]);
+			debug_log("[cmd %x]: check condition\n", scsi_req(rq)->cmd[0]);
 
 			/* Retry operation */
 			ide_retry_pc(drive);
@@ -531,7 +530,7 @@ static ide_startstop_t ide_pc_intr(ide_drive_t *drive)
 		ide_pad_transfer(drive, write, bcount);
 
 	debug_log("[cmd %x] transferred %d bytes, padded %d bytes, resid: %u\n",
-		  rq->cmd[0], done, bcount, scsi_req(rq)->resid_len);
+		  scsi_req(rq)->cmd[0], done, bcount, scsi_req(rq)->resid_len);
 
 	/* And set the interrupt handler again */
 	ide_set_handler(drive, ide_pc_intr, timeout);
@@ -592,7 +591,7 @@ static int ide_delayed_transfer_pc(ide_drive_t *drive)
 
 static ide_startstop_t ide_transfer_pc(ide_drive_t *drive)
 {
-	struct ide_atapi_pc *uninitialized_var(pc);
+	struct ide_atapi_pc *pc;
 	ide_hwif_t *hwif = drive->hwif;
 	struct request *rq = hwif->rq;
 	ide_expiry_t *expiry;

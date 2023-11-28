@@ -2,6 +2,8 @@
 #ifndef _ASM_X86_SWITCH_TO_H
 #define _ASM_X86_SWITCH_TO_H
 
+#include <linux/sched/task_stack.h>
+
 struct task_struct; /* one of the stranger aspects of C forward declarations */
 
 struct task_struct *__switch_to_asm(struct task_struct *prev,
@@ -9,9 +11,6 @@ struct task_struct *__switch_to_asm(struct task_struct *prev,
 
 __visible struct task_struct *__switch_to(struct task_struct *prev,
 					  struct task_struct *next);
-struct tss_struct;
-void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
-		      struct tss_struct *tss);
 
 /* This runs runs on the previous thread's stack. */
 static inline void prepare_switch_to(struct task_struct *prev,
@@ -42,6 +41,7 @@ asmlinkage void ret_from_fork(void);
  * order of the fields must match the code in __switch_to_asm().
  */
 struct inactive_task_frame {
+	unsigned long flags;
 #ifdef CONFIG_X86_64
 	unsigned long r15;
 	unsigned long r14;
@@ -72,5 +72,29 @@ do {									\
 									\
 	((last) = __switch_to_asm((prev), (next)));			\
 } while (0)
+
+#ifdef CONFIG_X86_32
+static inline void refresh_sysenter_cs(struct thread_struct *thread)
+{
+	/* Only happens when SEP is enabled, no need to test "SEP"arately: */
+	if (unlikely(this_cpu_read(cpu_tss_rw.x86_tss.ss1) == thread->sysenter_cs))
+		return;
+
+	this_cpu_write(cpu_tss_rw.x86_tss.ss1, thread->sysenter_cs);
+	wrmsr(MSR_IA32_SYSENTER_CS, thread->sysenter_cs, 0);
+}
+#endif
+
+/* This is used when switching tasks or entering/exiting vm86 mode. */
+static inline void update_sp0(struct task_struct *task)
+{
+	/* On x86_64, sp0 always points to the entry trampoline stack, which is constant: */
+#ifdef CONFIG_X86_32
+	load_sp0(task->thread.sp0);
+#else
+	if (static_cpu_has(X86_FEATURE_XENPV))
+		load_sp0(task_top_of_stack(task));
+#endif
+}
 
 #endif /* _ASM_X86_SWITCH_TO_H */

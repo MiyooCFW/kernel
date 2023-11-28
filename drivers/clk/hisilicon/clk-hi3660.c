@@ -34,7 +34,7 @@ static const struct hisi_fixed_rate_clock hi3660_fixed_rate_clks[] = {
 
 /* crgctrl */
 static const struct hisi_fixed_factor_clock hi3660_crg_fixed_factor_clks[] = {
-	{ HI3660_FACTOR_UART3, "clk_factor_uart3", "iomcu_peri0", 1, 8, 0, },
+	{ HI3660_FACTOR_UART3, "clk_factor_uart3", "iomcu_peri0", 1, 16, 0, },
 	{ HI3660_CLK_FACTOR_MMC, "clk_factor_mmc", "clkin_sys", 1, 6, 0, },
 	{ HI3660_CLK_GATE_I2C0, "clk_gate_i2c0", "clk_i2c0_iomcu", 1, 4, 0, },
 	{ HI3660_CLK_GATE_I2C1, "clk_gate_i2c1", "clk_i2c1_iomcu", 1, 4, 0, },
@@ -163,8 +163,12 @@ static const struct hisi_gate_clock hi3660_crgctrl_gate_sep_clks[] = {
 	  "clk_isp_snclk_mux", CLK_SET_RATE_PARENT, 0x50, 17, 0, },
 	{ HI3660_CLK_GATE_ISP_SNCLK2, "clk_gate_isp_snclk2",
 	  "clk_isp_snclk_mux", CLK_SET_RATE_PARENT, 0x50, 18, 0, },
+	/*
+	 * clk_gate_ufs_subsys is a system bus clock, mark it as critical
+	 * clock and keep it on for system suspend and resume.
+	 */
 	{ HI3660_CLK_GATE_UFS_SUBSYS, "clk_gate_ufs_subsys", "clk_div_sysbus",
-	  CLK_SET_RATE_PARENT, 0x50, 21, 0, },
+	  CLK_SET_RATE_PARENT | CLK_IS_CRITICAL, 0x50, 21, 0, },
 	{ HI3660_PCLK_GATE_DSI0, "pclk_gate_dsi0", "clk_div_cfgbus",
 	  CLK_SET_RATE_PARENT, 0x50, 28, 0, },
 	{ HI3660_PCLK_GATE_DSI1, "pclk_gate_dsi1", "clk_div_cfgbus",

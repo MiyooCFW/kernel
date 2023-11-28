@@ -1,4 +1,3 @@
-#! /usr/bin/python
 # SPDX-License-Identifier: GPL-2.0
 
 import os
@@ -116,7 +115,7 @@ class Event(dict):
             if not self.has_key(t) or not other.has_key(t):
                 continue
             if not data_equal(self[t], other[t]):
-		log.warning("expected %s=%s, got %s" % (t, self[t], other[t]))
+                log.warning("expected %s=%s, got %s" % (t, self[t], other[t]))
 
 # Test file description needs to have following sections:
 # [config]
@@ -238,6 +237,7 @@ class Test(object):
         # events in result. Fail if there's not any.
         for exp_name, exp_event in expect.items():
             exp_list = []
+            res_event = {}
             log.debug("    matching [%s]" % exp_name)
             for res_name, res_event in result.items():
                 log.debug("      to [%s]" % res_name)
@@ -254,7 +254,10 @@ class Test(object):
                 if exp_event.optional():
                     log.debug("    %s does not match, but is optional" % exp_name)
                 else:
-                    exp_event.diff(res_event)
+                    if not res_event:
+                        log.debug("    res_event is empty");
+                    else:
+                        exp_event.diff(res_event)
                     raise Fail(self, 'match failure');
 
             match[exp_name] = exp_list

@@ -233,7 +233,8 @@ static const char * const mnt_info_table[] = {
 	"failed srcname match",
 	"failed type match",
 	"failed flags match",
-	"failed data match"
+	"failed data match",
+	"failed perms check"
 };
 
 /*
@@ -288,8 +289,8 @@ static int do_match_mnt(struct aa_dfa *dfa, unsigned int start,
 			return 0;
 	}
 
-	/* failed at end of flags match */
-	return 4;
+	/* failed at perms check, don't confuse with flags match */
+	return 6;
 }
 
 
@@ -329,6 +330,9 @@ static int match_mnt_path_str(struct aa_profile *profile,
 	AA_BUG(!profile);
 	AA_BUG(!mntpath);
 	AA_BUG(!buffer);
+
+	if (!PROFILE_MEDIATES(profile, AA_CLASS_MOUNT))
+		return 0;
 
 	error = aa_path_name(mntpath, path_flags(profile, mntpath), buffer,
 			     &mntpnt, &info, profile->disconnected);
@@ -380,6 +384,9 @@ static int match_mnt(struct aa_profile *profile, const struct path *path,
 
 	AA_BUG(!profile);
 	AA_BUG(devpath && !devbuffer);
+
+	if (!PROFILE_MEDIATES(profile, AA_CLASS_MOUNT))
+		return 0;
 
 	if (devpath) {
 		error = aa_path_name(devpath, path_flags(profile, devpath),
@@ -559,6 +566,9 @@ static int profile_umount(struct aa_profile *profile, struct path *path,
 	AA_BUG(!profile);
 	AA_BUG(!path);
 
+	if (!PROFILE_MEDIATES(profile, AA_CLASS_MOUNT))
+		return 0;
+
 	error = aa_path_name(path, path_flags(profile, path), buffer, &name,
 			     &info, profile->disconnected);
 	if (error)
@@ -614,7 +624,8 @@ static struct aa_label *build_pivotroot(struct aa_profile *profile,
 	AA_BUG(!new_path);
 	AA_BUG(!old_path);
 
-	if (profile_unconfined(profile))
+	if (profile_unconfined(profile) ||
+	    !PROFILE_MEDIATES(profile, AA_CLASS_MOUNT))
 		return aa_get_newest_label(&profile->label);
 
 	error = aa_path_name(old_path, path_flags(profile, old_path),
@@ -676,6 +687,7 @@ int aa_pivotroot(struct aa_label *label, const struct path *old_path,
 			aa_put_label(target);
 			goto out;
 		}
+		aa_put_label(target);
 	} else
 		/* already audited error */
 		error = PTR_ERR(target);

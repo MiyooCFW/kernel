@@ -433,7 +433,8 @@ static void vc4_hdmi_set_avi_infoframe(struct drm_encoder *encoder)
 					   vc4_encoder->limited_rgb_range ?
 					   HDMI_QUANTIZATION_RANGE_LIMITED :
 					   HDMI_QUANTIZATION_RANGE_FULL,
-					   vc4_encoder->rgb_range_selectable);
+					   vc4_encoder->rgb_range_selectable,
+					   false);
 
 	vc4_hdmi_write_infoframe(encoder, &frame);
 }
@@ -1114,6 +1115,7 @@ static int vc4_hdmi_audio_init(struct vc4_hdmi *hdmi)
 	card->num_links = 1;
 	card->name = "vc4-hdmi";
 	card->dev = dev;
+	card->owner = THIS_MODULE;
 
 	/*
 	 * Be careful, snd_soc_register_card() calls dev_set_drvdata() and

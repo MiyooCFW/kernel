@@ -60,6 +60,7 @@ static void kvmppc_giveup_fac(struct kvm_vcpu *vcpu, ulong fac);
 #define MSR_USER32 MSR_USER
 #define MSR_USER64 MSR_USER
 #define HW_PAGE_SIZE PAGE_SIZE
+#define HPTE_R_M   _PAGE_COHERENT
 #endif
 
 static bool kvmppc_is_split_real(struct kvm_vcpu *vcpu)
@@ -557,6 +558,7 @@ int kvmppc_handle_pagefault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 		pte.eaddr = eaddr;
 		pte.vpage = eaddr >> 12;
 		pte.page_size = MMU_PAGE_64K;
+		pte.wimg = HPTE_R_M;
 	}
 
 	switch (kvmppc_get_msr(vcpu) & (MSR_DR|MSR_IR)) {
@@ -1480,10 +1482,12 @@ static struct kvm_vcpu *kvmppc_core_vcpu_create_pr(struct kvm *kvm,
 
 	err = kvmppc_mmu_init(vcpu);
 	if (err < 0)
-		goto uninit_vcpu;
+		goto free_shared_page;
 
 	return vcpu;
 
+free_shared_page:
+	free_page((unsigned long)vcpu->arch.shared);
 uninit_vcpu:
 	kvm_vcpu_uninit(vcpu);
 free_shadow_vcpu:

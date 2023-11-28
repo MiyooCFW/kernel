@@ -637,6 +637,9 @@ static int ti_hecc_rx_poll(struct napi_struct *napi, int quota)
 		mbx_mask = hecc_read(priv, HECC_CANMIM);
 		mbx_mask |= HECC_TX_MBOX_MASK;
 		hecc_write(priv, HECC_CANMIM, mbx_mask);
+	} else {
+		/* repoll is done only if whole budget is used */
+		num_pkts = quota;
 	}
 
 	return num_pkts;
@@ -900,7 +903,8 @@ static int ti_hecc_probe(struct platform_device *pdev)
 	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base)) {
 		dev_err(&pdev->dev, "hecc ioremap failed\n");
-		return PTR_ERR(priv->base);
+		err = PTR_ERR(priv->base);
+		goto probe_exit_candev;
 	}
 
 	/* handle hecc-ram memory */
@@ -913,7 +917,8 @@ static int ti_hecc_probe(struct platform_device *pdev)
 	priv->hecc_ram = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->hecc_ram)) {
 		dev_err(&pdev->dev, "hecc-ram ioremap failed\n");
-		return PTR_ERR(priv->hecc_ram);
+		err = PTR_ERR(priv->hecc_ram);
+		goto probe_exit_candev;
 	}
 
 	/* handle mbx memory */
@@ -926,13 +931,14 @@ static int ti_hecc_probe(struct platform_device *pdev)
 	priv->mbx = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->mbx)) {
 		dev_err(&pdev->dev, "mbx ioremap failed\n");
-		return PTR_ERR(priv->mbx);
+		err = PTR_ERR(priv->mbx);
+		goto probe_exit_candev;
 	}
 
 	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!irq) {
 		dev_err(&pdev->dev, "No irq resource\n");
-		goto probe_exit;
+		goto probe_exit_candev;
 	}
 
 	priv->ndev = ndev;
@@ -985,7 +991,7 @@ probe_exit_clk:
 	clk_put(priv->clk);
 probe_exit_candev:
 	free_candev(ndev);
-probe_exit:
+
 	return err;
 }
 

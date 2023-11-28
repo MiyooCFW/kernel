@@ -194,7 +194,7 @@
 				   SNDRV_PCM_RATE_32000 | \
 				   SNDRV_PCM_RATE_48000)
 #define MSM8916_WCD_DIGITAL_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
-				     SNDRV_PCM_FMTBIT_S24_LE)
+				     SNDRV_PCM_FMTBIT_S32_LE)
 
 struct msm8916_wcd_digital_priv {
 	struct clk *ahbclk, *mclk;
@@ -238,7 +238,7 @@ static const struct soc_enum rx_mix2_inp1_chain_enum = SOC_ENUM_SINGLE(
 static const struct soc_enum rx2_mix1_inp_enum[] = {
 	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX2_B1_CTL, 0, 6, rx_mix1_text),
 	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX2_B1_CTL, 3, 6, rx_mix1_text),
-	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX2_B1_CTL, 0, 6, rx_mix1_text),
+	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX2_B2_CTL, 0, 6, rx_mix1_text),
 };
 
 /* RX2 MIX2 */
@@ -249,7 +249,7 @@ static const struct soc_enum rx2_mix2_inp1_chain_enum = SOC_ENUM_SINGLE(
 static const struct soc_enum rx3_mix1_inp_enum[] = {
 	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX3_B1_CTL, 0, 6, rx_mix1_text),
 	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX3_B1_CTL, 3, 6, rx_mix1_text),
-	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX3_B1_CTL, 0, 6, rx_mix1_text),
+	SOC_ENUM_SINGLE(LPASS_CDC_CONN_RX3_B2_CTL, 0, 6, rx_mix1_text),
 };
 
 /* DEC */
@@ -645,7 +645,7 @@ static int msm8916_wcd_digital_hw_params(struct snd_pcm_substream *substream,
 				    RX_I2S_CTL_RX_I2S_MODE_MASK,
 				    RX_I2S_CTL_RX_I2S_MODE_16);
 		break;
-	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S32_LE:
 		snd_soc_update_bits(dai->codec, LPASS_CDC_CLK_TX_I2S_CTL,
 				    TX_I2S_CTL_TX_I2S_MODE_MASK,
 				    TX_I2S_CTL_TX_I2S_MODE_32);
@@ -910,7 +910,7 @@ static int msm8916_wcd_digital_probe(struct platform_device *pdev)
 	ret = clk_prepare_enable(priv->mclk);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable mclk %d\n", ret);
-		return ret;
+		goto err_clk;
 	}
 
 	dev_set_drvdata(dev, priv);
@@ -918,6 +918,9 @@ static int msm8916_wcd_digital_probe(struct platform_device *pdev)
 	return snd_soc_register_codec(dev, &msm8916_wcd_digital,
 				      msm8916_wcd_digital_dai,
 				      ARRAY_SIZE(msm8916_wcd_digital_dai));
+err_clk:
+	clk_disable_unprepare(priv->ahbclk);
+	return ret;
 }
 
 static int msm8916_wcd_digital_remove(struct platform_device *pdev)

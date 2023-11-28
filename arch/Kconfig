@@ -13,6 +13,9 @@ config KEXEC_CORE
 config HAVE_IMA_KEXEC
 	bool
 
+config HOTPLUG_SMT
+	bool
+
 config OPROFILE
 	tristate "OProfile system profiling"
 	depends on PROFILING
@@ -91,7 +94,7 @@ config STATIC_KEYS_SELFTEST
 config OPTPROBES
 	def_bool y
 	depends on KPROBES && HAVE_OPTPROBES
-	depends on !PREEMPT
+	select TASKS_RCU if PREEMPT
 
 config KPROBES_ON_FTRACE
 	def_bool y
@@ -234,6 +237,9 @@ config ARCH_HAS_FORTIFY_SOURCE
 config ARCH_HAS_SET_MEMORY
 	bool
 
+config ARCH_HAS_CPU_FINALIZE_INIT
+	bool
+
 # Select if arch init_task initializer is different to init/init_task.c
 config ARCH_INIT_TASK
        bool
@@ -332,6 +338,16 @@ config HAVE_ARCH_JUMP_LABEL
 
 config HAVE_RCU_TABLE_FREE
 	bool
+
+config HAVE_RCU_TABLE_INVALIDATE
+	bool
+
+config ARCH_WANT_IRQS_OFF_ACTIVATE_MM
+	bool
+	help
+	  Temporary select until all architectures can be converted to have
+	  irqs disabled over activate_mm. Architectures that do IPI based TLB
+	  shootdowns should enable this.
 
 config ARCH_HAVE_NMI_SAFE_CMPXCHG
 	bool
@@ -958,5 +974,16 @@ config REFCOUNT_FULL
 	  implementation, which can be (slightly) slower but provides protections
 	  against various use-after-free conditions that can be used in
 	  security flaw exploits.
+
+config HAVE_ARCH_COMPILER_H
+	bool
+	help
+	  An architecture can select this if it provides an
+	  asm/compiler.h header that should be included after
+	  linux/compiler-*.h in order to override macro definitions that those
+	  headers generally provide.
+
+config ARCH_USE_MEMREMAP_PROT
+	bool
 
 source "kernel/gcov/Kconfig"

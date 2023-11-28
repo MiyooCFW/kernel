@@ -44,6 +44,7 @@
 #include <asm/asm.h>
 #include <asm/smap.h>
 #include <asm/frame.h>
+#include <asm/nospec-branch.h>
 
 	.section .entry.text, "ax"
 
@@ -233,6 +234,7 @@ ENTRY(__switch_to_asm)
 	pushl	%ebx
 	pushl	%edi
 	pushl	%esi
+	pushfl
 
 	/* switch stack */
 	movl	%esp, TASK_threadsp(%eax)
@@ -243,7 +245,17 @@ ENTRY(__switch_to_asm)
 	movl	%ebx, PER_CPU_VAR(stack_canary)+stack_canary_offset
 #endif
 
+	/*
+	 * When switching from a shallower to a deeper call stack
+	 * the RSB may either underflow or use entries populated
+	 * with userspace addresses. On CPUs where those concerns
+	 * exist, overwrite the RSB with entries which capture
+	 * speculative execution to prevent attack.
+	 */
+	FILL_RETURN_BUFFER %ebx, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_CTXSW
+
 	/* restore callee-saved registers */
+	popfl
 	popl	%esi
 	popl	%edi
 	popl	%ebx
@@ -290,7 +302,7 @@ ENTRY(ret_from_fork)
 
 	/* kernel thread */
 1:	movl	%edi, %eax
-	call	*%ebx
+	CALL_NOSPEC %ebx
 	/*
 	 * A kernel thread is allowed to return here after successfully
 	 * calling do_execve().  Exit to userspace to complete the execve()
@@ -919,7 +931,7 @@ common_exception:
 	movl	%ecx, %es
 	TRACE_IRQS_OFF
 	movl	%esp, %eax			# pt_regs pointer
-	call	*%edi
+	CALL_NOSPEC %edi
 	jmp	ret_from_exception
 END(common_exception)
 
@@ -941,9 +953,10 @@ ENTRY(debug)
 	movl	%esp, %eax			# pt_regs pointer
 
 	/* Are we currently on the SYSENTER stack? */
-	PER_CPU(cpu_tss + CPU_TSS_SYSENTER_stack + SIZEOF_SYSENTER_stack, %ecx)
-	subl	%eax, %ecx	/* ecx = (end of SYSENTER_stack) - esp */
-	cmpl	$SIZEOF_SYSENTER_stack, %ecx
+	movl	PER_CPU_VAR(cpu_entry_area), %ecx
+	addl	$CPU_ENTRY_AREA_entry_stack + SIZEOF_entry_stack, %ecx
+	subl	%eax, %ecx	/* ecx = (end of entry_stack) - esp */
+	cmpl	$SIZEOF_entry_stack, %ecx
 	jb	.Ldebug_from_sysenter_stack
 
 	TRACE_IRQS_OFF
@@ -984,9 +997,10 @@ ENTRY(nmi)
 	movl	%esp, %eax			# pt_regs pointer
 
 	/* Are we currently on the SYSENTER stack? */
-	PER_CPU(cpu_tss + CPU_TSS_SYSENTER_stack + SIZEOF_SYSENTER_stack, %ecx)
-	subl	%eax, %ecx	/* ecx = (end of SYSENTER_stack) - esp */
-	cmpl	$SIZEOF_SYSENTER_stack, %ecx
+	movl	PER_CPU_VAR(cpu_entry_area), %ecx
+	addl	$CPU_ENTRY_AREA_entry_stack + SIZEOF_entry_stack, %ecx
+	subl	%eax, %ecx	/* ecx = (end of entry_stack) - esp */
+	cmpl	$SIZEOF_entry_stack, %ecx
 	jb	.Lnmi_from_sysenter_stack
 
 	/* Not on SYSENTER stack. */
@@ -1041,6 +1055,7 @@ ENTRY(int3)
 END(int3)
 
 ENTRY(general_protection)
+	ASM_CLAC
 	pushl	$do_general_protection
 	jmp	common_exception
 END(general_protection)
@@ -1053,13 +1068,13 @@ ENTRY(async_page_fault)
 END(async_page_fault)
 #endif
 
-ENTRY(rewind_stack_do_exit)
+ENTRY(rewind_stack_and_make_dead)
 	/* Prevent any naive code from trying to unwind to our caller. */
 	xorl	%ebp, %ebp
 
 	movl	PER_CPU_VAR(cpu_current_top_of_stack), %esi
 	leal	-TOP_OF_KERNEL_STACK_PADDING-PTREGS_SIZE(%esi), %esp
 
-	call	do_exit
+	call	make_task_dead
 1:	jmp 1b
-END(rewind_stack_do_exit)
+END(rewind_stack_and_make_dead)

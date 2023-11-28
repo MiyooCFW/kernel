@@ -51,6 +51,7 @@
 #ifdef CONFIG_RFS_ACCEL
 #include <linux/cpu_rmap.h>
 #endif
+#include <linux/version.h>
 #include <net/devlink.h>
 #include "mlx5_core.h"
 #include "fs_core.h"
@@ -155,26 +156,6 @@ static struct mlx5_profile profile[] = {
 			.size	= 8,
 			.limit	= 4
 		},
-		.mr_cache[16]	= {
-			.size	= 8,
-			.limit	= 4
-		},
-		.mr_cache[17]	= {
-			.size	= 8,
-			.limit	= 4
-		},
-		.mr_cache[18]	= {
-			.size	= 8,
-			.limit	= 4
-		},
-		.mr_cache[19]	= {
-			.size	= 4,
-			.limit	= 2
-		},
-		.mr_cache[20]	= {
-			.size	= 4,
-			.limit	= 2
-		},
 	},
 };
 
@@ -224,7 +205,10 @@ static void mlx5_set_driver_version(struct mlx5_core_dev *dev)
 	strncat(string, ",", remaining_size);
 
 	remaining_size = max_t(int, 0, driver_ver_sz - strlen(string));
-	strncat(string, DRIVER_VERSION, remaining_size);
+
+	snprintf(string + strlen(string), remaining_size, "%u.%u.%u",
+		 (u8)((LINUX_VERSION_CODE >> 16) & 0xff), (u8)((LINUX_VERSION_CODE >> 8) & 0xff),
+		 (u16)(LINUX_VERSION_CODE & 0xffff));
 
 	/*Send the command*/
 	MLX5_SET(set_driver_version_in, in, opcode,
@@ -316,9 +300,6 @@ static int mlx5_alloc_irq_vectors(struct mlx5_core_dev *dev)
 {
 	struct mlx5_priv *priv = &dev->priv;
 	struct mlx5_eq_table *table = &priv->eq_table;
-	struct irq_affinity irqdesc = {
-		.pre_vectors = MLX5_EQ_VEC_COMP_BASE,
-	};
 	int num_eqs = 1 << MLX5_CAP_GEN(dev, log_max_eq);
 	int nvec;
 
@@ -332,10 +313,9 @@ static int mlx5_alloc_irq_vectors(struct mlx5_core_dev *dev)
 	if (!priv->irq_info)
 		goto err_free_msix;
 
-	nvec = pci_alloc_irq_vectors_affinity(dev->pdev,
+	nvec = pci_alloc_irq_vectors(dev->pdev,
 			MLX5_EQ_VEC_COMP_BASE + 1, nvec,
-			PCI_IRQ_MSIX | PCI_IRQ_AFFINITY,
-			&irqdesc);
+			PCI_IRQ_MSIX);
 	if (nvec < 0)
 		return nvec;
 
@@ -581,8 +561,7 @@ static int mlx5_core_set_hca_defaults(struct mlx5_core_dev *dev)
 	int ret = 0;
 
 	/* Disable local_lb by default */
-	if ((MLX5_CAP_GEN(dev, port_type) == MLX5_CAP_PORT_TYPE_ETH) &&
-	    MLX5_CAP_GEN(dev, disable_local_lb))
+	if (MLX5_CAP_GEN(dev, port_type) == MLX5_CAP_PORT_TYPE_ETH)
 		ret = mlx5_nic_vport_update_local_lb(dev, false);
 
 	return ret;
@@ -619,6 +598,65 @@ u64 mlx5_read_internal_timer(struct mlx5_core_dev *dev)
 		timer_l = ioread32be(&dev->iseg->internal_timer_l);
 
 	return (u64)timer_l | (u64)timer_h1 << 32;
+}
+
+static int mlx5_irq_set_affinity_hint(struct mlx5_core_dev *mdev, int i)
+{
+	struct mlx5_priv *priv  = &mdev->priv;
+	int vecidx = MLX5_EQ_VEC_COMP_BASE + i;
+	int irq = pci_irq_vector(mdev->pdev, vecidx);
+
+	if (!zalloc_cpumask_var(&priv->irq_info[vecidx].mask, GFP_KERNEL)) {
+		mlx5_core_warn(mdev, "zalloc_cpumask_var failed");
+		return -ENOMEM;
+	}
+
+	cpumask_set_cpu(cpumask_local_spread(i, priv->numa_node),
+			priv->irq_info[vecidx].mask);
+
+	if (IS_ENABLED(CONFIG_SMP) &&
+	    irq_set_affinity_hint(irq, priv->irq_info[vecidx].mask))
+		mlx5_core_warn(mdev, "irq_set_affinity_hint failed, irq 0x%.4x", irq);
+
+	return 0;
+}
+
+static void mlx5_irq_clear_affinity_hint(struct mlx5_core_dev *mdev, int i)
+{
+	int vecidx = MLX5_EQ_VEC_COMP_BASE + i;
+	struct mlx5_priv *priv  = &mdev->priv;
+	int irq = pci_irq_vector(mdev->pdev, vecidx);
+
+	irq_set_affinity_hint(irq, NULL);
+	free_cpumask_var(priv->irq_info[vecidx].mask);
+}
+
+static int mlx5_irq_set_affinity_hints(struct mlx5_core_dev *mdev)
+{
+	int err;
+	int i;
+
+	for (i = 0; i < mdev->priv.eq_table.num_comp_vectors; i++) {
+		err = mlx5_irq_set_affinity_hint(mdev, i);
+		if (err)
+			goto err_out;
+	}
+
+	return 0;
+
+err_out:
+	for (i--; i >= 0; i--)
+		mlx5_irq_clear_affinity_hint(mdev, i);
+
+	return err;
+}
+
+static void mlx5_irq_clear_affinity_hints(struct mlx5_core_dev *mdev)
+{
+	int i;
+
+	for (i = 0; i < mdev->priv.eq_table.num_comp_vectors; i++)
+		mlx5_irq_clear_affinity_hint(mdev, i);
 }
 
 int mlx5_vector2eqn(struct mlx5_core_dev *dev, int vector, int *eqn,
@@ -804,9 +842,9 @@ static int mlx5_pci_init(struct mlx5_core_dev *dev, struct mlx5_priv *priv)
 
 	priv->numa_node = dev_to_node(&dev->pdev->dev);
 
-	priv->dbg_root = debugfs_create_dir(dev_name(&pdev->dev), mlx5_debugfs_root);
-	if (!priv->dbg_root)
-		return -ENOMEM;
+	if (mlx5_debugfs_root)
+		priv->dbg_root =
+			debugfs_create_dir(pci_name(pdev), mlx5_debugfs_root);
 
 	err = mlx5_pci_enable_device(dev);
 	if (err) {
@@ -855,7 +893,7 @@ static void mlx5_pci_close(struct mlx5_core_dev *dev, struct mlx5_priv *priv)
 	pci_clear_master(dev->pdev);
 	release_bar(dev->pdev);
 	mlx5_pci_disable_device(dev);
-	debugfs_remove(priv->dbg_root);
+	debugfs_remove_recursive(priv->dbg_root);
 }
 
 static int mlx5_init_once(struct mlx5_core_dev *dev, struct mlx5_priv *priv)
@@ -1093,6 +1131,12 @@ static int mlx5_load_one(struct mlx5_core_dev *dev, struct mlx5_priv *priv,
 		goto err_stop_eqs;
 	}
 
+	err = mlx5_irq_set_affinity_hints(dev);
+	if (err) {
+		dev_err(&pdev->dev, "Failed to alloc affinity hint cpumask\n");
+		goto err_affinity_hints;
+	}
+
 	err = mlx5_init_fs(dev);
 	if (err) {
 		dev_err(&pdev->dev, "Failed to init flow steering\n");
@@ -1150,6 +1194,9 @@ err_sriov:
 	mlx5_cleanup_fs(dev);
 
 err_fs:
+	mlx5_irq_clear_affinity_hints(dev);
+
+err_affinity_hints:
 	free_comp_eqs(dev);
 
 err_stop_eqs:
@@ -1166,7 +1213,7 @@ err_cleanup_once:
 		mlx5_cleanup_once(dev);
 
 err_stop_poll:
-	mlx5_stop_health_poll(dev);
+	mlx5_stop_health_poll(dev, boot);
 	if (mlx5_cmd_teardown_hca(dev)) {
 		dev_err(&dev->pdev->dev, "tear_down_hca failed, skip cleanup\n");
 		goto out_err;
@@ -1218,13 +1265,14 @@ static int mlx5_unload_one(struct mlx5_core_dev *dev, struct mlx5_priv *priv,
 
 	mlx5_sriov_detach(dev);
 	mlx5_cleanup_fs(dev);
+	mlx5_irq_clear_affinity_hints(dev);
 	free_comp_eqs(dev);
 	mlx5_stop_eqs(dev);
 	mlx5_put_uars_page(dev, priv->uar);
 	mlx5_free_irq_vectors(dev);
 	if (cleanup)
 		mlx5_cleanup_once(dev);
-	mlx5_stop_health_poll(dev);
+	mlx5_stop_health_poll(dev, cleanup);
 	err = mlx5_cmd_teardown_hca(dev);
 	if (err) {
 		dev_err(&dev->pdev->dev, "tear_down_hca failed, skip cleanup\n");
@@ -1486,7 +1534,7 @@ static int mlx5_try_fast_unload(struct mlx5_core_dev *dev)
 	 * with the HCA, so the health polll is no longer needed.
 	 */
 	mlx5_drain_health_wq(dev);
-	mlx5_stop_health_poll(dev);
+	mlx5_stop_health_poll(dev, false);
 
 	ret = mlx5_cmd_force_teardown_hca(dev);
 	if (ret) {
@@ -1528,6 +1576,7 @@ static const struct pci_device_id mlx5_core_pci_table[] = {
 	{ PCI_VDEVICE(MELLANOX, 0x101c), MLX5_PCI_DEV_IS_VF},	/* ConnectX-6 VF */
 	{ PCI_VDEVICE(MELLANOX, 0xa2d2) },			/* BlueField integrated ConnectX-5 network controller */
 	{ PCI_VDEVICE(MELLANOX, 0xa2d3), MLX5_PCI_DEV_IS_VF},	/* BlueField integrated ConnectX-5 network controller VF */
+	{ PCI_VDEVICE(MELLANOX, 0xa2d6) },			/* BlueField-2 integrated ConnectX-6 Dx network controller */
 	{ 0, }
 };
 
@@ -1566,7 +1615,7 @@ static void mlx5_core_verify_params(void)
 	}
 }
 
-static int __init init(void)
+static int __init mlx5_init(void)
 {
 	int err;
 
@@ -1588,7 +1637,7 @@ err_debug:
 	return err;
 }
 
-static void __exit cleanup(void)
+static void __exit mlx5_cleanup(void)
 {
 #ifdef CONFIG_MLX5_CORE_EN
 	mlx5e_cleanup();
@@ -1597,5 +1646,5 @@ static void __exit cleanup(void)
 	mlx5_unregister_debugfs();
 }
 
-module_init(init);
-module_exit(cleanup);
+module_init(mlx5_init);
+module_exit(mlx5_cleanup);

@@ -147,7 +147,7 @@ enum {
 	MLX5_CMD_OP_ALLOC_Q_COUNTER               = 0x771,
 	MLX5_CMD_OP_DEALLOC_Q_COUNTER             = 0x772,
 	MLX5_CMD_OP_QUERY_Q_COUNTER               = 0x773,
-	MLX5_CMD_OP_SET_RATE_LIMIT                = 0x780,
+	MLX5_CMD_OP_SET_PP_RATE_LIMIT             = 0x780,
 	MLX5_CMD_OP_QUERY_RATE_LIMIT              = 0x781,
 	MLX5_CMD_OP_CREATE_SCHEDULING_ELEMENT      = 0x782,
 	MLX5_CMD_OP_DESTROY_SCHEDULING_ELEMENT     = 0x783,
@@ -324,11 +324,11 @@ struct mlx5_ifc_flow_table_prop_layout_bits {
 	u8         reserved_at_60[0x18];
 	u8         log_max_ft_num[0x8];
 
-	u8         reserved_at_80[0x18];
+	u8         reserved_at_80[0x10];
+	u8         log_max_flow_counter[0x8];
 	u8         log_max_destination[0x8];
 
-	u8         log_max_flow_counter[0x8];
-	u8         reserved_at_a8[0x10];
+	u8         reserved_at_a0[0x18];
 	u8         log_max_flow[0x8];
 
 	u8         reserved_at_c0[0x40];
@@ -857,7 +857,7 @@ struct mlx5_ifc_cmd_hca_cap_bits {
 	u8         reserved_at_1a4[0x1];
 	u8         ets[0x1];
 	u8         nic_flow_table[0x1];
-	u8         eswitch_flow_table[0x1];
+	u8         eswitch_manager[0x1];
 	u8	   early_vf_enable[0x1];
 	u8         mcam_reg[0x1];
 	u8         pcam_reg[0x1];
@@ -1023,8 +1023,9 @@ struct mlx5_ifc_cmd_hca_cap_bits {
 	u8         log_max_wq_sz[0x5];
 
 	u8         nic_vport_change_event[0x1];
-	u8         disable_local_lb[0x1];
-	u8         reserved_at_3e2[0x9];
+	u8         disable_local_lb_uc[0x1];
+	u8         disable_local_lb_mc[0x1];
+	u8         reserved_at_3e3[0x8];
 	u8         log_max_vlan_list[0x5];
 	u8         reserved_at_3f0[0x3];
 	u8         log_max_current_mc_list[0x5];
@@ -7233,7 +7234,7 @@ struct mlx5_ifc_add_vxlan_udp_dport_in_bits {
 	u8         vxlan_udp_port[0x10];
 };
 
-struct mlx5_ifc_set_rate_limit_out_bits {
+struct mlx5_ifc_set_pp_rate_limit_out_bits {
 	u8         status[0x8];
 	u8         reserved_at_8[0x18];
 
@@ -7242,7 +7243,7 @@ struct mlx5_ifc_set_rate_limit_out_bits {
 	u8         reserved_at_40[0x40];
 };
 
-struct mlx5_ifc_set_rate_limit_in_bits {
+struct mlx5_ifc_set_pp_rate_limit_in_bits {
 	u8         opcode[0x10];
 	u8         reserved_at_10[0x10];
 
@@ -7255,6 +7256,8 @@ struct mlx5_ifc_set_rate_limit_in_bits {
 	u8         reserved_at_60[0x20];
 
 	u8         rate_limit[0x20];
+
+	u8         reserved_at_a0[0x160];
 };
 
 struct mlx5_ifc_access_register_out_bits {
@@ -7950,8 +7953,8 @@ struct mlx5_ifc_bufferx_reg_bits {
 	u8         reserved_at_0[0x6];
 	u8         lossy[0x1];
 	u8         epsb[0x1];
-	u8         reserved_at_8[0xc];
-	u8         size[0xc];
+	u8         reserved_at_8[0x8];
+	u8         size[0x10];
 
 	u8         xoff_threshold[0x10];
 	u8         xon_threshold[0x10];
@@ -8667,8 +8670,6 @@ struct mlx5_ifc_query_lag_out_bits {
 	u8         reserved_at_8[0x18];
 
 	u8         syndrome[0x20];
-
-	u8         reserved_at_40[0x40];
 
 	struct mlx5_ifc_lagc_bits ctx;
 };

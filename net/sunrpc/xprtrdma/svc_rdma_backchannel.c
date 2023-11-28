@@ -133,6 +133,10 @@ static int svc_rdma_bc_sendto(struct svcxprt_rdma *rdma,
 	if (ret)
 		goto out_err;
 
+	/* Bump page refcnt so Send completion doesn't release
+	 * the rq_buffer before all retransmits are complete.
+	 */
+	get_page(virt_to_page(rqst->rq_buffer));
 	ret = svc_rdma_post_send_wr(rdma, ctxt, 1, 0);
 	if (ret)
 		goto out_unmap;
@@ -165,7 +169,6 @@ xprt_rdma_bc_allocate(struct rpc_task *task)
 		return -EINVAL;
 	}
 
-	/* svc_rdma_sendto releases this page */
 	page = alloc_page(RPCRDMA_DEF_GFP);
 	if (!page)
 		return -ENOMEM;
@@ -184,6 +187,7 @@ xprt_rdma_bc_free(struct rpc_task *task)
 {
 	struct rpc_rqst *rqst = task->tk_rqstp;
 
+	put_page(virt_to_page(rqst->rq_buffer));
 	kfree(rqst->rq_rbuffer);
 }
 
@@ -266,6 +270,7 @@ xprt_rdma_bc_put(struct rpc_xprt *xprt)
 {
 	dprintk("svcrdma: %s: xprt %p\n", __func__, xprt);
 
+	xprt_rdma_free_addresses(xprt);
 	xprt_free(xprt);
 	module_put(THIS_MODULE);
 }
@@ -316,9 +321,9 @@ xprt_setup_rdma_bc(struct xprt_create *args)
 	xprt->timeout = &xprt_rdma_bc_timeout;
 	xprt_set_bound(xprt);
 	xprt_set_connected(xprt);
-	xprt->bind_timeout = RPCRDMA_BIND_TO;
-	xprt->reestablish_timeout = RPCRDMA_INIT_REEST_TO;
-	xprt->idle_timeout = RPCRDMA_IDLE_DISC_TO;
+	xprt->bind_timeout = 0;
+	xprt->reestablish_timeout = 0;
+	xprt->idle_timeout = 0;
 
 	xprt->prot = XPRT_TRANSPORT_BC_RDMA;
 	xprt->tsh_size = RPCRDMA_HDRLEN_MIN / sizeof(__be32);

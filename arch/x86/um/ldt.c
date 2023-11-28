@@ -6,6 +6,7 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/syscalls.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <os.h>
@@ -22,9 +23,11 @@ static long write_ldt_entry(struct mm_id *mm_idp, int func,
 {
 	long res;
 	void *stub_addr;
+
+	BUILD_BUG_ON(sizeof(*desc) % sizeof(long));
+
 	res = syscall_stub_data(mm_idp, (unsigned long *)desc,
-				(sizeof(*desc) + sizeof(long) - 1) &
-				    ~(sizeof(long) - 1),
+				sizeof(*desc) / sizeof(long),
 				addr, &stub_addr);
 	if (!res) {
 		unsigned long args[] = { func,
@@ -369,7 +372,9 @@ void free_ldt(struct mm_context *mm)
 	mm->arch.ldt.entry_count = 0;
 }
 
-int sys_modify_ldt(int func, void __user *ptr, unsigned long bytecount)
+SYSCALL_DEFINE3(modify_ldt, int , func , void __user * , ptr ,
+		unsigned long , bytecount)
 {
-	return do_modify_ldt_skas(func, ptr, bytecount);
+	/* See non-um modify_ldt() for why we do this cast */
+	return (unsigned int)do_modify_ldt_skas(func, ptr, bytecount);
 }

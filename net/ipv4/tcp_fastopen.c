@@ -239,6 +239,7 @@ static struct sock *tcp_fastopen_create_child(struct sock *sk,
 static bool tcp_fastopen_queue_check(struct sock *sk)
 {
 	struct fastopen_queue *fastopenq;
+	int max_qlen;
 
 	/* Make sure the listener has enabled fastopen, and we don't
 	 * exceed the max # of pending TFO requests allowed before trying
@@ -251,10 +252,11 @@ static bool tcp_fastopen_queue_check(struct sock *sk)
 	 * temporarily vs a server not supporting Fast Open at all.
 	 */
 	fastopenq = &inet_csk(sk)->icsk_accept_queue.fastopenq;
-	if (fastopenq->max_qlen == 0)
+	max_qlen = READ_ONCE(fastopenq->max_qlen);
+	if (max_qlen == 0)
 		return false;
 
-	if (fastopenq->qlen >= fastopenq->max_qlen) {
+	if (fastopenq->qlen >= max_qlen) {
 		struct request_sock *req1;
 		spin_lock(&fastopenq->lock);
 		req1 = fastopenq->rskq_rst_head;
@@ -458,17 +460,15 @@ bool tcp_fastopen_active_should_disable(struct sock *sk)
 void tcp_fastopen_active_disable_ofo_check(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	struct rb_node *p;
-	struct sk_buff *skb;
 	struct dst_entry *dst;
+	struct sk_buff *skb;
 
 	if (!tp->syn_fastopen)
 		return;
 
 	if (!tp->data_segs_in) {
-		p = rb_first(&tp->out_of_order_queue);
-		if (p && !rb_next(p)) {
-			skb = rb_entry(p, struct sk_buff, rbnode);
+		skb = skb_rb_first(&tp->out_of_order_queue);
+		if (skb && !skb_rb_next(skb)) {
 			if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN) {
 				tcp_fastopen_active_disable(sk);
 				return;

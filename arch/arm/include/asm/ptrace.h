@@ -126,8 +126,7 @@ extern unsigned long profile_pc(struct pt_regs *regs);
 /*
  * kprobe-based event tracer support
  */
-#include <linux/stddef.h>
-#include <linux/types.h>
+#include <linux/compiler.h>
 #define MAX_REG_OFFSET (offsetof(struct pt_regs, ARM_ORIG_r0))
 
 extern int regs_query_register_offset(const char *name);
@@ -167,6 +166,32 @@ static inline unsigned long user_stack_pointer(struct pt_regs *regs)
 #define current_pt_regs(void) ({ (struct pt_regs *)			\
 		((current_stack_pointer | (THREAD_SIZE - 1)) - 7) - 1;	\
 })
+
+
+/*
+ * Update ITSTATE after normal execution of an IT block instruction.
+ *
+ * The 8 IT state bits are split into two parts in CPSR:
+ *	ITSTATE<1:0> are in CPSR<26:25>
+ *	ITSTATE<7:2> are in CPSR<15:10>
+ */
+static inline unsigned long it_advance(unsigned long cpsr)
+{
+	if ((cpsr & 0x06000400) == 0) {
+		/* ITSTATE<2:0> == 0 means end of IT block, so clear IT state */
+		cpsr &= ~PSR_IT_MASK;
+	} else {
+		/* We need to shift left ITSTATE<4:0> */
+		const unsigned long mask = 0x06001c00;  /* Mask ITSTATE<4:0> */
+		unsigned long it = cpsr & mask;
+		it <<= 1;
+		it |= it >> (27 - 10);  /* Carry ITSTATE<2> to correct place */
+		it &= mask;
+		cpsr &= ~mask;
+		cpsr |= it;
+	}
+	return cpsr;
+}
 
 #endif /* __ASSEMBLY__ */
 #endif

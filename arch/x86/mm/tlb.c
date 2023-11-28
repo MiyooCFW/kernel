@@ -6,13 +6,14 @@
 #include <linux/interrupt.h>
 #include <linux/export.h>
 #include <linux/cpu.h>
+#include <linux/debugfs.h>
 
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
+#include <asm/nospec-branch.h>
 #include <asm/cache.h>
 #include <asm/apic.h>
 #include <asm/uv/uv.h>
-#include <linux/debugfs.h>
 
 /*
  *	TLB flushing, formerly SMP-only
@@ -28,6 +29,44 @@
  *	Implement flush IPI by CALL_FUNCTION_VECTOR, Alex Shi
  */
 
+/*
+ * Use bit 0 to mangle the TIF_SPEC_IB state into the mm pointer which is
+ * stored in cpu_tlb_state.last_user_mm_ibpb.
+ */
+#define LAST_USER_MM_IBPB	0x1UL
+
+/*
+ * We get here when we do something requiring a TLB invalidation
+ * but could not go invalidate all of the contexts.  We do the
+ * necessary invalidation by clearing out the 'ctx_id' which
+ * forces a TLB flush when the context is loaded.
+ */
+void clear_asid_other(void)
+{
+	u16 asid;
+
+	/*
+	 * This is only expected to be set if we have disabled
+	 * kernel _PAGE_GLOBAL pages.
+	 */
+	if (!static_cpu_has(X86_FEATURE_PTI)) {
+		WARN_ON_ONCE(1);
+		return;
+	}
+
+	for (asid = 0; asid < TLB_NR_DYN_ASIDS; asid++) {
+		/* Do not need to flush the current asid */
+		if (asid == this_cpu_read(cpu_tlbstate.loaded_mm_asid))
+			continue;
+		/*
+		 * Make sure the next time we go to switch to
+		 * this asid, we do a flush:
+		 */
+		this_cpu_write(cpu_tlbstate.ctxs[asid].ctx_id, 0);
+	}
+	this_cpu_write(cpu_tlbstate.invalidate_other, false);
+}
+
 atomic64_t last_mm_ctx_id = ATOMIC64_INIT(1);
 
 
@@ -41,6 +80,9 @@ static void choose_new_asid(struct mm_struct *next, u64 next_tlb_gen,
 		*need_flush = true;
 		return;
 	}
+
+	if (this_cpu_read(cpu_tlbstate.invalidate_other))
+		clear_asid_other();
 
 	for (asid = 0; asid < TLB_NR_DYN_ASIDS; asid++) {
 		if (this_cpu_read(cpu_tlbstate.ctxs[asid].ctx_id) !=
@@ -63,6 +105,25 @@ static void choose_new_asid(struct mm_struct *next, u64 next_tlb_gen,
 		this_cpu_write(cpu_tlbstate.next_asid, 1);
 	}
 	*need_flush = true;
+}
+
+static void load_new_mm_cr3(pgd_t *pgdir, u16 new_asid, bool need_flush)
+{
+	unsigned long new_mm_cr3;
+
+	if (need_flush) {
+		invalidate_user_asid(new_asid);
+		new_mm_cr3 = build_cr3(pgdir, new_asid);
+	} else {
+		new_mm_cr3 = build_cr3_noflush(pgdir, new_asid);
+	}
+
+	/*
+	 * Caution: many callers of this function expect
+	 * that load_cr3() is serializing and orders TLB
+	 * fills with respect to the mm_cpumask writes.
+	 */
+	write_cr3(new_mm_cr3);
 }
 
 void leave_mm(int cpu)
@@ -97,6 +158,117 @@ void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	local_irq_restore(flags);
 }
 
+static void sync_current_stack_to_mm(struct mm_struct *mm)
+{
+	unsigned long sp = current_stack_pointer;
+	pgd_t *pgd = pgd_offset(mm, sp);
+
+	if (CONFIG_PGTABLE_LEVELS > 4) {
+		if (unlikely(pgd_none(*pgd))) {
+			pgd_t *pgd_ref = pgd_offset_k(sp);
+
+			set_pgd(pgd, *pgd_ref);
+		}
+	} else {
+		/*
+		 * "pgd" is faked.  The top level entries are "p4d"s, so sync
+		 * the p4d.  This compiles to approximately the same code as
+		 * the 5-level case.
+		 */
+		p4d_t *p4d = p4d_offset(pgd, sp);
+
+		if (unlikely(p4d_none(*p4d))) {
+			pgd_t *pgd_ref = pgd_offset_k(sp);
+			p4d_t *p4d_ref = p4d_offset(pgd_ref, sp);
+
+			set_p4d(p4d, *p4d_ref);
+		}
+	}
+}
+
+static inline unsigned long mm_mangle_tif_spec_ib(struct task_struct *next)
+{
+	unsigned long next_tif = task_thread_info(next)->flags;
+	unsigned long ibpb = (next_tif >> TIF_SPEC_IB) & LAST_USER_MM_IBPB;
+
+	return (unsigned long)next->mm | ibpb;
+}
+
+static void cond_ibpb(struct task_struct *next)
+{
+	if (!next || !next->mm)
+		return;
+
+	/*
+	 * Both, the conditional and the always IBPB mode use the mm
+	 * pointer to avoid the IBPB when switching between tasks of the
+	 * same process. Using the mm pointer instead of mm->context.ctx_id
+	 * opens a hypothetical hole vs. mm_struct reuse, which is more or
+	 * less impossible to control by an attacker. Aside of that it
+	 * would only affect the first schedule so the theoretically
+	 * exposed data is not really interesting.
+	 */
+	if (static_branch_likely(&switch_mm_cond_ibpb)) {
+		unsigned long prev_mm, next_mm;
+
+		/*
+		 * This is a bit more complex than the always mode because
+		 * it has to handle two cases:
+		 *
+		 * 1) Switch from a user space task (potential attacker)
+		 *    which has TIF_SPEC_IB set to a user space task
+		 *    (potential victim) which has TIF_SPEC_IB not set.
+		 *
+		 * 2) Switch from a user space task (potential attacker)
+		 *    which has TIF_SPEC_IB not set to a user space task
+		 *    (potential victim) which has TIF_SPEC_IB set.
+		 *
+		 * This could be done by unconditionally issuing IBPB when
+		 * a task which has TIF_SPEC_IB set is either scheduled in
+		 * or out. Though that results in two flushes when:
+		 *
+		 * - the same user space task is scheduled out and later
+		 *   scheduled in again and only a kernel thread ran in
+		 *   between.
+		 *
+		 * - a user space task belonging to the same process is
+		 *   scheduled in after a kernel thread ran in between
+		 *
+		 * - a user space task belonging to the same process is
+		 *   scheduled in immediately.
+		 *
+		 * Optimize this with reasonably small overhead for the
+		 * above cases. Mangle the TIF_SPEC_IB bit into the mm
+		 * pointer of the incoming task which is stored in
+		 * cpu_tlbstate.last_user_mm_ibpb for comparison.
+		 */
+		next_mm = mm_mangle_tif_spec_ib(next);
+		prev_mm = this_cpu_read(cpu_tlbstate.last_user_mm_ibpb);
+
+		/*
+		 * Issue IBPB only if the mm's are different and one or
+		 * both have the IBPB bit set.
+		 */
+		if (next_mm != prev_mm &&
+		    (next_mm | prev_mm) & LAST_USER_MM_IBPB)
+			indirect_branch_prediction_barrier();
+
+		this_cpu_write(cpu_tlbstate.last_user_mm_ibpb, next_mm);
+	}
+
+	if (static_branch_unlikely(&switch_mm_always_ibpb)) {
+		/*
+		 * Only flush when switching to a user space task with a
+		 * different context than the user space task which ran
+		 * last on this CPU.
+		 */
+		if (this_cpu_read(cpu_tlbstate.last_user_mm) != next->mm) {
+			indirect_branch_prediction_barrier();
+			this_cpu_write(cpu_tlbstate.last_user_mm, next->mm);
+		}
+	}
+}
+
 void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 			struct task_struct *tsk)
 {
@@ -128,7 +300,7 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 	 * isn't free.
 	 */
 #ifdef CONFIG_DEBUG_VM
-	if (WARN_ON_ONCE(__read_cr3() != build_cr3(real_prev, prev_asid))) {
+	if (WARN_ON_ONCE(__read_cr3() != build_cr3(real_prev->pgd, prev_asid))) {
 		/*
 		 * If we were to BUG here, we'd be very likely to kill
 		 * the system so hard that we don't see the call trace.
@@ -166,17 +338,20 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 		u16 new_asid;
 		bool need_flush;
 
+		/*
+		 * Avoid user/user BTB poisoning by flushing the branch
+		 * predictor when switching between processes. This stops
+		 * one process from doing Spectre-v2 attacks on another.
+		 */
+		cond_ibpb(tsk);
+
 		if (IS_ENABLED(CONFIG_VMAP_STACK)) {
 			/*
 			 * If our current stack is in vmalloc space and isn't
 			 * mapped in the new pgd, we'll double-fault.  Forcibly
 			 * map it.
 			 */
-			unsigned int index = pgd_index(current_stack_pointer);
-			pgd_t *pgd = next->pgd + index;
-
-			if (unlikely(pgd_none(*pgd)))
-				set_pgd(pgd, init_mm.pgd[index]);
+			sync_current_stack_to_mm(next);
 		}
 
 		/* Stop remote flushes for the previous mm */
@@ -192,10 +367,14 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 
 		choose_new_asid(next, next_tlb_gen, &new_asid, &need_flush);
 
+		/* Let nmi_uaccess_okay() know that we're changing CR3. */
+		this_cpu_write(cpu_tlbstate.loaded_mm, LOADED_MM_SWITCHING);
+		barrier();
+
 		if (need_flush) {
 			this_cpu_write(cpu_tlbstate.ctxs[new_asid].ctx_id, next->context.ctx_id);
 			this_cpu_write(cpu_tlbstate.ctxs[new_asid].tlb_gen, next_tlb_gen);
-			write_cr3(build_cr3(next, new_asid));
+			load_new_mm_cr3(next->pgd, new_asid, true);
 
 			/*
 			 * NB: This gets called via leave_mm() in the idle path
@@ -208,11 +387,14 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 			trace_tlb_flush_rcuidle(TLB_FLUSH_ON_TASK_SWITCH, TLB_FLUSH_ALL);
 		} else {
 			/* The new ASID is already up to date. */
-			write_cr3(build_cr3_noflush(next, new_asid));
+			load_new_mm_cr3(next->pgd, new_asid, false);
 
 			/* See above wrt _rcuidle. */
 			trace_tlb_flush_rcuidle(TLB_FLUSH_ON_TASK_SWITCH, 0);
 		}
+
+		/* Make sure we write CR3 before loaded_mm. */
+		barrier();
 
 		this_cpu_write(cpu_tlbstate.loaded_mm, next);
 		this_cpu_write(cpu_tlbstate.loaded_mm_asid, new_asid);
@@ -288,9 +470,10 @@ void initialize_tlbstate_and_flush(void)
 		!(cr4_read_shadow() & X86_CR4_PCIDE));
 
 	/* Force ASID 0 and force a TLB flush. */
-	write_cr3(build_cr3(mm, 0));
+	write_cr3(build_cr3(mm->pgd, 0));
 
 	/* Reinitialize tlbstate. */
+	this_cpu_write(cpu_tlbstate.last_user_mm_ibpb, LAST_USER_MM_IBPB);
 	this_cpu_write(cpu_tlbstate.loaded_mm_asid, 0);
 	this_cpu_write(cpu_tlbstate.next_asid, 1);
 	this_cpu_write(cpu_tlbstate.ctxs[0].ctx_id, mm->context.ctx_id);
@@ -383,7 +566,7 @@ static void flush_tlb_func_common(const struct flush_tlb_info *f,
 	 *    flush that changes context.tlb_gen from 2 to 3.  If they get
 	 *    processed on this CPU in reverse order, we'll see
 	 *     local_tlb_gen == 1, mm_tlb_gen == 3, and end != TLB_FLUSH_ALL.
-	 *    If we were to use __flush_tlb_single() and set local_tlb_gen to
+	 *    If we were to use __flush_tlb_one_user() and set local_tlb_gen to
 	 *    3, we'd be break the invariant: we'd update local_tlb_gen above
 	 *    1 without the full flush that's needed for tlb_gen 2.
 	 *
@@ -404,7 +587,7 @@ static void flush_tlb_func_common(const struct flush_tlb_info *f,
 
 		addr = f->start;
 		while (addr < f->end) {
-			__flush_tlb_single(addr);
+			__flush_tlb_one_user(addr);
 			addr += PAGE_SIZE;
 		}
 		if (local)
@@ -468,9 +651,6 @@ void native_flush_tlb_others(const struct cpumask *cpumask,
 		 * that UV should be updated so that smp_call_function_many(),
 		 * etc, are optimal on UV.
 		 */
-		unsigned int cpu;
-
-		cpu = smp_processor_id();
 		cpumask = uv_flush_tlb_others(cpumask, info);
 		if (cpumask)
 			smp_call_function_many(cpumask, flush_tlb_func_remote,
@@ -551,7 +731,7 @@ static void do_kernel_range_flush(void *info)
 
 	/* flush range by one by one 'invlpg' */
 	for (addr = f->start; addr < f->end; addr += PAGE_SIZE)
-		__flush_tlb_single(addr);
+		__flush_tlb_one_kernel(addr);
 }
 
 void flush_tlb_kernel_range(unsigned long start, unsigned long end)

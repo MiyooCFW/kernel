@@ -1078,15 +1078,14 @@ lpfc_nvmet_setup_io_context(struct lpfc_hba *phba)
 			idx = 0;
 	}
 
-	infop = phba->sli4_hba.nvmet_ctx_info;
-	for (j = 0; j < phba->cfg_nvmet_mrq; j++) {
-		for (i = 0; i < phba->sli4_hba.num_present_cpu; i++) {
+	for (i = 0; i < phba->sli4_hba.num_present_cpu; i++) {
+		for (j = 0; j < phba->cfg_nvmet_mrq; j++) {
+			infop = lpfc_get_ctx_list(phba, i, j);
 			lpfc_printf_log(phba, KERN_INFO, LOG_NVME | LOG_INIT,
 					"6408 TOTAL NVMET ctx for CPU %d "
 					"MRQ %d: cnt %d nextcpu %p\n",
 					i, j, infop->nvmet_ctx_list_cnt,
 					infop->nvmet_ctx_next_cpu);
-			infop++;
 		}
 	}
 	return 0;
@@ -1138,9 +1137,14 @@ lpfc_nvmet_create_targetport(struct lpfc_hba *phba)
 #endif
 	if (error) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_NVME_DISC,
-				"6025 Cannot register NVME targetport "
-				"x%x\n", error);
+				"6025 Cannot register NVME targetport x%x: "
+				"portnm %llx nodenm %llx segs %d qs %d\n",
+				error,
+				pinfo.port_name, pinfo.node_name,
+				lpfc_tgttemplate.max_sgl_segments,
+				lpfc_tgttemplate.max_hw_queues);
 		phba->targetport = NULL;
+		phba->nvmet_support = 0;
 
 		lpfc_nvmet_cleanup_io_context(phba);
 
@@ -1152,9 +1156,11 @@ lpfc_nvmet_create_targetport(struct lpfc_hba *phba)
 		lpfc_printf_log(phba, KERN_INFO, LOG_NVME_DISC,
 				"6026 Registered NVME "
 				"targetport: %p, private %p "
-				"portnm %llx nodenm %llx\n",
+				"portnm %llx nodenm %llx segs %d qs %d\n",
 				phba->targetport, tgtp,
-				pinfo.port_name, pinfo.node_name);
+				pinfo.port_name, pinfo.node_name,
+				lpfc_tgttemplate.max_sgl_segments,
+				lpfc_tgttemplate.max_hw_queues);
 
 		atomic_set(&tgtp->rcv_ls_req_in, 0);
 		atomic_set(&tgtp->rcv_ls_req_out, 0);
@@ -1457,6 +1463,7 @@ static struct lpfc_nvmet_ctxbuf *
 lpfc_nvmet_replenish_context(struct lpfc_hba *phba,
 			     struct lpfc_nvmet_ctx_info *current_infop)
 {
+#if (IS_ENABLED(CONFIG_NVME_TARGET_FC))
 	struct lpfc_nvmet_ctxbuf *ctx_buf = NULL;
 	struct lpfc_nvmet_ctx_info *get_infop;
 	int i;
@@ -1504,6 +1511,7 @@ lpfc_nvmet_replenish_context(struct lpfc_hba *phba,
 		get_infop = get_infop->nvmet_ctx_next_cpu;
 	}
 
+#endif
 	/* Nothing found, all contexts for the MRQ are in-flight */
 	return NULL;
 }
@@ -2546,7 +2554,6 @@ lpfc_nvmet_unsol_issue_abort(struct lpfc_hba *phba,
 	bf_set(wqe_rcvoxid, &wqe_abts->xmit_sequence.wqe_com, xri);
 
 	/* Word 10 */
-	bf_set(wqe_dbde, &wqe_abts->xmit_sequence.wqe_com, 1);
 	bf_set(wqe_iod, &wqe_abts->xmit_sequence.wqe_com, LPFC_WQE_IOD_WRITE);
 	bf_set(wqe_lenloc, &wqe_abts->xmit_sequence.wqe_com,
 	       LPFC_WQE_LENLOC_WORD12);

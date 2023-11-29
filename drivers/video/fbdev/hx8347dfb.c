@@ -722,7 +722,7 @@ static int myfb_probe(struct platform_device *device)
   fb_videomode_to_var(&myfb_var, mode);
   
   par->vram_size = 320*240*2*2;
-  par->vram_virt = dma_alloc_coherent(NULL, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
+  par->vram_virt = dma_alloc_coherent(par->dev, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
   if(!par->vram_virt){
     dev_err(&device->dev, "%s, failed to allocate frame buffer(vram)\n", __func__);
     return -EINVAL;
@@ -734,14 +734,14 @@ static int myfb_probe(struct platform_device *device)
   
   par->lram_size = 320*240*18;
   for(i=0; i<LRAM_NUM; i++){
-    par->lram_virt[i] = dma_alloc_coherent(NULL, par->lram_size, (resource_size_t*)&par->lram_phys[i], GFP_KERNEL | GFP_DMA);
+    par->lram_virt[i] = dma_alloc_coherent(par->dev, par->lram_size, (resource_size_t*)&par->lram_phys[i], GFP_KERNEL | GFP_DMA);
     if(!par->lram_virt[i]){
       dev_err(&device->dev, "%s, failed to allocate frame buffer(lram[%d])\n", __func__, i);
       return -EINVAL;
     }
   }
    
-  par->v_palette_base = dma_alloc_coherent(NULL, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
+  par->v_palette_base = dma_alloc_coherent(par->dev, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
   if(!par->v_palette_base){
     dev_err(&device->dev, "GLCD: kmalloc for palette buffer failed\n");
     return -EINVAL;
@@ -811,7 +811,7 @@ static int myfb_resume(struct platform_device *dev)
 
 static const struct of_device_id fb_of_match[] = {
   {
-    .compatible = "allwinner,suniv-f1c500s-tcon0", 
+    .compatible = "allwinner,suniv-f1c100s-tcon0",
   },{}
 };
 MODULE_DEVICE_TABLE(of, fb_of_match);

@@ -10,7 +10,7 @@
 
 / {
 	model = "Miyoo Handheld";
-	compatible = "allwinner,suniv-f1c500s";
+	compatible = "allwinner,suniv-f1c100s";
 
 	aliases {
 		serial1 = &uart1;
@@ -19,7 +19,7 @@
 	chosen {
 		stdout-path = "serial1:115200n8";
 	};
-
+	
   backlight {
 		compatible = "pwm-backlight";
 		pwms = <&pwm 1 58824 0>;
@@ -52,7 +52,7 @@
 
 &mmc0 {
 	vmmc-supply = <&reg_vcc3v3>;
-	bus-width = <4>;
+	bus-width = <1>;
 	broken-cd;
 	status = "okay";
 };

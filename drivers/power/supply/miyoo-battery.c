@@ -168,7 +168,7 @@ module_init(battery_init);
 module_exit(battery_exit);
 
 static const struct of_device_id miyoo_battery_of_match[] = {
-    {.compatible = "allwinner,suniv-f1c500s-battery", },
+    {.compatible = "allwinner,suniv-f1c100s-battery", },
     {},
 };
 MODULE_DEVICE_TABLE(of, miyoo_battery_of_match);

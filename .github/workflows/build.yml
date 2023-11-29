@@ -50,7 +50,8 @@ jobs:
         cd ${{ inputs.submodule || '.' }}
         mkdir dist
         mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/
-        mv arch/arm/boot/dts/suniv-f1c500s-miyoo-4bit.dtb dist/
+        mv arch/arm/boot/dts/suniv-f1c100s-miyoo.dtb dist/        
+        mv arch/arm/boot/dts/suniv-f1c100s-miyoo-4bit.dtb dist/
         mv arch/arm/boot/zImage dist/
         mv drivers/video/fbdev/core/*.ko dist/
         mv drivers/video/fbdev/r61520fb.ko dist/

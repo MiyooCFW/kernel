@@ -375,6 +375,7 @@ static int mypcm_mmap(struct snd_pcm_substream *substream, struct vm_area_struct
 static int mypcm_new(struct snd_soc_pcm_runtime *rtd)
 {
   struct snd_pcm *pcm = rtd->pcm;
+  struct snd_card *card = rtd->card->snd_card;
   struct snd_pcm_substream *substream = pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
   struct snd_dma_buffer *buf = &substream->dma_buffer;
 
@@ -386,7 +387,7 @@ static int mypcm_new(struct snd_soc_pcm_runtime *rtd)
   writel(0x01ac8190, iomm.dma + NDMA0_CFG_REG);
   writel(SUNIV_CODEC_BASE + AC_DAC_TXDATA_REG, iomm.dma + NDMA0_DES_ADR_REG);
   writel(DMA_SIZE, iomm.dma + NDMA0_BYTE_CNT_REG);
-  iomm.dma_virt = dma_alloc_coherent(NULL, DMA_SIZE, (resource_size_t*)&iomm.dma_phys, GFP_KERNEL | GFP_DMA); 
+  iomm.dma_virt = dma_alloc_coherent(card->dev, DMA_SIZE, (resource_size_t*)&iomm.dma_phys, GFP_KERNEL | GFP_DMA);
   if(iomm.dma_virt == NULL){
     printk("%s, failed to allocate DMA memory\n", __func__);
     return -ENOMEM;
@@ -508,6 +509,7 @@ static int myaudio_probe(struct platform_device *pdev)
 {
   int ret;
   struct snd_soc_card *card;
+  struct snd_soc_dai_link_component *compnent;
 
   suniv_ioremap();
   card = devm_kzalloc(&pdev->dev, sizeof(*card), GFP_KERNEL);
@@ -521,7 +523,7 @@ static int myaudio_probe(struct platform_device *pdev)
     return -ENOMEM; // sorry, no any error handling
   }
 
-  ret = snd_soc_register_component(&pdev->dev, &myplatform, NULL, 0);
+  ret = snd_soc_register_component(&pdev->dev, &myplatform, &mycpu_dai, 0);
   if (ret < 0) {
     dev_err(&pdev->dev, "%s, failed to register platform(%d)\n", __func__, ret);
     return ret; // sorry, no any error handling
@@ -533,6 +535,15 @@ static int myaudio_probe(struct platform_device *pdev)
     return ret; // sorry, no any error handling
   }
 
+  compnent = devm_kzalloc(&pdev->dev, 3 * sizeof(*compnent), GFP_KERNEL);
+  if (!compnent)
+      return -ENOMEM;
+  card->dai_link->cpus		= &compnent[0];
+  card->dai_link->num_cpus	= 1;
+  card->dai_link->codecs		= &compnent[1];
+  card->dai_link->num_codecs	= 1;
+  card->dai_link->platforms	= &compnent[2];
+  card->dai_link->num_platforms	= 1;
   card->dev = &pdev->dev;
   card->name = "miyoo audio card";
   card->num_links = 1;
@@ -581,7 +592,7 @@ static int myaudio_probe(struct platform_device *pdev)
 
 static const struct of_device_id myaudio_driver_of_match[] = {
   {
-    .compatible = "allwinner,suniv-f1c500s-codec",
+    .compatible = "allwinner,suniv-f1c100s-codec",
   },{}
 };
 MODULE_DEVICE_TABLE(of, myaudio_driver_of_match);

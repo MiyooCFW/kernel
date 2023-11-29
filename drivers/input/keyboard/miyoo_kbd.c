@@ -1097,7 +1097,7 @@ static int __init kbd_init(void)
   mydev->name = "miyoo_keypad";
   mydev->id.bustype = BUS_HOST;
   ret = input_register_device(mydev);
- 
+
   alloc_chrdev_region(&major, 0, 1, "miyoo_kbd");
   myclass = class_create(THIS_MODULE, "miyoo_kbd");
   device_create(myclass, NULL, major, NULL, "miyoo_kbd");

@@ -1,10 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /****************************************************************************
  * Driver for Solarflare network controllers and boards
  * Copyright 2008-2013 Solarflare Communications Inc.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation, incorporated herein by reference.
  */
 
 #include <linux/delay.h>
@@ -48,7 +45,7 @@ struct efx_mcdi_async_param {
 	/* followed by request/response buffer */
 };
 
-static void efx_mcdi_timeout_async(unsigned long context);
+static void efx_mcdi_timeout_async(struct timer_list *t);
 static int efx_mcdi_drv_attach(struct efx_nic *efx, bool driver_operating,
 			       bool *was_attached_out);
 static bool efx_mcdi_poll_once(struct efx_nic *efx);
@@ -87,8 +84,7 @@ int efx_mcdi_init(struct efx_nic *efx)
 	mcdi->mode = MCDI_MODE_POLL;
 	spin_lock_init(&mcdi->async_lock);
 	INIT_LIST_HEAD(&mcdi->async_list);
-	setup_timer(&mcdi->async_timer, efx_mcdi_timeout_async,
-		    (unsigned long)mcdi);
+	timer_setup(&mcdi->async_timer, efx_mcdi_timeout_async, 0);
 
 	(void) efx_mcdi_poll_reboot(efx);
 	mcdi->new_epoch = true;
@@ -376,7 +372,7 @@ static int efx_mcdi_poll(struct efx_nic *efx)
 	 * because generally mcdi responses are fast. After that, back off
 	 * and poll once a jiffy (approximately)
 	 */
-	spins = TICK_USEC;
+	spins = USER_TICK_USEC;
 	finish = jiffies + MCDI_RPC_TIMEOUT;
 
 	while (1) {
@@ -608,9 +604,9 @@ static void efx_mcdi_ev_cpl(struct efx_nic *efx, unsigned int seqno,
 	}
 }
 
-static void efx_mcdi_timeout_async(unsigned long context)
+static void efx_mcdi_timeout_async(struct timer_list *t)
 {
-	struct efx_mcdi_iface *mcdi = (struct efx_mcdi_iface *)context;
+	struct efx_mcdi_iface *mcdi = from_timer(mcdi, t, async_timer);
 
 	efx_mcdi_complete_async(mcdi, true);
 }
@@ -2075,22 +2071,26 @@ fail:
 
 static int efx_mcdi_nvram_update_start(struct efx_nic *efx, unsigned int type)
 {
-	MCDI_DECLARE_BUF(inbuf, MC_CMD_NVRAM_UPDATE_START_IN_LEN);
+	MCDI_DECLARE_BUF(inbuf, MC_CMD_NVRAM_UPDATE_START_V2_IN_LEN);
 	int rc;
 
 	MCDI_SET_DWORD(inbuf, NVRAM_UPDATE_START_IN_TYPE, type);
+	MCDI_POPULATE_DWORD_1(inbuf, NVRAM_UPDATE_START_V2_IN_FLAGS,
+			      NVRAM_UPDATE_START_V2_IN_FLAG_REPORT_VERIFY_RESULT,
+			      1);
 
 	BUILD_BUG_ON(MC_CMD_NVRAM_UPDATE_START_OUT_LEN != 0);
 
 	rc = efx_mcdi_rpc(efx, MC_CMD_NVRAM_UPDATE_START, inbuf, sizeof(inbuf),
 			  NULL, 0, NULL);
+
 	return rc;
 }
 
 static int efx_mcdi_nvram_read(struct efx_nic *efx, unsigned int type,
 			       loff_t offset, u8 *buffer, size_t length)
 {
-	MCDI_DECLARE_BUF(inbuf, MC_CMD_NVRAM_READ_IN_LEN);
+	MCDI_DECLARE_BUF(inbuf, MC_CMD_NVRAM_READ_IN_V2_LEN);
 	MCDI_DECLARE_BUF(outbuf,
 			 MC_CMD_NVRAM_READ_OUT_LEN(EFX_MCDI_NVRAM_LEN_MAX));
 	size_t outlen;
@@ -2099,6 +2099,8 @@ static int efx_mcdi_nvram_read(struct efx_nic *efx, unsigned int type,
 	MCDI_SET_DWORD(inbuf, NVRAM_READ_IN_TYPE, type);
 	MCDI_SET_DWORD(inbuf, NVRAM_READ_IN_OFFSET, offset);
 	MCDI_SET_DWORD(inbuf, NVRAM_READ_IN_LENGTH, length);
+	MCDI_SET_DWORD(inbuf, NVRAM_READ_IN_V2_MODE,
+		       MC_CMD_NVRAM_READ_IN_V2_DEFAULT);
 
 	rc = efx_mcdi_rpc(efx, MC_CMD_NVRAM_READ, inbuf, sizeof(inbuf),
 			  outbuf, sizeof(outbuf), &outlen);
@@ -2148,15 +2150,51 @@ static int efx_mcdi_nvram_erase(struct efx_nic *efx, unsigned int type,
 
 static int efx_mcdi_nvram_update_finish(struct efx_nic *efx, unsigned int type)
 {
-	MCDI_DECLARE_BUF(inbuf, MC_CMD_NVRAM_UPDATE_FINISH_IN_LEN);
-	int rc;
+	MCDI_DECLARE_BUF(inbuf, MC_CMD_NVRAM_UPDATE_FINISH_V2_IN_LEN);
+	MCDI_DECLARE_BUF(outbuf, MC_CMD_NVRAM_UPDATE_FINISH_V2_OUT_LEN);
+	size_t outlen;
+	int rc, rc2;
 
 	MCDI_SET_DWORD(inbuf, NVRAM_UPDATE_FINISH_IN_TYPE, type);
-
-	BUILD_BUG_ON(MC_CMD_NVRAM_UPDATE_FINISH_OUT_LEN != 0);
+	/* Always set this flag. Old firmware ignores it */
+	MCDI_POPULATE_DWORD_1(inbuf, NVRAM_UPDATE_FINISH_V2_IN_FLAGS,
+			      NVRAM_UPDATE_FINISH_V2_IN_FLAG_REPORT_VERIFY_RESULT,
+			      1);
 
 	rc = efx_mcdi_rpc(efx, MC_CMD_NVRAM_UPDATE_FINISH, inbuf, sizeof(inbuf),
-			  NULL, 0, NULL);
+			  outbuf, sizeof(outbuf), &outlen);
+	if (!rc && outlen >= MC_CMD_NVRAM_UPDATE_FINISH_V2_OUT_LEN) {
+		rc2 = MCDI_DWORD(outbuf, NVRAM_UPDATE_FINISH_V2_OUT_RESULT_CODE);
+		if (rc2 != MC_CMD_NVRAM_VERIFY_RC_SUCCESS)
+			netif_err(efx, drv, efx->net_dev,
+				  "NVRAM update failed verification with code 0x%x\n",
+				  rc2);
+		switch (rc2) {
+		case MC_CMD_NVRAM_VERIFY_RC_SUCCESS:
+			break;
+		case MC_CMD_NVRAM_VERIFY_RC_CMS_CHECK_FAILED:
+		case MC_CMD_NVRAM_VERIFY_RC_MESSAGE_DIGEST_CHECK_FAILED:
+		case MC_CMD_NVRAM_VERIFY_RC_SIGNATURE_CHECK_FAILED:
+		case MC_CMD_NVRAM_VERIFY_RC_TRUSTED_APPROVERS_CHECK_FAILED:
+		case MC_CMD_NVRAM_VERIFY_RC_SIGNATURE_CHAIN_CHECK_FAILED:
+			rc = -EIO;
+			break;
+		case MC_CMD_NVRAM_VERIFY_RC_INVALID_CMS_FORMAT:
+		case MC_CMD_NVRAM_VERIFY_RC_BAD_MESSAGE_DIGEST:
+			rc = -EINVAL;
+			break;
+		case MC_CMD_NVRAM_VERIFY_RC_NO_VALID_SIGNATURES:
+		case MC_CMD_NVRAM_VERIFY_RC_NO_TRUSTED_APPROVERS:
+		case MC_CMD_NVRAM_VERIFY_RC_NO_SIGNATURE_MATCH:
+			rc = -EPERM;
+			break;
+		default:
+			netif_err(efx, drv, efx->net_dev,
+				  "Unknown response to NVRAM_UPDATE_FINISH\n");
+			rc = -EIO;
+		}
+	}
+
 	return rc;
 }
 

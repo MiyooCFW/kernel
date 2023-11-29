@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * fs/kernfs/symlink.c - kernfs symlink implementation
  *
  * Copyright (c) 2001-3 Patrick Mochel
  * Copyright (c) 2007 SUSE Linux Products GmbH
  * Copyright (c) 2007, 2013 Tejun Heo <tj@kernel.org>
- *
- * This file is released under the GPLv2.
  */
 
 #include <linux/fs.h>
@@ -21,6 +20,7 @@
  * @target: target node for the symlink to point to
  *
  * Returns the created node on success, ERR_PTR() value on error.
+ * Ownership of the link matches ownership of the target.
  */
 struct kernfs_node *kernfs_create_link(struct kernfs_node *parent,
 				       const char *name,
@@ -28,8 +28,16 @@ struct kernfs_node *kernfs_create_link(struct kernfs_node *parent,
 {
 	struct kernfs_node *kn;
 	int error;
+	kuid_t uid = GLOBAL_ROOT_UID;
+	kgid_t gid = GLOBAL_ROOT_GID;
 
-	kn = kernfs_new_node(parent, name, S_IFLNK|S_IRWXUGO, KERNFS_LINK);
+	if (target->iattr) {
+		uid = target->iattr->ia_uid;
+		gid = target->iattr->ia_gid;
+	}
+
+	kn = kernfs_new_node(parent, name, S_IFLNK|S_IRWXUGO, uid, gid,
+			     KERNFS_LINK);
 	if (!kn)
 		return ERR_PTR(-ENOMEM);
 

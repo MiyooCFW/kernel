@@ -1,21 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Persistent Storage - platform driver interface parts.
  *
  * Copyright (C) 2007-2008 Google, Inc.
  * Copyright (C) 2010 Intel Corporation <tony.luck@intel.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2 as
- *  published by the Free Software Foundation.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #define pr_fmt(fmt) "pstore: " fmt
@@ -28,20 +16,20 @@
 #include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pstore.h>
-#ifdef CONFIG_PSTORE_ZLIB_COMPRESS
-#include <linux/zlib.h>
-#endif
-#ifdef CONFIG_PSTORE_LZO_COMPRESS
+#if IS_ENABLED(CONFIG_PSTORE_LZO_COMPRESS)
 #include <linux/lzo.h>
 #endif
-#ifdef CONFIG_PSTORE_LZ4_COMPRESS
+#if IS_ENABLED(CONFIG_PSTORE_LZ4_COMPRESS) || IS_ENABLED(CONFIG_PSTORE_LZ4HC_COMPRESS)
 #include <linux/lz4.h>
 #endif
+#if IS_ENABLED(CONFIG_PSTORE_ZSTD_COMPRESS)
+#include <linux/zstd.h>
+#endif
+#include <linux/crypto.h>
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/hardirq.h>
 #include <linux/jiffies.h>
 #include <linux/workqueue.h>
 
@@ -59,10 +47,23 @@ MODULE_PARM_DESC(update_ms, "milliseconds before pstore updates its content "
 		 "enabling this option is not safe, it may lead to further "
 		 "corruption on Oopses)");
 
+/* Names should be in the same order as the enum pstore_type_id */
+static const char * const pstore_type_names[] = {
+	"dmesg",
+	"mce",
+	"console",
+	"ftrace",
+	"rtas",
+	"powerpc-ofw",
+	"powerpc-common",
+	"pmsg",
+	"powerpc-opal",
+};
+
 static int pstore_new_entry;
 
-static void pstore_timefunc(unsigned long);
-static DEFINE_TIMER(pstore_timer, pstore_timefunc, 0, 0);
+static void pstore_timefunc(struct timer_list *);
+static DEFINE_TIMER(pstore_timer, pstore_timefunc);
 
 static void pstore_dowork(struct work_struct *);
 static DECLARE_WORK(pstore_work, pstore_dowork);
@@ -75,23 +76,18 @@ static DEFINE_SPINLOCK(pstore_lock);
 struct pstore_info *psinfo;
 
 static char *backend;
-
-/* Compression parameters */
-#ifdef CONFIG_PSTORE_ZLIB_COMPRESS
-#define COMPR_LEVEL 6
-#define WINDOW_BITS 12
-#define MEM_LEVEL 4
-static struct z_stream_s stream;
+static char *compress =
+#ifdef CONFIG_PSTORE_COMPRESS_DEFAULT
+		CONFIG_PSTORE_COMPRESS_DEFAULT;
 #else
-static unsigned char *workspace;
+		NULL;
 #endif
 
-struct pstore_zbackend {
-	int (*compress)(const void *in, void *out, size_t inlen, size_t outlen);
-	int (*decompress)(void *in, void *out, size_t inlen, size_t outlen);
-	void (*allocate)(void);
-	void (*free)(void);
+/* Compression parameters */
+static struct crypto_comp *tfm;
 
+struct pstore_zbackend {
+	int (*zbufsize)(size_t size);
 	const char *name;
 };
 
@@ -108,6 +104,30 @@ void pstore_set_kmsg_bytes(int bytes)
 
 /* Tag each group of saved records with a sequence number */
 static int	oopscount;
+
+const char *pstore_type_to_name(enum pstore_type_id type)
+{
+	BUILD_BUG_ON(ARRAY_SIZE(pstore_type_names) != PSTORE_TYPE_MAX);
+
+	if (WARN_ON_ONCE(type >= PSTORE_TYPE_MAX))
+		return "unknown";
+
+	return pstore_type_names[type];
+}
+EXPORT_SYMBOL_GPL(pstore_type_to_name);
+
+enum pstore_type_id pstore_name_to_type(const char *name)
+{
+	int i;
+
+	for (i = 0; i < PSTORE_TYPE_MAX; i++) {
+		if (!strcmp(pstore_type_names[i], name))
+			return i;
+	}
+
+	return PSTORE_TYPE_MAX;
+}
+EXPORT_SYMBOL_GPL(pstore_name_to_type);
 
 static const char *get_reason_str(enum kmsg_dump_reason reason)
 {
@@ -151,77 +171,12 @@ static bool pstore_cannot_wait(enum kmsg_dump_reason reason)
 	}
 }
 
-#ifdef CONFIG_PSTORE_ZLIB_COMPRESS
-/* Derived from logfs_compress() */
-static int compress_zlib(const void *in, void *out, size_t inlen, size_t outlen)
+#if IS_ENABLED(CONFIG_PSTORE_DEFLATE_COMPRESS)
+static int zbufsize_deflate(size_t size)
 {
-	int err, ret;
-
-	ret = -EIO;
-	err = zlib_deflateInit2(&stream, COMPR_LEVEL, Z_DEFLATED, WINDOW_BITS,
-						MEM_LEVEL, Z_DEFAULT_STRATEGY);
-	if (err != Z_OK)
-		goto error;
-
-	stream.next_in = in;
-	stream.avail_in = inlen;
-	stream.total_in = 0;
-	stream.next_out = out;
-	stream.avail_out = outlen;
-	stream.total_out = 0;
-
-	err = zlib_deflate(&stream, Z_FINISH);
-	if (err != Z_STREAM_END)
-		goto error;
-
-	err = zlib_deflateEnd(&stream);
-	if (err != Z_OK)
-		goto error;
-
-	if (stream.total_out >= stream.total_in)
-		goto error;
-
-	ret = stream.total_out;
-error:
-	return ret;
-}
-
-/* Derived from logfs_uncompress */
-static int decompress_zlib(void *in, void *out, size_t inlen, size_t outlen)
-{
-	int err, ret;
-
-	ret = -EIO;
-	err = zlib_inflateInit2(&stream, WINDOW_BITS);
-	if (err != Z_OK)
-		goto error;
-
-	stream.next_in = in;
-	stream.avail_in = inlen;
-	stream.total_in = 0;
-	stream.next_out = out;
-	stream.avail_out = outlen;
-	stream.total_out = 0;
-
-	err = zlib_inflate(&stream, Z_FINISH);
-	if (err != Z_STREAM_END)
-		goto error;
-
-	err = zlib_inflateEnd(&stream);
-	if (err != Z_OK)
-		goto error;
-
-	ret = stream.total_out;
-error:
-	return ret;
-}
-
-static void allocate_zlib(void)
-{
-	size_t size;
 	size_t cmpr;
 
-	switch (psinfo->bufsize) {
+	switch (size) {
 	/* buffer range for efivars */
 	case 1000 ... 2000:
 		cmpr = 56;
@@ -241,212 +196,155 @@ static void allocate_zlib(void)
 		break;
 	}
 
-	big_oops_buf_sz = (psinfo->bufsize * 100) / cmpr;
-	big_oops_buf = kmalloc(big_oops_buf_sz, GFP_KERNEL);
-	if (big_oops_buf) {
-		size = max(zlib_deflate_workspacesize(WINDOW_BITS, MEM_LEVEL),
-			zlib_inflate_workspacesize());
-		stream.workspace = kmalloc(size, GFP_KERNEL);
-		if (!stream.workspace) {
-			pr_err("No memory for compression workspace; skipping compression\n");
-			kfree(big_oops_buf);
-			big_oops_buf = NULL;
-		}
-	} else {
-		pr_err("No memory for uncompressed data; skipping compression\n");
-		stream.workspace = NULL;
-	}
-
+	return (size * 100) / cmpr;
 }
+#endif
 
-static void free_zlib(void)
+#if IS_ENABLED(CONFIG_PSTORE_LZO_COMPRESS)
+static int zbufsize_lzo(size_t size)
 {
-	kfree(stream.workspace);
-	stream.workspace = NULL;
-	kfree(big_oops_buf);
-	big_oops_buf = NULL;
-	big_oops_buf_sz = 0;
+	return lzo1x_worst_compress(size);
 }
+#endif
 
-static const struct pstore_zbackend backend_zlib = {
-	.compress	= compress_zlib,
-	.decompress	= decompress_zlib,
-	.allocate	= allocate_zlib,
-	.free		= free_zlib,
-	.name		= "zlib",
+#if IS_ENABLED(CONFIG_PSTORE_LZ4_COMPRESS) || IS_ENABLED(CONFIG_PSTORE_LZ4HC_COMPRESS)
+static int zbufsize_lz4(size_t size)
+{
+	return LZ4_compressBound(size);
+}
+#endif
+
+#if IS_ENABLED(CONFIG_PSTORE_842_COMPRESS)
+static int zbufsize_842(size_t size)
+{
+	return size;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_PSTORE_ZSTD_COMPRESS)
+static int zbufsize_zstd(size_t size)
+{
+	return ZSTD_compressBound(size);
+}
+#endif
+
+static const struct pstore_zbackend *zbackend __ro_after_init;
+
+static const struct pstore_zbackend zbackends[] = {
+#if IS_ENABLED(CONFIG_PSTORE_DEFLATE_COMPRESS)
+	{
+		.zbufsize	= zbufsize_deflate,
+		.name		= "deflate",
+	},
+#endif
+#if IS_ENABLED(CONFIG_PSTORE_LZO_COMPRESS)
+	{
+		.zbufsize	= zbufsize_lzo,
+		.name		= "lzo",
+	},
+#endif
+#if IS_ENABLED(CONFIG_PSTORE_LZ4_COMPRESS)
+	{
+		.zbufsize	= zbufsize_lz4,
+		.name		= "lz4",
+	},
+#endif
+#if IS_ENABLED(CONFIG_PSTORE_LZ4HC_COMPRESS)
+	{
+		.zbufsize	= zbufsize_lz4,
+		.name		= "lz4hc",
+	},
+#endif
+#if IS_ENABLED(CONFIG_PSTORE_842_COMPRESS)
+	{
+		.zbufsize	= zbufsize_842,
+		.name		= "842",
+	},
+#endif
+#if IS_ENABLED(CONFIG_PSTORE_ZSTD_COMPRESS)
+	{
+		.zbufsize	= zbufsize_zstd,
+		.name		= "zstd",
+	},
+#endif
+	{ }
 };
-#endif
-
-#ifdef CONFIG_PSTORE_LZO_COMPRESS
-static int compress_lzo(const void *in, void *out, size_t inlen, size_t outlen)
-{
-	int ret;
-
-	ret = lzo1x_1_compress(in, inlen, out, &outlen, workspace);
-	if (ret != LZO_E_OK) {
-		pr_err("lzo_compress error, ret = %d!\n", ret);
-		return -EIO;
-	}
-
-	return outlen;
-}
-
-static int decompress_lzo(void *in, void *out, size_t inlen, size_t outlen)
-{
-	int ret;
-
-	ret = lzo1x_decompress_safe(in, inlen, out, &outlen);
-	if (ret != LZO_E_OK) {
-		pr_err("lzo_decompress error, ret = %d!\n", ret);
-		return -EIO;
-	}
-
-	return outlen;
-}
-
-static void allocate_lzo(void)
-{
-	big_oops_buf_sz = lzo1x_worst_compress(psinfo->bufsize);
-	big_oops_buf = kmalloc(big_oops_buf_sz, GFP_KERNEL);
-	if (big_oops_buf) {
-		workspace = kmalloc(LZO1X_MEM_COMPRESS, GFP_KERNEL);
-		if (!workspace) {
-			pr_err("No memory for compression workspace; skipping compression\n");
-			kfree(big_oops_buf);
-			big_oops_buf = NULL;
-		}
-	} else {
-		pr_err("No memory for uncompressed data; skipping compression\n");
-		workspace = NULL;
-	}
-}
-
-static void free_lzo(void)
-{
-	kfree(workspace);
-	kfree(big_oops_buf);
-	big_oops_buf = NULL;
-	big_oops_buf_sz = 0;
-}
-
-static const struct pstore_zbackend backend_lzo = {
-	.compress	= compress_lzo,
-	.decompress	= decompress_lzo,
-	.allocate	= allocate_lzo,
-	.free		= free_lzo,
-	.name		= "lzo",
-};
-#endif
-
-#ifdef CONFIG_PSTORE_LZ4_COMPRESS
-static int compress_lz4(const void *in, void *out, size_t inlen, size_t outlen)
-{
-	int ret;
-
-	ret = LZ4_compress_default(in, out, inlen, outlen, workspace);
-	if (!ret) {
-		pr_err("LZ4_compress_default error; compression failed!\n");
-		return -EIO;
-	}
-
-	return ret;
-}
-
-static int decompress_lz4(void *in, void *out, size_t inlen, size_t outlen)
-{
-	int ret;
-
-	ret = LZ4_decompress_safe(in, out, inlen, outlen);
-	if (ret < 0) {
-		/*
-		 * LZ4_decompress_safe will return an error code
-		 * (< 0) if decompression failed
-		 */
-		pr_err("LZ4_decompress_safe error, ret = %d!\n", ret);
-		return -EIO;
-	}
-
-	return ret;
-}
-
-static void allocate_lz4(void)
-{
-	big_oops_buf_sz = LZ4_compressBound(psinfo->bufsize);
-	big_oops_buf = kmalloc(big_oops_buf_sz, GFP_KERNEL);
-	if (big_oops_buf) {
-		workspace = kmalloc(LZ4_MEM_COMPRESS, GFP_KERNEL);
-		if (!workspace) {
-			pr_err("No memory for compression workspace; skipping compression\n");
-			kfree(big_oops_buf);
-			big_oops_buf = NULL;
-		}
-	} else {
-		pr_err("No memory for uncompressed data; skipping compression\n");
-		workspace = NULL;
-	}
-}
-
-static void free_lz4(void)
-{
-	kfree(workspace);
-	kfree(big_oops_buf);
-	big_oops_buf = NULL;
-	big_oops_buf_sz = 0;
-}
-
-static const struct pstore_zbackend backend_lz4 = {
-	.compress	= compress_lz4,
-	.decompress	= decompress_lz4,
-	.allocate	= allocate_lz4,
-	.free		= free_lz4,
-	.name		= "lz4",
-};
-#endif
-
-static const struct pstore_zbackend *zbackend =
-#if defined(CONFIG_PSTORE_ZLIB_COMPRESS)
-	&backend_zlib;
-#elif defined(CONFIG_PSTORE_LZO_COMPRESS)
-	&backend_lzo;
-#elif defined(CONFIG_PSTORE_LZ4_COMPRESS)
-	&backend_lz4;
-#else
-	NULL;
-#endif
 
 static int pstore_compress(const void *in, void *out,
-			   size_t inlen, size_t outlen)
+			   unsigned int inlen, unsigned int outlen)
 {
-	if (zbackend)
-		return zbackend->compress(in, out, inlen, outlen);
-	else
-		return -EIO;
-}
+	int ret;
 
-static int pstore_decompress(void *in, void *out, size_t inlen, size_t outlen)
-{
-	if (zbackend)
-		return zbackend->decompress(in, out, inlen, outlen);
-	else
-		return -EIO;
+	if (!IS_ENABLED(CONFIG_PSTORE_COMPRESS))
+		return -EINVAL;
+
+	ret = crypto_comp_compress(tfm, in, inlen, out, &outlen);
+	if (ret) {
+		pr_err("crypto_comp_compress failed, ret = %d!\n", ret);
+		return ret;
+	}
+
+	return outlen;
 }
 
 static void allocate_buf_for_compression(void)
 {
-	if (zbackend) {
-		pr_info("using %s compression\n", zbackend->name);
-		zbackend->allocate();
-	} else {
-		pr_err("allocate compression buffer error!\n");
+	struct crypto_comp *ctx;
+	int size;
+	char *buf;
+
+	/* Skip if not built-in or compression backend not selected yet. */
+	if (!IS_ENABLED(CONFIG_PSTORE_COMPRESS) || !zbackend)
+		return;
+
+	/* Skip if no pstore backend yet or compression init already done. */
+	if (!psinfo || tfm)
+		return;
+
+	if (!crypto_has_comp(zbackend->name, 0, 0)) {
+		pr_err("Unknown compression: %s\n", zbackend->name);
+		return;
 	}
+
+	size = zbackend->zbufsize(psinfo->bufsize);
+	if (size <= 0) {
+		pr_err("Invalid compression size for %s: %d\n",
+		       zbackend->name, size);
+		return;
+	}
+
+	buf = kmalloc(size, GFP_KERNEL);
+	if (!buf) {
+		pr_err("Failed %d byte compression buffer allocation for: %s\n",
+		       size, zbackend->name);
+		return;
+	}
+
+	ctx = crypto_alloc_comp(zbackend->name, 0, 0);
+	if (IS_ERR_OR_NULL(ctx)) {
+		kfree(buf);
+		pr_err("crypto_alloc_comp('%s') failed: %ld\n", zbackend->name,
+		       PTR_ERR(ctx));
+		return;
+	}
+
+	/* A non-NULL big_oops_buf indicates compression is available. */
+	tfm = ctx;
+	big_oops_buf_sz = size;
+	big_oops_buf = buf;
+
+	pr_info("Using crash dump compression: %s\n", zbackend->name);
 }
 
 static void free_buf_for_compression(void)
 {
-	if (zbackend)
-		zbackend->free();
-	else
-		pr_err("free compression buffer error!\n");
+	if (IS_ENABLED(CONFIG_PSTORE_COMPRESS) && tfm) {
+		crypto_free_comp(tfm);
+		tfm = NULL;
+	}
+	kfree(big_oops_buf);
+	big_oops_buf = NULL;
+	big_oops_buf_sz = 0;
 }
 
 /*
@@ -483,16 +381,12 @@ void pstore_record_init(struct pstore_record *record,
 	record->psi = psinfo;
 
 	/* Report zeroed timestamp if called before timekeeping has resumed. */
-	if (__getnstimeofday(&record->time)) {
-		record->time.tv_sec = 0;
-		record->time.tv_nsec = 0;
-	}
+	record->time = ns_to_timespec64(ktime_get_real_fast_ns());
 }
 
 /*
- * callback from kmsg_dump. (s2,l2) has the most recently
- * written bytes, older bytes are in (s1,l1). Save as much
- * as we can from the end of the buffer.
+ * callback from kmsg_dump. Save as much as we can (up to kmsg_bytes) from the
+ * end of the buffer.
  */
 static void pstore_dump(struct kmsg_dumper *dumper,
 			enum kmsg_dump_reason reason)
@@ -600,6 +494,9 @@ static void pstore_console_write(struct console *con, const char *s, unsigned c)
 {
 	struct pstore_record record;
 
+	if (!c)
+		return;
+
 	pstore_record_init(&record, psinfo);
 	record.type = PSTORE_TYPE_CONSOLE;
 
@@ -638,7 +535,7 @@ static int pstore_write_user_compat(struct pstore_record *record,
 		return -EINVAL;
 
 	record->buf = memdup_user(buf, record->size);
-	if (unlikely(IS_ERR(record->buf))) {
+	if (IS_ERR(record->buf)) {
 		ret = PTR_ERR(record->buf);
 		goto out;
 	}
@@ -763,10 +660,11 @@ EXPORT_SYMBOL_GPL(pstore_unregister);
 
 static void decompress_record(struct pstore_record *record)
 {
+	int ret;
 	int unzipped_len;
-	char *decompressed;
+	char *unzipped, *workspace;
 
-	if (!record->compressed)
+	if (!IS_ENABLED(CONFIG_PSTORE_COMPRESS) || !record->compressed)
 		return;
 
 	/* Only PSTORE_TYPE_DMESG support compression. */
@@ -775,35 +673,42 @@ static void decompress_record(struct pstore_record *record)
 		return;
 	}
 
-	/* No compression method has created the common buffer. */
+	/* Missing compression buffer means compression was not initialized. */
 	if (!big_oops_buf) {
-		pr_warn("no decompression buffer allocated\n");
+		pr_warn("no decompression method initialized!\n");
 		return;
 	}
 
-	unzipped_len = pstore_decompress(record->buf, big_oops_buf,
-					 record->size, big_oops_buf_sz);
-	if (unzipped_len <= 0) {
-		pr_err("decompression failed: %d\n", unzipped_len);
+	/* Allocate enough space to hold max decompression and ECC. */
+	unzipped_len = big_oops_buf_sz;
+	workspace = kmalloc(unzipped_len + record->ecc_notice_size,
+			    GFP_KERNEL);
+	if (!workspace)
 		return;
-	}
 
-	/* Build new buffer for decompressed contents. */
-	decompressed = kmalloc(unzipped_len + record->ecc_notice_size,
-			       GFP_KERNEL);
-	if (!decompressed) {
-		pr_err("decompression ran out of memory\n");
+	/* After decompression "unzipped_len" is almost certainly smaller. */
+	ret = crypto_comp_decompress(tfm, record->buf, record->size,
+					  workspace, &unzipped_len);
+	if (ret) {
+		pr_err("crypto_comp_decompress failed, ret = %d!\n", ret);
+		kfree(workspace);
 		return;
 	}
-	memcpy(decompressed, big_oops_buf, unzipped_len);
 
 	/* Append ECC notice to decompressed buffer. */
-	memcpy(decompressed + unzipped_len, record->buf + record->size,
+	memcpy(workspace + unzipped_len, record->buf + record->size,
 	       record->ecc_notice_size);
 
-	/* Swap out compresed contents with decompressed contents. */
+	/* Copy decompressed contents into an minimum-sized allocation. */
+	unzipped = kmemdup(workspace, unzipped_len + record->ecc_notice_size,
+			   GFP_KERNEL);
+	kfree(workspace);
+	if (!unzipped)
+		return;
+
+	/* Swap out compressed contents with decompressed contents. */
 	kfree(record->buf);
-	record->buf = decompressed;
+	record->buf = unzipped;
 	record->size = unzipped_len;
 	record->compressed = false;
 }
@@ -879,7 +784,7 @@ static void pstore_dowork(struct work_struct *work)
 	pstore_get_records(1);
 }
 
-static void pstore_timefunc(unsigned long dummy)
+static void pstore_timefunc(struct timer_list *unused)
 {
 	if (pstore_new_entry) {
 		pstore_new_entry = 0;
@@ -891,5 +796,53 @@ static void pstore_timefunc(unsigned long dummy)
 			  jiffies + msecs_to_jiffies(pstore_update_ms));
 }
 
+void __init pstore_choose_compression(void)
+{
+	const struct pstore_zbackend *step;
+
+	if (!compress)
+		return;
+
+	for (step = zbackends; step->name; step++) {
+		if (!strcmp(compress, step->name)) {
+			zbackend = step;
+			return;
+		}
+	}
+}
+
+static int __init pstore_init(void)
+{
+	int ret;
+
+	pstore_choose_compression();
+
+	/*
+	 * Check if any pstore backends registered earlier but did not
+	 * initialize compression because crypto was not ready. If so,
+	 * initialize compression now.
+	 */
+	allocate_buf_for_compression();
+
+	ret = pstore_init_fs();
+	if (ret)
+		free_buf_for_compression();
+
+	return ret;
+}
+late_initcall(pstore_init);
+
+static void __exit pstore_exit(void)
+{
+	pstore_exit_fs();
+}
+module_exit(pstore_exit)
+
+module_param(compress, charp, 0444);
+MODULE_PARM_DESC(compress, "Pstore compression to use");
+
 module_param(backend, charp, 0444);
 MODULE_PARM_DESC(backend, "Pstore backend to use");
+
+MODULE_AUTHOR("Tony Luck <tony.luck@intel.com>");
+MODULE_LICENSE("GPL");

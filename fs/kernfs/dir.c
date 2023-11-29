@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * fs/kernfs/dir.c - kernfs directory implementation
  *
  * Copyright (c) 2001-3 Patrick Mochel
  * Copyright (c) 2007 SUSE Linux Products GmbH
  * Copyright (c) 2007, 2013 Tejun Heo <tj@kernel.org>
- *
- * This file is released under the GPLv2.
  */
 
 #include <linux/sched.h>
@@ -146,6 +145,9 @@ static int kernfs_path_from_node_locked(struct kernfs_node *kn_to,
 	if (kn_from == kn_to)
 		return strlcpy(buf, "/", buflen);
 
+	if (!buf)
+		return -EINVAL;
+
 	common = kernfs_common_ancestor(kn_from, kn_to);
 	if (WARN_ON(!common))
 		return -EINVAL;
@@ -153,8 +155,7 @@ static int kernfs_path_from_node_locked(struct kernfs_node *kn_to,
 	depth_to = kernfs_depth(common, kn_to);
 	depth_from = kernfs_depth(common, kn_from);
 
-	if (buf)
-		buf[0] = '\0';
+	buf[0] = '\0';
 
 	for (i = 0; i < depth_from; i++)
 		len += strlcpy(buf + len, parent_str,
@@ -439,7 +440,6 @@ struct kernfs_node *kernfs_get_active(struct kernfs_node *kn)
  */
 void kernfs_put_active(struct kernfs_node *kn)
 {
-	struct kernfs_root *root = kernfs_root(kn);
 	int v;
 
 	if (unlikely(!kn))
@@ -451,7 +451,7 @@ void kernfs_put_active(struct kernfs_node *kn)
 	if (likely(v != KN_DEACTIVATED_BIAS))
 		return;
 
-	wake_up_all(&root->deactivate_waitq);
+	wake_up_all(&kernfs_root(kn)->deactivate_waitq);
 }
 
 /**
@@ -540,12 +540,9 @@ void kernfs_put(struct kernfs_node *kn)
 	kfree_const(kn->name);
 
 	if (kn->iattr) {
-		if (kn->iattr->ia_secdata)
-			security_release_secctx(kn->iattr->ia_secdata,
-						kn->iattr->ia_secdata_len);
 		simple_xattrs_free(&kn->iattr->xattrs);
+		kmem_cache_free(kernfs_iattrs_cache, kn->iattr);
 	}
-	kfree(kn->iattr);
 	spin_lock(&kernfs_idr_lock);
 	idr_remove(&root->ino_idr, kn->id.ino);
 	spin_unlock(&kernfs_idr_lock);
@@ -626,7 +623,9 @@ struct kernfs_node *kernfs_node_from_dentry(struct dentry *dentry)
 }
 
 static struct kernfs_node *__kernfs_new_node(struct kernfs_root *root,
+					     struct kernfs_node *parent,
 					     const char *name, umode_t mode,
+					     kuid_t uid, kgid_t gid,
 					     unsigned flags)
 {
 	struct kernfs_node *kn;
@@ -667,8 +666,28 @@ static struct kernfs_node *__kernfs_new_node(struct kernfs_root *root,
 	kn->mode = mode;
 	kn->flags = flags;
 
+	if (!uid_eq(uid, GLOBAL_ROOT_UID) || !gid_eq(gid, GLOBAL_ROOT_GID)) {
+		struct iattr iattr = {
+			.ia_valid = ATTR_UID | ATTR_GID,
+			.ia_uid = uid,
+			.ia_gid = gid,
+		};
+
+		ret = __kernfs_setattr(kn, &iattr);
+		if (ret < 0)
+			goto err_out3;
+	}
+
+	if (parent) {
+		ret = security_kernfs_init_security(parent, kn);
+		if (ret)
+			goto err_out3;
+	}
+
 	return kn;
 
+ err_out3:
+	idr_remove(&root->ino_idr, kn->id.ino);
  err_out2:
 	kmem_cache_free(kernfs_node_cache, kn);
  err_out1:
@@ -678,11 +697,13 @@ static struct kernfs_node *__kernfs_new_node(struct kernfs_root *root,
 
 struct kernfs_node *kernfs_new_node(struct kernfs_node *parent,
 				    const char *name, umode_t mode,
+				    kuid_t uid, kgid_t gid,
 				    unsigned flags)
 {
 	struct kernfs_node *kn;
 
-	kn = __kernfs_new_node(kernfs_root(parent), name, mode, flags);
+	kn = __kernfs_new_node(kernfs_root(parent), parent,
+			       name, mode, uid, gid, flags);
 	if (kn) {
 		kernfs_get(parent);
 		kn->parent = parent;
@@ -784,9 +805,8 @@ int kernfs_add_one(struct kernfs_node *kn)
 	/* Update timestamps on the parent */
 	ps_iattr = parent->iattr;
 	if (ps_iattr) {
-		struct iattr *ps_iattrs = &ps_iattr->ia_iattr;
-		ktime_get_real_ts(&ps_iattrs->ia_ctime);
-		ps_iattrs->ia_mtime = ps_iattrs->ia_ctime;
+		ktime_get_real_ts64(&ps_iattr->ia_ctime);
+		ps_iattr->ia_mtime = ps_iattr->ia_ctime;
 	}
 
 	mutex_unlock(&kernfs_mutex);
@@ -950,7 +970,8 @@ struct kernfs_root *kernfs_create_root(struct kernfs_syscall_ops *scops,
 	INIT_LIST_HEAD(&root->supers);
 	root->next_generation = 1;
 
-	kn = __kernfs_new_node(root, "", S_IFDIR | S_IRUGO | S_IXUGO,
+	kn = __kernfs_new_node(root, NULL, "", S_IFDIR | S_IRUGO | S_IXUGO,
+			       GLOBAL_ROOT_UID, GLOBAL_ROOT_GID,
 			       KERNFS_DIR);
 	if (!kn) {
 		idr_destroy(&root->ino_idr);
@@ -989,6 +1010,8 @@ void kernfs_destroy_root(struct kernfs_root *root)
  * @parent: parent in which to create a new directory
  * @name: name of the new directory
  * @mode: mode of the new directory
+ * @uid: uid of the new directory
+ * @gid: gid of the new directory
  * @priv: opaque data associated with the new directory
  * @ns: optional namespace tag of the directory
  *
@@ -996,13 +1019,15 @@ void kernfs_destroy_root(struct kernfs_root *root)
  */
 struct kernfs_node *kernfs_create_dir_ns(struct kernfs_node *parent,
 					 const char *name, umode_t mode,
+					 kuid_t uid, kgid_t gid,
 					 void *priv, const void *ns)
 {
 	struct kernfs_node *kn;
 	int rc;
 
 	/* allocate */
-	kn = kernfs_new_node(parent, name, mode | S_IFDIR, KERNFS_DIR);
+	kn = kernfs_new_node(parent, name, mode | S_IFDIR,
+			     uid, gid, KERNFS_DIR);
 	if (!kn)
 		return ERR_PTR(-ENOMEM);
 
@@ -1033,7 +1058,8 @@ struct kernfs_node *kernfs_create_empty_dir(struct kernfs_node *parent,
 	int rc;
 
 	/* allocate */
-	kn = kernfs_new_node(parent, name, S_IRUGO|S_IXUGO|S_IFDIR, KERNFS_DIR);
+	kn = kernfs_new_node(parent, name, S_IRUGO|S_IXUGO|S_IFDIR,
+			     GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, KERNFS_DIR);
 	if (!kn)
 		return ERR_PTR(-ENOMEM);
 
@@ -1311,9 +1337,8 @@ static void __kernfs_remove(struct kernfs_node *kn)
 
 			/* update timestamps on the parent */
 			if (ps_iattr) {
-				ktime_get_real_ts(&ps_iattr->ia_iattr.ia_ctime);
-				ps_iattr->ia_iattr.ia_mtime =
-					ps_iattr->ia_iattr.ia_ctime;
+				ktime_get_real_ts64(&ps_iattr->ia_ctime);
+				ps_iattr->ia_mtime = ps_iattr->ia_ctime;
 			}
 
 			kernfs_put(pos);

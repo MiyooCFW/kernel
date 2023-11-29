@@ -4,7 +4,7 @@
 
 #ifdef CONFIG_PPC_MM_SLICES
 
-#define SLICE_LOW_SHIFT		28
+#define SLICE_LOW_SHIFT		26	/* 64 slices */
 #define SLICE_LOW_TOP		(0x100000000ull)
 #define SLICE_NUM_LOW		(SLICE_LOW_TOP >> SLICE_LOW_SHIFT)
 #define GET_LOW_SLICE_INDEX(addr)	((addr) >> SLICE_LOW_SHIFT)
@@ -12,6 +12,8 @@
 #define SLICE_HIGH_SHIFT	0
 #define SLICE_NUM_HIGH		0ul
 #define GET_HIGH_SLICE_INDEX(addr)	(addr & 0)
+
+#define SLB_ADDR_LIMIT_DEFAULT	DEFAULT_MAP_WINDOW
 
 #endif /* CONFIG_PPC_MM_SLICES */
 

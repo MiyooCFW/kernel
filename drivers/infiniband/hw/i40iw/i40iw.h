@@ -60,7 +60,7 @@
 #include <i40e_client.h>
 #include "i40iw_type.h"
 #include "i40iw_p.h"
-#include "i40iw_ucontext.h"
+#include <rdma/i40iw-abi.h>
 #include "i40iw_pble.h"
 #include "i40iw_verbs.h"
 #include "i40iw_cm.h"
@@ -118,9 +118,6 @@
 #define I40IW_CQP_COMPL_RQ_WQE_FLUSHED    2
 #define I40IW_CQP_COMPL_SQ_WQE_FLUSHED    3
 #define I40IW_CQP_COMPL_RQ_SQ_WQE_FLUSHED 4
-
-#define I40IW_MTU_TO_MSS		40
-#define I40IW_DEFAULT_MSS		1460
 
 struct i40iw_cqp_compl_info {
 	u32 op_ret_val;
@@ -401,8 +398,8 @@ static inline struct i40iw_qp *to_iwqp(struct ib_qp *ibqp)
 }
 
 /* i40iw.c */
-void i40iw_add_ref(struct ib_qp *);
-void i40iw_rem_ref(struct ib_qp *);
+void i40iw_qp_add_ref(struct ib_qp *ibqp);
+void i40iw_qp_rem_ref(struct ib_qp *ibqp);
 struct ib_qp *i40iw_get_qp(struct ib_device *, int);
 
 void i40iw_flush_wqes(struct i40iw_device *iwdev,
@@ -545,16 +542,15 @@ enum i40iw_status_code i40iw_manage_qhash(struct i40iw_device *iwdev,
 					  bool wait);
 void i40iw_receive_ilq(struct i40iw_sc_vsi *vsi, struct i40iw_puda_buf *rbuf);
 void i40iw_free_sqbuf(struct i40iw_sc_vsi *vsi, void *bufp);
-void i40iw_free_qp_resources(struct i40iw_device *iwdev,
-			     struct i40iw_qp *iwqp,
-			     u32 qp_num);
+void i40iw_free_qp_resources(struct i40iw_qp *iwqp);
+
 enum i40iw_status_code i40iw_obj_aligned_mem(struct i40iw_device *iwdev,
 					     struct i40iw_dma_mem *memptr,
 					     u32 size, u32 mask);
 
 void i40iw_request_reset(struct i40iw_device *iwdev);
 void i40iw_destroy_rdma_device(struct i40iw_ib_device *iwibdev);
-void i40iw_setup_cm_core(struct i40iw_device *iwdev);
+int i40iw_setup_cm_core(struct i40iw_device *iwdev);
 void i40iw_cleanup_cm_core(struct i40iw_cm_core *cm_core);
 void i40iw_process_ceq(struct i40iw_device *, struct i40iw_ceq *iwceq);
 void i40iw_process_aeq(struct i40iw_device *);
@@ -562,17 +558,24 @@ void i40iw_next_iw_state(struct i40iw_qp *iwqp,
 			 u8 state, u8 del_hash,
 			 u8 term, u8 term_len);
 int i40iw_send_syn(struct i40iw_cm_node *cm_node, u32 sendack);
+int i40iw_send_reset(struct i40iw_cm_node *cm_node);
 struct i40iw_cm_node *i40iw_find_node(struct i40iw_cm_core *cm_core,
 				      u16 rem_port,
 				      u32 *rem_addr,
 				      u16 loc_port,
 				      u32 *loc_addr,
-				      bool add_refcnt);
+				      bool add_refcnt,
+				      bool accelerated_list);
 
 enum i40iw_status_code i40iw_hw_flush_wqes(struct i40iw_device *iwdev,
 					   struct i40iw_sc_qp *qp,
 					   struct i40iw_qp_flush_info *info,
 					   bool wait);
+
+void i40iw_gen_ae(struct i40iw_device *iwdev,
+		  struct i40iw_sc_qp *qp,
+		  struct i40iw_gen_ae_info *info,
+		  bool wait);
 
 void i40iw_copy_ip_ntohl(u32 *dst, __be32 *src);
 struct ib_mr *i40iw_reg_phys_mr(struct ib_pd *ib_pd,
@@ -590,5 +593,8 @@ int i40iw_inet6addr_event(struct notifier_block *notifier,
 int i40iw_net_event(struct notifier_block *notifier,
 		    unsigned long event,
 		    void *ptr);
+int i40iw_netdevice_event(struct notifier_block *notifier,
+			  unsigned long event,
+			  void *ptr);
 
 #endif

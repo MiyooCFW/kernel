@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * inet_diag.c	Module for monitoring INET transport protocols sockets.
  *
  * Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
- *
- *	This program is free software; you can redistribute it and/or
- *      modify it under the terms of the GNU General Public License
- *      as published by the Free Software Foundation; either version
- *      2 of the License, or (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -53,8 +49,7 @@ static DEFINE_MUTEX(inet_diag_table_mutex);
 static const struct inet_diag_handler *inet_diag_lock_handler(int proto)
 {
 	if (!inet_diag_table[proto])
-		request_module("net-pf-%d-proto-%d-type-%d-%d", PF_NETLINK,
-			       NETLINK_SOCK_DIAG, AF_INET, proto);
+		sock_load_diag_module(AF_INET, proto);
 
 	mutex_lock(&inet_diag_table_mutex);
 	if (!inet_diag_table[proto])
@@ -205,6 +200,7 @@ int inet_sk_diag_fill(struct sock *sk, struct inet_connection_sock *icsk,
 	r->idiag_state = sk->sk_state;
 	r->idiag_timer = 0;
 	r->idiag_retrans = 0;
+	r->idiag_expires = 0;
 
 	if (inet_diag_msg_attrs_fill(sk, skb, r, ext, user_ns, net_admin))
 		goto errout;
@@ -212,7 +208,7 @@ int inet_sk_diag_fill(struct sock *sk, struct inet_connection_sock *icsk,
 	if (ext & (1 << (INET_DIAG_MEMINFO - 1))) {
 		struct inet_diag_meminfo minfo = {
 			.idiag_rmem = sk_rmem_alloc_get(sk),
-			.idiag_wmem = sk->sk_wmem_queued,
+			.idiag_wmem = READ_ONCE(sk->sk_wmem_queued),
 			.idiag_fmem = sk->sk_forward_alloc,
 			.idiag_tmem = sk_wmem_alloc_get(sk),
 		};
@@ -245,20 +241,17 @@ int inet_sk_diag_fill(struct sock *sk, struct inet_connection_sock *icsk,
 		r->idiag_timer = 1;
 		r->idiag_retrans = icsk->icsk_retransmits;
 		r->idiag_expires =
-			jiffies_to_msecs(icsk->icsk_timeout - jiffies);
+			jiffies_delta_to_msecs(icsk->icsk_timeout - jiffies);
 	} else if (icsk->icsk_pending == ICSK_TIME_PROBE0) {
 		r->idiag_timer = 4;
 		r->idiag_retrans = icsk->icsk_probes_out;
 		r->idiag_expires =
-			jiffies_to_msecs(icsk->icsk_timeout - jiffies);
+			jiffies_delta_to_msecs(icsk->icsk_timeout - jiffies);
 	} else if (timer_pending(&sk->sk_timer)) {
 		r->idiag_timer = 2;
 		r->idiag_retrans = icsk->icsk_probes_out;
 		r->idiag_expires =
-			jiffies_to_msecs(sk->sk_timer.expires - jiffies);
-	} else {
-		r->idiag_timer = 0;
-		r->idiag_expires = 0;
+			jiffies_delta_to_msecs(sk->sk_timer.expires - jiffies);
 	}
 
 	if ((ext & (1 << (INET_DIAG_INFO - 1))) && handler->idiag_info_size) {
@@ -343,16 +336,13 @@ static int inet_twsk_diag_fill(struct sock *sk,
 	r = nlmsg_data(nlh);
 	BUG_ON(tw->tw_state != TCP_TIME_WAIT);
 
-	tmo = tw->tw_timer.expires - jiffies;
-	if (tmo < 0)
-		tmo = 0;
-
 	inet_diag_msg_common_fill(r, sk);
 	r->idiag_retrans      = 0;
 
 	r->idiag_state	      = tw->tw_substate;
 	r->idiag_timer	      = 3;
-	r->idiag_expires      = jiffies_to_msecs(tmo);
+	tmo = tw->tw_timer.expires - jiffies;
+	r->idiag_expires      = jiffies_delta_to_msecs(tmo);
 	r->idiag_rqueue	      = 0;
 	r->idiag_wqueue	      = 0;
 	r->idiag_uid	      = 0;
@@ -386,7 +376,7 @@ static int inet_req_diag_fill(struct sock *sk, struct sk_buff *skb,
 		     offsetof(struct sock, sk_cookie));
 
 	tmo = inet_reqsk(sk)->rsk_timer.expires - jiffies;
-	r->idiag_expires = (tmo >= 0) ? jiffies_to_msecs(tmo) : 0;
+	r->idiag_expires = jiffies_delta_to_msecs(tmo);
 	r->idiag_rqueue	= 0;
 	r->idiag_wqueue	= 0;
 	r->idiag_uid	= 0;
@@ -570,11 +560,17 @@ static int inet_diag_bc_run(const struct nlattr *_bc,
 		case INET_DIAG_BC_JMP:
 			yes = 0;
 			break;
+		case INET_DIAG_BC_S_EQ:
+			yes = entry->sport == op[1].no;
+			break;
 		case INET_DIAG_BC_S_GE:
 			yes = entry->sport >= op[1].no;
 			break;
 		case INET_DIAG_BC_S_LE:
 			yes = entry->sport <= op[1].no;
+			break;
+		case INET_DIAG_BC_D_EQ:
+			yes = entry->dport == op[1].no;
 			break;
 		case INET_DIAG_BC_D_GE:
 			yes = entry->dport >= op[1].no;
@@ -808,8 +804,10 @@ static int inet_diag_bc_audit(const struct nlattr *attr,
 			if (!valid_devcond(bc, len, &min_len))
 				return -EINVAL;
 			break;
+		case INET_DIAG_BC_S_EQ:
 		case INET_DIAG_BC_S_GE:
 		case INET_DIAG_BC_S_LE:
+		case INET_DIAG_BC_D_EQ:
 		case INET_DIAG_BC_D_GE:
 		case INET_DIAG_BC_D_LE:
 			if (!valid_port_comparison(bc, len, &min_len))

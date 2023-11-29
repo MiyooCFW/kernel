@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * cdc-acm.c
  *
@@ -12,20 +13,6 @@
  * USB Abstract Control Model driver for USB modems and ISDN adapters
  *
  * Sponsored by SuSE
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #undef DEBUG
@@ -262,7 +249,7 @@ static int acm_start_wb(struct acm *acm, struct acm_wb *wb)
 /*
  * attributes exported through sysfs
  */
-static ssize_t show_caps
+static ssize_t bmCapabilities_show
 (struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
@@ -270,9 +257,9 @@ static ssize_t show_caps
 
 	return sprintf(buf, "%d", acm->ctrl_caps);
 }
-static DEVICE_ATTR(bmCapabilities, S_IRUGO, show_caps, NULL);
+static DEVICE_ATTR_RO(bmCapabilities);
 
-static ssize_t show_country_codes
+static ssize_t wCountryCodes_show
 (struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
@@ -282,9 +269,9 @@ static ssize_t show_country_codes
 	return acm->country_code_size;
 }
 
-static DEVICE_ATTR(wCountryCodes, S_IRUGO, show_country_codes, NULL);
+static DEVICE_ATTR_RO(wCountryCodes);
 
-static ssize_t show_country_rel_date
+static ssize_t iCountryCodeRelDate_show
 (struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
@@ -293,7 +280,7 @@ static ssize_t show_country_rel_date
 	return sprintf(buf, "%d", acm->country_rel_date);
 }
 
-static DEVICE_ATTR(iCountryCodeRelDate, S_IRUGO, show_country_rel_date, NULL);
+static DEVICE_ATTR_RO(iCountryCodeRelDate);
 /*
  * Interrupt handlers for various ACM device responses
  */
@@ -302,6 +289,7 @@ static void acm_process_notification(struct acm *acm, unsigned char *buf)
 {
 	int newctrl;
 	int difference;
+	unsigned long flags;
 	struct usb_cdc_notification *dr = (struct usb_cdc_notification *)buf;
 	unsigned char *data = buf + sizeof(struct usb_cdc_notification);
 
@@ -329,7 +317,7 @@ static void acm_process_notification(struct acm *acm, unsigned char *buf)
 		}
 
 		difference = acm->ctrlin ^ newctrl;
-		spin_lock(&acm->read_lock);
+		spin_lock_irqsave(&acm->read_lock, flags);
 		acm->ctrlin = newctrl;
 		acm->oldcount = acm->iocount;
 
@@ -349,7 +337,7 @@ static void acm_process_notification(struct acm *acm, unsigned char *buf)
 			acm->iocount.parity++;
 		if (newctrl & ACM_CTRL_OVERRUN)
 			acm->iocount.overrun++;
-		spin_unlock(&acm->read_lock);
+		spin_unlock_irqrestore(&acm->read_lock, flags);
 
 		if (newctrl & ACM_CTRL_BRK)
 			tty_flip_buffer_push(&acm->port);
@@ -506,7 +494,6 @@ static void acm_read_bulk_callback(struct urb *urb)
 {
 	struct acm_rb *rb = urb->context;
 	struct acm *acm = rb->instance;
-	unsigned long flags;
 	int status = urb->status;
 	bool stopped = false;
 	bool stalled = false;
@@ -570,15 +557,10 @@ static void acm_read_bulk_callback(struct urb *urb)
 		return;
 	}
 
-	/* throttle device if requested by tty */
-	spin_lock_irqsave(&acm->read_lock, flags);
-	acm->throttled = acm->throttle_req;
-	if (!acm->throttled) {
-		spin_unlock_irqrestore(&acm->read_lock, flags);
-		acm_submit_read_urb(acm, rb->index, GFP_ATOMIC);
-	} else {
-		spin_unlock_irqrestore(&acm->read_lock, flags);
-	}
+	if (test_bit(ACM_THROTTLED, &acm->flags))
+		return;
+
+	acm_submit_read_urb(acm, rb->index, GFP_ATOMIC);
 }
 
 /* data interface wrote those outgoing bytes */
@@ -722,10 +704,7 @@ static int acm_port_activate(struct tty_port *port, struct tty_struct *tty)
 	/*
 	 * Unthrottle device in case the TTY was closed while throttled.
 	 */
-	spin_lock_irq(&acm->read_lock);
-	acm->throttled = 0;
-	acm->throttle_req = 0;
-	spin_unlock_irq(&acm->read_lock);
+	clear_bit(ACM_THROTTLED, &acm->flags);
 
 	retval = acm_submit_read_urbs(acm, GFP_KERNEL);
 	if (retval)
@@ -754,7 +733,8 @@ static void acm_port_destruct(struct tty_port *port)
 {
 	struct acm *acm = container_of(port, struct acm, port);
 
-	acm_release_minor(acm);
+	if (acm->minor != ACM_MINOR_INVALID)
+		acm_release_minor(acm);
 	usb_put_intf(acm->control);
 	kfree(acm->country_codes);
 	kfree(acm);
@@ -895,27 +875,19 @@ static void acm_tty_throttle(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
 
-	spin_lock_irq(&acm->read_lock);
-	acm->throttle_req = 1;
-	spin_unlock_irq(&acm->read_lock);
+	set_bit(ACM_THROTTLED, &acm->flags);
 }
 
 static void acm_tty_unthrottle(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
-	unsigned int was_throttled;
 
-	spin_lock_irq(&acm->read_lock);
-	was_throttled = acm->throttled;
-	acm->throttled = 0;
-	acm->throttle_req = 0;
-	spin_unlock_irq(&acm->read_lock);
+	clear_bit(ACM_THROTTLED, &acm->flags);
 
 	/* Matches the smp_mb__after_atomic() in acm_read_bulk_callback(). */
 	smp_mb();
 
-	if (was_throttled)
-		acm_submit_read_urbs(acm, GFP_KERNEL);
+	acm_submit_read_urbs(acm, GFP_KERNEL);
 }
 
 static int acm_tty_break_ctl(struct tty_struct *tty, int state)
@@ -961,51 +933,34 @@ static int acm_tty_tiocmset(struct tty_struct *tty,
 	return acm_set_control(acm, acm->ctrlout = newctrl);
 }
 
-static int get_serial_info(struct acm *acm, struct serial_struct __user *info)
+static int get_serial_info(struct tty_struct *tty, struct serial_struct *ss)
 {
-	struct serial_struct tmp;
+	struct acm *acm = tty->driver_data;
 
-	memset(&tmp, 0, sizeof(tmp));
-	tmp.xmit_fifo_size = acm->writesize;
-	tmp.baud_base = le32_to_cpu(acm->line.dwDTERate);
-	tmp.close_delay	= jiffies_to_msecs(acm->port.close_delay) / 10;
-	tmp.closing_wait = acm->port.closing_wait == ASYNC_CLOSING_WAIT_NONE ?
+	ss->line = acm->minor;
+	ss->close_delay	= jiffies_to_msecs(acm->port.close_delay) / 10;
+	ss->closing_wait = acm->port.closing_wait == ASYNC_CLOSING_WAIT_NONE ?
 				ASYNC_CLOSING_WAIT_NONE :
 				jiffies_to_msecs(acm->port.closing_wait) / 10;
-
-	if (copy_to_user(info, &tmp, sizeof(tmp)))
-		return -EFAULT;
-	else
-		return 0;
+	return 0;
 }
 
-static int set_serial_info(struct acm *acm,
-				struct serial_struct __user *newinfo)
+static int set_serial_info(struct tty_struct *tty, struct serial_struct *ss)
 {
-	struct serial_struct new_serial;
+	struct acm *acm = tty->driver_data;
 	unsigned int closing_wait, close_delay;
-	unsigned int old_closing_wait, old_close_delay;
 	int retval = 0;
 
-	if (copy_from_user(&new_serial, newinfo, sizeof(new_serial)))
-		return -EFAULT;
-
-	close_delay = msecs_to_jiffies(new_serial.close_delay * 10);
-	closing_wait = new_serial.closing_wait == ASYNC_CLOSING_WAIT_NONE ?
+	close_delay = msecs_to_jiffies(ss->close_delay * 10);
+	closing_wait = ss->closing_wait == ASYNC_CLOSING_WAIT_NONE ?
 			ASYNC_CLOSING_WAIT_NONE :
-			msecs_to_jiffies(new_serial.closing_wait * 10);
-
-	/* we must redo the rounding here, so that the values match */
-	old_close_delay	= jiffies_to_msecs(acm->port.close_delay) / 10;
-	old_closing_wait = acm->port.closing_wait == ASYNC_CLOSING_WAIT_NONE ?
-				ASYNC_CLOSING_WAIT_NONE :
-				jiffies_to_msecs(acm->port.closing_wait) / 10;
+			msecs_to_jiffies(ss->closing_wait * 10);
 
 	mutex_lock(&acm->port.mutex);
 
 	if (!capable(CAP_SYS_ADMIN)) {
-		if ((new_serial.close_delay != old_close_delay) ||
-	            (new_serial.closing_wait != old_closing_wait))
+		if ((close_delay != acm->port.close_delay) ||
+		    (closing_wait != acm->port.closing_wait))
 			retval = -EPERM;
 	} else {
 		acm->port.close_delay  = close_delay;
@@ -1082,12 +1037,6 @@ static int acm_tty_ioctl(struct tty_struct *tty,
 	int rv = -ENOIOCTLCMD;
 
 	switch (cmd) {
-	case TIOCGSERIAL: /* gets serial port data */
-		rv = get_serial_info(acm, (struct serial_struct __user *) arg);
-		break;
-	case TIOCSSERIAL:
-		rv = set_serial_info(acm, (struct serial_struct __user *) arg);
-		break;
 	case TIOCMIWAIT:
 		rv = usb_autopm_get_interface(acm->control);
 		if (rv < 0) {
@@ -1402,6 +1351,9 @@ made_compressed_probe:
 	if (acm == NULL)
 		goto alloc_fail;
 
+	tty_port_init(&acm->port);
+	acm->port.ops = &acm_port_ops;
+
 	ctrlsize = usb_endpoint_maxp(epctrl);
 	readsize = usb_endpoint_maxp(epread) *
 				(quirks == SINGLE_RX_URB ? 1 : 2);
@@ -1413,8 +1365,10 @@ made_compressed_probe:
 	usb_get_intf(acm->control); /* undone in destruct() */
 
 	minor = acm_alloc_minor(acm);
-	if (minor < 0)
+	if (minor < 0) {
+		acm->minor = ACM_MINOR_INVALID;
 		goto alloc_fail1;
+	}
 
 	acm->minor = minor;
 	acm->dev = usb_dev;
@@ -1440,22 +1394,20 @@ made_compressed_probe:
 		acm->out = usb_sndintpipe(usb_dev, epwrite->bEndpointAddress);
 	else
 		acm->out = usb_sndbulkpipe(usb_dev, epwrite->bEndpointAddress);
-	tty_port_init(&acm->port);
-	acm->port.ops = &acm_port_ops;
 	init_usb_anchor(&acm->delayed);
 	acm->quirks = quirks;
 
 	buf = usb_alloc_coherent(usb_dev, ctrlsize, GFP_KERNEL, &acm->ctrl_dma);
 	if (!buf)
-		goto alloc_fail2;
+		goto alloc_fail1;
 	acm->ctrl_buffer = buf;
 
 	if (acm_write_buffers_alloc(acm) < 0)
-		goto alloc_fail4;
+		goto alloc_fail2;
 
 	acm->ctrlurb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!acm->ctrlurb)
-		goto alloc_fail5;
+		goto alloc_fail3;
 
 	for (i = 0; i < num_rx_buf; i++) {
 		struct acm_rb *rb = &(acm->read_buffers[i]);
@@ -1464,13 +1416,13 @@ made_compressed_probe:
 		rb->base = usb_alloc_coherent(acm->dev, readsize, GFP_KERNEL,
 								&rb->dma);
 		if (!rb->base)
-			goto alloc_fail6;
+			goto alloc_fail4;
 		rb->index = i;
 		rb->instance = acm;
 
 		urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!urb)
-			goto alloc_fail6;
+			goto alloc_fail4;
 
 		urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 		urb->transfer_dma = rb->dma;
@@ -1492,7 +1444,7 @@ made_compressed_probe:
 
 		snd->urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (snd->urb == NULL)
-			goto alloc_fail7;
+			goto alloc_fail5;
 
 		if (usb_endpoint_xfer_int(epwrite))
 			usb_fill_int_urb(snd->urb, usb_dev, acm->out,
@@ -1510,7 +1462,7 @@ made_compressed_probe:
 
 	i = device_create_file(&intf->dev, &dev_attr_bmCapabilities);
 	if (i < 0)
-		goto alloc_fail7;
+		goto alloc_fail5;
 
 	if (h.usb_cdc_country_functional_desc) { /* export the country data */
 		struct usb_cdc_country_functional_desc * cfd =
@@ -1568,7 +1520,7 @@ skip_countries:
 			&control_interface->dev);
 	if (IS_ERR(tty_dev)) {
 		rv = PTR_ERR(tty_dev);
-		goto alloc_fail8;
+		goto alloc_fail6;
 	}
 
 	if (quirks & CLEAR_HALT_CONDITIONS) {
@@ -1577,7 +1529,7 @@ skip_countries:
 	}
 
 	return 0;
-alloc_fail8:
+alloc_fail6:
 	if (!acm->combined_interfaces) {
 		/* Clear driver data so that disconnect() returns early. */
 		usb_set_intfdata(data_interface, NULL);
@@ -1588,26 +1540,23 @@ alloc_fail8:
 				&dev_attr_wCountryCodes);
 		device_remove_file(&acm->control->dev,
 				&dev_attr_iCountryCodeRelDate);
-		kfree(acm->country_codes);
 	}
 	device_remove_file(&acm->control->dev, &dev_attr_bmCapabilities);
-alloc_fail7:
+alloc_fail5:
 	usb_set_intfdata(intf, NULL);
 	for (i = 0; i < ACM_NW; i++)
 		usb_free_urb(acm->wb[i].urb);
-alloc_fail6:
+alloc_fail4:
 	for (i = 0; i < num_rx_buf; i++)
 		usb_free_urb(acm->read_urbs[i]);
 	acm_read_buffers_free(acm);
 	usb_free_urb(acm->ctrlurb);
-alloc_fail5:
+alloc_fail3:
 	acm_write_buffers_free(acm);
-alloc_fail4:
-	usb_free_coherent(usb_dev, ctrlsize, acm->ctrl_buffer, acm->ctrl_dma);
 alloc_fail2:
-	acm_release_minor(acm);
+	usb_free_coherent(usb_dev, ctrlsize, acm->ctrl_buffer, acm->ctrl_dma);
 alloc_fail1:
-	kfree(acm);
+	tty_port_put(&acm->port);
 alloc_fail:
 	return rv;
 }
@@ -2094,6 +2043,8 @@ static const struct tty_operations acm_ops = {
 	.set_termios =		acm_tty_set_termios,
 	.tiocmget =		acm_tty_tiocmget,
 	.tiocmset =		acm_tty_tiocmset,
+	.get_serial =		get_serial_info,
+	.set_serial =		set_serial_info,
 	.get_icount =		acm_tty_get_icount,
 };
 

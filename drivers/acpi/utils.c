@@ -1,22 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  acpi_utils.c - ACPI Utility Functions ($Revision: 10 $)
  *
  *  Copyright (C) 2001, 2002 Andy Grover <andrew.grover@intel.com>
  *  Copyright (C) 2001, 2002 Paul Diefenbaugh <paul.s.diefenbaugh@intel.com>
- *
- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or (at
- *  your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  General Public License for more details.
- *
- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
 
 #include <linux/kernel.h>
@@ -355,6 +342,7 @@ acpi_evaluate_reference(acpi_handle handle,
 	}
 
 	if (package->package.count > ACPI_MAX_HANDLES) {
+		kfree(package);
 		return AE_NO_MEMORY;
 	}
 	list->count = package->package.count;
@@ -736,16 +724,16 @@ bool acpi_dev_found(const char *hid)
 }
 EXPORT_SYMBOL(acpi_dev_found);
 
-struct acpi_dev_present_info {
+struct acpi_dev_match_info {
 	struct acpi_device_id hid[2];
 	const char *uid;
 	s64 hrv;
 };
 
-static int acpi_dev_present_cb(struct device *dev, void *data)
+static int acpi_dev_match_cb(struct device *dev, const void *data)
 {
 	struct acpi_device *adev = to_acpi_device(dev);
-	struct acpi_dev_present_info *match = data;
+	const struct acpi_dev_match_info *match = data;
 	unsigned long long hrv;
 	acpi_status status;
 
@@ -788,19 +776,46 @@ static int acpi_dev_present_cb(struct device *dev, void *data)
  */
 bool acpi_dev_present(const char *hid, const char *uid, s64 hrv)
 {
-	struct acpi_dev_present_info match = {};
+	struct acpi_dev_match_info match = {};
 	struct device *dev;
 
 	strlcpy(match.hid[0].id, hid, sizeof(match.hid[0].id));
 	match.uid = uid;
 	match.hrv = hrv;
 
-	dev = bus_find_device(&acpi_bus_type, NULL, &match,
-			      acpi_dev_present_cb);
-
+	dev = bus_find_device(&acpi_bus_type, NULL, &match, acpi_dev_match_cb);
+	put_device(dev);
 	return !!dev;
 }
 EXPORT_SYMBOL(acpi_dev_present);
+
+/**
+ * acpi_dev_get_first_match_dev - Return the first match of ACPI device
+ * @hid: Hardware ID of the device.
+ * @uid: Unique ID of the device, pass NULL to not check _UID
+ * @hrv: Hardware Revision of the device, pass -1 to not check _HRV
+ *
+ * Return the first match of ACPI device if a matching device was present
+ * at the moment of invocation, or NULL otherwise.
+ *
+ * The caller is responsible to call put_device() on the returned device.
+ *
+ * See additional information in acpi_dev_present() as well.
+ */
+struct acpi_device *
+acpi_dev_get_first_match_dev(const char *hid, const char *uid, s64 hrv)
+{
+	struct acpi_dev_match_info match = {};
+	struct device *dev;
+
+	strlcpy(match.hid[0].id, hid, sizeof(match.hid[0].id));
+	match.uid = uid;
+	match.hrv = hrv;
+
+	dev = bus_find_device(&acpi_bus_type, NULL, &match, acpi_dev_match_cb);
+	return dev ? to_acpi_device(dev) : NULL;
+}
+EXPORT_SYMBOL(acpi_dev_get_first_match_dev);
 
 /*
  * acpi_backlight= handling, this is done here rather then in video_detect.c

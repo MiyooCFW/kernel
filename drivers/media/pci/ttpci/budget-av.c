@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * budget-av.c: driver for the SAA7146 based Budget DVB cards
  *              with analog video in
@@ -11,21 +12,6 @@
  *
  * Copyright (C) 1999-2002 Ralph  Metzler
  *                       & Marcus Metzler for convergence integrated media GmbH
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * To obtain the license, point your browser to
- * http://www.gnu.org/copyleft/gpl.html
- *
  *
  * the project's page is at https://linuxtv.org
  */
@@ -51,7 +37,7 @@
 #include <linux/input.h>
 #include <linux/spinlock.h>
 
-#include "dvb_ca_en50221.h"
+#include <media/dvb_ca_en50221.h>
 
 #define DEBICICAM		0x02420000
 
@@ -1181,14 +1167,14 @@ static u8 read_pwm(struct budget_av *budget_av)
 #define SUBID_DVBS_KNC1_PLUS		0x0011
 #define SUBID_DVBS_TYPHOON		0x4f56
 #define SUBID_DVBS_CINERGY1200		0x1154
-#define SUBID_DVBS_CYNERGY1200N 	0x1155
+#define SUBID_DVBS_CYNERGY1200N		0x1155
 #define SUBID_DVBS_TV_STAR		0x0014
 #define SUBID_DVBS_TV_STAR_PLUS_X4	0x0015
 #define SUBID_DVBS_TV_STAR_CI		0x0016
 #define SUBID_DVBS2_KNC1		0x0018
 #define SUBID_DVBS2_KNC1_OEM		0x0019
-#define SUBID_DVBS_EASYWATCH_1  	0x001a
-#define SUBID_DVBS_EASYWATCH_2  	0x001b
+#define SUBID_DVBS_EASYWATCH_1		0x001a
+#define SUBID_DVBS_EASYWATCH_2		0x001b
 #define SUBID_DVBS2_EASYWATCH		0x001d
 #define SUBID_DVBS_EASYWATCH		0x001e
 

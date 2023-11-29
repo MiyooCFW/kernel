@@ -1,7 +1,7 @@
 /*
  * vpif - Video Port Interface driver
  * VPIF is a receiver and transmitter for video data. It has two channels(0, 1)
- * that receiveing video byte stream and two channels(2, 3) for video output.
+ * that receiving video byte stream and two channels(2, 3) for video output.
  * The hardware supports SDTV, HDTV formats, raw data capture.
  * Currently, the driver supports NTSC and PAL standards.
  *
@@ -47,8 +47,9 @@ EXPORT_SYMBOL_GPL(vpif_lock);
 void __iomem *vpif_base;
 EXPORT_SYMBOL_GPL(vpif_base);
 
-/**
+/*
  * vpif_ch_params: video standard configuration parameters for vpif
+ *
  * The table must include all presets from supported subdevices.
  */
 const struct vpif_channel_config_params vpif_ch_params[] = {

@@ -1,17 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Intel Merrifield SoC GPIO driver
  *
  * Copyright (c) 2016 Intel Corporation.
  * Author: Andy Shevchenko <andriy.shevchenko@linux.intel.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
+#include <linux/acpi.h>
 #include <linux/bitops.h>
 #include <linux/gpio/driver.h>
-#include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
@@ -357,7 +354,7 @@ static void mrfld_irq_handler(struct irq_desc *desc)
 		for_each_set_bit(gpio, &pending, 32) {
 			unsigned int irq;
 
-			irq = irq_find_mapping(gc->irqdomain, base + gpio);
+			irq = irq_find_mapping(gc->irq.domain, base + gpio);
 			generic_handle_irq(irq);
 		}
 	}
@@ -380,9 +377,26 @@ static void mrfld_irq_init_hw(struct mrfld_gpio *priv)
 	}
 }
 
+static const char *mrfld_gpio_get_pinctrl_dev_name(struct mrfld_gpio *priv)
+{
+	struct acpi_device *adev;
+	const char *name;
+
+	adev = acpi_dev_get_first_match_dev("INTC1002", NULL, -1);
+	if (adev) {
+		name = devm_kstrdup(priv->dev, acpi_dev_name(adev), GFP_KERNEL);
+		acpi_dev_put(adev);
+	} else {
+		name = "pinctrl-merrifield";
+	}
+
+	return name;
+}
+
 static int mrfld_gpio_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	const struct mrfld_gpio_pinrange *range;
+	const char *pinctrl_dev_name;
 	struct mrfld_gpio *priv;
 	u32 gpio_base, irq_base;
 	void __iomem *base;
@@ -408,10 +422,8 @@ static int mrfld_gpio_probe(struct pci_dev *pdev, const struct pci_device_id *id
 	pcim_iounmap_regions(pdev, BIT(1));
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv) {
-		dev_err(&pdev->dev, "can't allocate chip data\n");
+	if (!priv)
 		return -ENOMEM;
-	}
 
 	priv->dev = &pdev->dev;
 	priv->reg_base = pcim_iomap_table(pdev)[0];
@@ -439,10 +451,11 @@ static int mrfld_gpio_probe(struct pci_dev *pdev, const struct pci_device_id *id
 		return retval;
 	}
 
+	pinctrl_dev_name = mrfld_gpio_get_pinctrl_dev_name(priv);
 	for (i = 0; i < ARRAY_SIZE(mrfld_gpio_ranges); i++) {
 		range = &mrfld_gpio_ranges[i];
 		retval = gpiochip_add_pin_range(&priv->chip,
-						"pinctrl-merrifield",
+						pinctrl_dev_name,
 						range->gpio_base,
 						range->pin_base,
 						range->npins);

@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/drivers/devfreq/governor_passive.c
  *
  * Copyright (C) 2016 Samsung Electronics
  * Author: Chanwoo Choi <cw00.choi@samsung.com>
  * Author: MyungJoo Ham <myungjoo.ham@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -182,7 +179,7 @@ static int devfreq_passive_event_handler(struct devfreq *devfreq,
 }
 
 static struct devfreq_governor devfreq_passive = {
-	.name = "passive",
+	.name = DEVFREQ_GOV_PASSIVE,
 	.immutable = 1,
 	.get_target_freq = devfreq_passive_get_target_freq,
 	.event_handler = devfreq_passive_event_handler,

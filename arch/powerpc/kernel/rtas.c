@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  * Procedures for interfacing to the RTAS on CHRP machines.
  *
  * Peter Bergner, IBM	March 2001.
  * Copyright (C) 2001 IBM.
- *
- *      This program is free software; you can redistribute it and/or
- *      modify it under the terms of the GNU General Public License
- *      as published by the Free Software Foundation; either version
- *      2 of the License, or (at your option) any later version.
  */
 
 #include <stdarg.h>
@@ -20,12 +16,14 @@
 #include <linux/capability.h>
 #include <linux/delay.h>
 #include <linux/cpu.h>
+#include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/completion.h>
 #include <linux/cpumask.h>
 #include <linux/memblock.h>
 #include <linux/slab.h>
 #include <linux/reboot.h>
+#include <linux/syscalls.h>
 
 #include <asm/prom.h>
 #include <asm/rtas.h>
@@ -53,10 +51,10 @@ struct rtas_t rtas = {
 EXPORT_SYMBOL(rtas);
 
 DEFINE_SPINLOCK(rtas_data_buf_lock);
-EXPORT_SYMBOL(rtas_data_buf_lock);
+EXPORT_SYMBOL_GPL(rtas_data_buf_lock);
 
-char rtas_data_buf[RTAS_DATA_BUF_SIZE] __cacheline_aligned;
-EXPORT_SYMBOL(rtas_data_buf);
+char rtas_data_buf[RTAS_DATA_BUF_SIZE] __aligned(SZ_4K);
+EXPORT_SYMBOL_GPL(rtas_data_buf);
 
 unsigned long rtas_rmo_buf;
 
@@ -65,7 +63,7 @@ unsigned long rtas_rmo_buf;
  * This is done like this so rtas_flash can be a module.
  */
 void (*rtas_flash_term_hook)(int);
-EXPORT_SYMBOL(rtas_flash_term_hook);
+EXPORT_SYMBOL_GPL(rtas_flash_term_hook);
 
 /* RTAS use home made raw locking instead of spin_lock_irqsave
  * because those can be called from within really nasty contexts
@@ -78,7 +76,7 @@ static unsigned long lock_rtas(void)
 
 	local_irq_save(flags);
 	preempt_disable();
-	arch_spin_lock_flags(&rtas.lock, flags);
+	arch_spin_lock(&rtas.lock);
 	return flags;
 }
 
@@ -313,7 +311,7 @@ void rtas_progress(char *s, unsigned short hex)
  
 	spin_unlock(&progress_lock);
 }
-EXPORT_SYMBOL(rtas_progress);		/* needed by rtas_flash module */
+EXPORT_SYMBOL_GPL(rtas_progress);		/* needed by rtas_flash module */
 
 int rtas_token(const char *service)
 {
@@ -323,7 +321,7 @@ int rtas_token(const char *service)
 	tokp = of_get_property(rtas.dev, service, NULL);
 	return tokp ? be32_to_cpu(*tokp) : RTAS_UNKNOWN_SERVICE;
 }
-EXPORT_SYMBOL(rtas_token);
+EXPORT_SYMBOL_GPL(rtas_token);
 
 int rtas_service_present(const char *service)
 {
@@ -483,7 +481,7 @@ int rtas_call(int token, int nargs, int nret, int *outputs, ...)
 	}
 	return ret;
 }
-EXPORT_SYMBOL(rtas_call);
+EXPORT_SYMBOL_GPL(rtas_call);
 
 /* For RTAS_BUSY (-2), delay for 1 millisecond.  For an extended busy status
  * code of 990n, perform the hinted delay of 10^n (last digit) milliseconds.
@@ -518,7 +516,7 @@ unsigned int rtas_busy_delay(int status)
 
 	return ms;
 }
-EXPORT_SYMBOL(rtas_busy_delay);
+EXPORT_SYMBOL_GPL(rtas_busy_delay);
 
 static int rtas_error_rc(int rtas_rc)
 {
@@ -564,7 +562,7 @@ int rtas_get_power_level(int powerdomain, int *level)
 		return rtas_error_rc(rc);
 	return rc;
 }
-EXPORT_SYMBOL(rtas_get_power_level);
+EXPORT_SYMBOL_GPL(rtas_get_power_level);
 
 int rtas_set_power_level(int powerdomain, int level, int *setlevel)
 {
@@ -582,7 +580,7 @@ int rtas_set_power_level(int powerdomain, int level, int *setlevel)
 		return rtas_error_rc(rc);
 	return rc;
 }
-EXPORT_SYMBOL(rtas_set_power_level);
+EXPORT_SYMBOL_GPL(rtas_set_power_level);
 
 int rtas_get_sensor(int sensor, int index, int *state)
 {
@@ -600,7 +598,7 @@ int rtas_get_sensor(int sensor, int index, int *state)
 		return rtas_error_rc(rc);
 	return rc;
 }
-EXPORT_SYMBOL(rtas_get_sensor);
+EXPORT_SYMBOL_GPL(rtas_get_sensor);
 
 int rtas_get_sensor_fast(int sensor, int index, int *state)
 {
@@ -661,7 +659,7 @@ int rtas_set_indicator(int indicator, int index, int new_value)
 		return rtas_error_rc(rc);
 	return rc;
 }
-EXPORT_SYMBOL(rtas_set_indicator);
+EXPORT_SYMBOL_GPL(rtas_set_indicator);
 
 /*
  * Ignoring RTAS extended delay
@@ -849,97 +847,6 @@ static void rtas_percpu_suspend_me(void *info)
 	__rtas_suspend_cpu((struct rtas_suspend_me_data *)info, 1);
 }
 
-enum rtas_cpu_state {
-	DOWN,
-	UP,
-};
-
-#ifndef CONFIG_SMP
-static int rtas_cpu_state_change_mask(enum rtas_cpu_state state,
-				cpumask_var_t cpus)
-{
-	if (!cpumask_empty(cpus)) {
-		cpumask_clear(cpus);
-		return -EINVAL;
-	} else
-		return 0;
-}
-#else
-/* On return cpumask will be altered to indicate CPUs changed.
- * CPUs with states changed will be set in the mask,
- * CPUs with status unchanged will be unset in the mask. */
-static int rtas_cpu_state_change_mask(enum rtas_cpu_state state,
-				cpumask_var_t cpus)
-{
-	int cpu;
-	int cpuret = 0;
-	int ret = 0;
-
-	if (cpumask_empty(cpus))
-		return 0;
-
-	for_each_cpu(cpu, cpus) {
-		struct device *dev = get_cpu_device(cpu);
-
-		switch (state) {
-		case DOWN:
-			cpuret = device_offline(dev);
-			break;
-		case UP:
-			cpuret = device_online(dev);
-			break;
-		}
-		if (cpuret < 0) {
-			pr_debug("%s: cpu_%s for cpu#%d returned %d.\n",
-					__func__,
-					((state == UP) ? "up" : "down"),
-					cpu, cpuret);
-			if (!ret)
-				ret = cpuret;
-			if (state == UP) {
-				/* clear bits for unchanged cpus, return */
-				cpumask_shift_right(cpus, cpus, cpu);
-				cpumask_shift_left(cpus, cpus, cpu);
-				break;
-			} else {
-				/* clear bit for unchanged cpu, continue */
-				cpumask_clear_cpu(cpu, cpus);
-			}
-		}
-	}
-
-	return ret;
-}
-#endif
-
-int rtas_online_cpus_mask(cpumask_var_t cpus)
-{
-	int ret;
-
-	ret = rtas_cpu_state_change_mask(UP, cpus);
-
-	if (ret) {
-		cpumask_var_t tmp_mask;
-
-		if (!alloc_cpumask_var(&tmp_mask, GFP_KERNEL))
-			return ret;
-
-		/* Use tmp_mask to preserve cpus mask from first failure */
-		cpumask_copy(tmp_mask, cpus);
-		rtas_offline_cpus_mask(tmp_mask);
-		free_cpumask_var(tmp_mask);
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL(rtas_online_cpus_mask);
-
-int rtas_offline_cpus_mask(cpumask_var_t cpus)
-{
-	return rtas_cpu_state_change_mask(DOWN, cpus);
-}
-EXPORT_SYMBOL(rtas_offline_cpus_mask);
-
 int rtas_ibm_suspend_me(u64 handle)
 {
 	long state;
@@ -947,8 +854,6 @@ int rtas_ibm_suspend_me(u64 handle)
 	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
 	struct rtas_suspend_me_data data;
 	DECLARE_COMPLETION_ONSTACK(done);
-	cpumask_var_t offline_mask;
-	int cpuret;
 
 	if (!rtas_service_present("ibm,suspend-me"))
 		return -ENOSYS;
@@ -969,9 +874,6 @@ int rtas_ibm_suspend_me(u64 handle)
 		return -EIO;
 	}
 
-	if (!alloc_cpumask_var(&offline_mask, GFP_KERNEL))
-		return -ENOMEM;
-
 	atomic_set(&data.working, 0);
 	atomic_set(&data.done, 0);
 	atomic_set(&data.error, 0);
@@ -980,41 +882,23 @@ int rtas_ibm_suspend_me(u64 handle)
 
 	lock_device_hotplug();
 
-	/* All present CPUs must be online */
-	cpumask_andnot(offline_mask, cpu_present_mask, cpu_online_mask);
-	cpuret = rtas_online_cpus_mask(offline_mask);
-	if (cpuret) {
-		pr_err("%s: Could not bring present CPUs online.\n", __func__);
-		atomic_set(&data.error, cpuret);
-		goto out;
-	}
-
 	cpu_hotplug_disable();
-	stop_topology_update();
 
 	/* Call function on all CPUs.  One of us will make the
 	 * rtas call
 	 */
-	if (on_each_cpu(rtas_percpu_suspend_me, &data, 0))
-		atomic_set(&data.error, -EINVAL);
+	on_each_cpu(rtas_percpu_suspend_me, &data, 0);
 
 	wait_for_completion(&done);
 
 	if (atomic_read(&data.error) != 0)
 		printk(KERN_ERR "Error doing global join\n");
 
-	start_topology_update();
+
 	cpu_hotplug_enable();
 
-	/* Take down CPUs not online prior to suspend */
-	cpuret = rtas_offline_cpus_mask(offline_mask);
-	if (cpuret)
-		pr_warn("%s: Could not restore CPUs to offline state.\n",
-				__func__);
-
-out:
 	unlock_device_hotplug();
-	free_cpumask_var(offline_mask);
+
 	return atomic_read(&data.error);
 }
 #else /* CONFIG_PPC_PSERIES */
@@ -1212,7 +1096,7 @@ static bool block_rtas_call(int token, int nargs,
 #endif /* CONFIG_PPC_RTAS_FILTER */
 
 /* We assume to be passed big endian arguments */
-asmlinkage int ppc_rtas(struct rtas_args __user *uargs)
+SYSCALL_DEFINE1(rtas, struct rtas_args __user *, uargs)
 {
 	struct rtas_args args;
 	unsigned long flags;
@@ -1352,7 +1236,11 @@ void __init rtas_initialize(void)
 		ibm_suspend_me_token = rtas_token("ibm,suspend-me");
 	}
 #endif
-	rtas_rmo_buf = memblock_alloc_base(RTAS_RMOBUF_MAX, PAGE_SIZE, rtas_region);
+	rtas_rmo_buf = memblock_phys_alloc_range(RTAS_RMOBUF_MAX, PAGE_SIZE,
+						 0, rtas_region);
+	if (!rtas_rmo_buf)
+		panic("ERROR: RTAS: Failed to allocate %lx bytes below %pa\n",
+		      PAGE_SIZE, &rtas_region);
 
 #ifdef CONFIG_RTAS_ERROR_LOGGING
 	rtas_last_error_token = rtas_token("rtas-last-error");

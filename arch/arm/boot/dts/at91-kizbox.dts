@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91-kizbox.dts - Device Tree file for Overkiz Kizbox board
  *
  * Copyright (C) 2012-2014 Boris BREZILLON <b.brezillon@overkiz.com>
  *               2014-2015 Gaël PORTAY <g.portay@overkiz.com>
- *
- * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include "at91sam9g20.dtsi"
@@ -31,6 +30,18 @@
 
 	ahb {
 		apb {
+			tcb0: timer@fffa0000 {
+				timer@0 {
+					compatible = "atmel,tcb-timer";
+					reg = <0>, <1>;
+				};
+
+				timer@2 {
+					compatible = "atmel,tcb-timer";
+					reg = <2>;
+				};
+			};
+
 			macb0: ethernet@fffc4000 {
 				phy-mode = "mii";
 				pinctrl-0 = <&pinctrl_macb_rmii

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) STMicroelectronics SA 2017
  *
@@ -5,25 +6,31 @@
  *          Yannick Fertre <yannick.fertre@st.com>
  *          Fabien Dessenne <fabien.dessenne@st.com>
  *          Mickael Reulier <mickael.reulier@st.com>
- *
- * License terms:  GNU General Public License (GPL), version 2
  */
 
 #include <linux/clk.h>
 #include <linux/component.h>
+#include <linux/delay.h>
+#include <linux/interrupt.h>
+#include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/of_graph.h>
+#include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/reset.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_crtc_helper.h>
+#include <drm/drm_bridge.h>
+#include <drm/drm_device.h>
 #include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_fourcc.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_of.h>
-#include <drm/drm_bridge.h>
 #include <drm/drm_plane_helper.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
 
 #include <video/videomode.h>
 
@@ -33,6 +40,8 @@
 #define CRTC_MASK GENMASK(NB_CRTC - 1, 0)
 
 #define MAX_IRQ 4
+
+#define MAX_ENDPOINTS 2
 
 #define HWVER_10200 0x010200
 #define HWVER_10300 0x010300
@@ -148,6 +157,8 @@
 #define IER_TERRIE	BIT(2)		/* Transfer ERRor Interrupt Enable */
 #define IER_RRIE	BIT(3)		/* Register Reload Interrupt enable */
 
+#define CPSR_CYPOS	GENMASK(15, 0)	/* Current Y position */
+
 #define ISR_LIF		BIT(0)		/* Line Interrupt Flag */
 #define ISR_FUIF	BIT(1)		/* Fifo Underrun Interrupt Flag */
 #define ISR_TERRIF	BIT(2)		/* Transfer ERRor Interrupt Flag */
@@ -174,6 +185,8 @@
 #define LXCFBLR_CFBP	GENMASK(28, 16)	/* Color Frame Buffer Pitch in bytes */
 
 #define LXCFBLNR_CFBLN	GENMASK(10, 0)	/* Color Frame Buffer Line Number */
+
+#define CLUT_SIZE	256
 
 #define CONSTA_MAX	0xFF		/* CONSTant Alpha MAX= 1.0 */
 #define BF1_PAXCA	0x600		/* Pixel Alpha x Constant Alpha */
@@ -219,6 +232,11 @@ static const enum ltdc_pix_fmt ltdc_pix_fmt_a1[NB_PF] = {
 	PF_L8,			/* 0x05 */
 	PF_ARGB1555,		/* 0x06 */
 	PF_ARGB4444		/* 0x07 */
+};
+
+static const u64 ltdc_format_modifiers[] = {
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_INVALID
 };
 
 static inline u32 reg_read(void __iomem *base, u32 reg)
@@ -326,6 +344,26 @@ static inline u32 to_drm_pixelformat(enum ltdc_pix_fmt pf)
 	}
 }
 
+static inline u32 get_pixelformat_without_alpha(u32 drm)
+{
+	switch (drm) {
+	case DRM_FORMAT_ARGB4444:
+		return DRM_FORMAT_XRGB4444;
+	case DRM_FORMAT_RGBA4444:
+		return DRM_FORMAT_RGBX4444;
+	case DRM_FORMAT_ARGB1555:
+		return DRM_FORMAT_XRGB1555;
+	case DRM_FORMAT_RGBA5551:
+		return DRM_FORMAT_RGBX5551;
+	case DRM_FORMAT_ARGB8888:
+		return DRM_FORMAT_XRGB8888;
+	case DRM_FORMAT_RGBA8888:
+		return DRM_FORMAT_RGBX8888;
+	default:
+		return 0;
+	}
+}
+
 static irqreturn_t ltdc_irq_thread(int irq, void *arg)
 {
 	struct drm_device *ddev = arg;
@@ -363,12 +401,34 @@ static irqreturn_t ltdc_irq(int irq, void *arg)
  * DRM_CRTC
  */
 
+static void ltdc_crtc_update_clut(struct drm_crtc *crtc)
+{
+	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	struct drm_color_lut *lut;
+	u32 val;
+	int i;
+
+	if (!crtc->state->color_mgmt_changed || !crtc->state->gamma_lut)
+		return;
+
+	lut = (struct drm_color_lut *)crtc->state->gamma_lut->data;
+
+	for (i = 0; i < CLUT_SIZE; i++, lut++) {
+		val = ((lut->red << 8) & 0xff0000) | (lut->green & 0xff00) |
+			(lut->blue >> 8) | (i << 24);
+		reg_write(ldev->regs, LTDC_L1CLUTWR, val);
+	}
+}
+
 static void ltdc_crtc_atomic_enable(struct drm_crtc *crtc,
 				    struct drm_crtc_state *old_state)
 {
 	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	struct drm_device *ddev = crtc->dev;
 
 	DRM_DEBUG_DRIVER("\n");
+
+	pm_runtime_get_sync(ddev->dev);
 
 	/* Sets the background color value */
 	reg_write(ldev->regs, LTDC_BCCR, BCCR_BCBLACK);
@@ -376,8 +436,8 @@ static void ltdc_crtc_atomic_enable(struct drm_crtc *crtc,
 	/* Enable IRQ */
 	reg_set(ldev->regs, LTDC_IER, IER_RRIE | IER_FUIE | IER_TERRIE);
 
-	/* Immediately commit the planes */
-	reg_set(ldev->regs, LTDC_SRCR, SRCR_IMR);
+	/* Commit shadow registers = update planes at next vblank */
+	reg_set(ldev->regs, LTDC_SRCR, SRCR_VBR);
 
 	/* Enable LTDC */
 	reg_set(ldev->regs, LTDC_GCR, GCR_LTDCEN);
@@ -389,6 +449,7 @@ static void ltdc_crtc_atomic_disable(struct drm_crtc *crtc,
 				     struct drm_crtc_state *old_state)
 {
 	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	struct drm_device *ddev = crtc->dev;
 
 	DRM_DEBUG_DRIVER("\n");
 
@@ -402,17 +463,105 @@ static void ltdc_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	/* immediately commit disable of layers before switching off LTDC */
 	reg_set(ldev->regs, LTDC_SRCR, SRCR_IMR);
+
+	pm_runtime_put_sync(ddev->dev);
+}
+
+#define CLK_TOLERANCE_HZ 50
+
+static enum drm_mode_status
+ltdc_crtc_mode_valid(struct drm_crtc *crtc,
+		     const struct drm_display_mode *mode)
+{
+	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	int target = mode->clock * 1000;
+	int target_min = target - CLK_TOLERANCE_HZ;
+	int target_max = target + CLK_TOLERANCE_HZ;
+	int result;
+
+	result = clk_round_rate(ldev->pixel_clk, target);
+
+	DRM_DEBUG_DRIVER("clk rate target %d, available %d\n", target, result);
+
+	/* Filter modes according to the max frequency supported by the pads */
+	if (result > ldev->caps.pad_max_freq_hz)
+		return MODE_CLOCK_HIGH;
+
+	/*
+	 * Accept all "preferred" modes:
+	 * - this is important for panels because panel clock tolerances are
+	 *   bigger than hdmi ones and there is no reason to not accept them
+	 *   (the fps may vary a little but it is not a problem).
+	 * - the hdmi preferred mode will be accepted too, but userland will
+	 *   be able to use others hdmi "valid" modes if necessary.
+	 */
+	if (mode->type & DRM_MODE_TYPE_PREFERRED)
+		return MODE_OK;
+
+	/*
+	 * Filter modes according to the clock value, particularly useful for
+	 * hdmi modes that require precise pixel clocks.
+	 */
+	if (result < target_min || result > target_max)
+		return MODE_CLOCK_RANGE;
+
+	return MODE_OK;
+}
+
+static bool ltdc_crtc_mode_fixup(struct drm_crtc *crtc,
+				 const struct drm_display_mode *mode,
+				 struct drm_display_mode *adjusted_mode)
+{
+	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	struct drm_device *ddev = crtc->dev;
+	int rate = mode->clock * 1000;
+	bool runtime_active;
+	int ret;
+
+	runtime_active = pm_runtime_active(ddev->dev);
+
+	if (runtime_active)
+		pm_runtime_put_sync(ddev->dev);
+
+	if (clk_set_rate(ldev->pixel_clk, rate) < 0) {
+		DRM_ERROR("Cannot set rate (%dHz) for pixel clk\n", rate);
+		return false;
+	}
+
+	adjusted_mode->clock = clk_get_rate(ldev->pixel_clk) / 1000;
+
+	if (runtime_active) {
+		ret = pm_runtime_get_sync(ddev->dev);
+		if (ret) {
+			DRM_ERROR("Failed to fixup mode, cannot get sync\n");
+			return false;
+		}
+	}
+
+	DRM_DEBUG_DRIVER("requested clock %dkHz, adjusted clock %dkHz\n",
+			 mode->clock, adjusted_mode->clock);
+
+	return true;
 }
 
 static void ltdc_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
 	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	struct drm_device *ddev = crtc->dev;
 	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
 	struct videomode vm;
-	int rate = mode->clock * 1000;
 	u32 hsync, vsync, accum_hbp, accum_vbp, accum_act_w, accum_act_h;
 	u32 total_width, total_height;
 	u32 val;
+	int ret;
+
+	if (!pm_runtime_active(ddev->dev)) {
+		ret = pm_runtime_get_sync(ddev->dev);
+		if (ret) {
+			DRM_ERROR("Failed to set mode, cannot get sync\n");
+			return;
+		}
+	}
 
 	drm_display_mode_to_videomode(mode, &vm);
 
@@ -432,15 +581,6 @@ static void ltdc_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	total_width = accum_act_w + vm.hfront_porch;
 	total_height = accum_act_h + vm.vfront_porch;
 
-	clk_disable(ldev->pixel_clk);
-
-	if (clk_set_rate(ldev->pixel_clk, rate) < 0) {
-		DRM_ERROR("Cannot set rate (%dHz) for pixel clk\n", rate);
-		return;
-	}
-
-	clk_enable(ldev->pixel_clk);
-
 	/* Configures the HS, VS, DE and PC polarities. Default Active Low */
 	val = 0;
 
@@ -450,7 +590,7 @@ static void ltdc_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	if (vm.flags & DISPLAY_FLAGS_VSYNC_HIGH)
 		val |= GCR_VSPOL;
 
-	if (vm.flags & DISPLAY_FLAGS_DE_HIGH)
+	if (vm.flags & DISPLAY_FLAGS_DE_LOW)
 		val |= GCR_DEPOL;
 
 	if (vm.flags & DISPLAY_FLAGS_PIXDATA_NEGEDGE)
@@ -482,9 +622,12 @@ static void ltdc_crtc_atomic_flush(struct drm_crtc *crtc,
 				   struct drm_crtc_state *old_crtc_state)
 {
 	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
+	struct drm_device *ddev = crtc->dev;
 	struct drm_pending_vblank_event *event = crtc->state->event;
 
 	DRM_DEBUG_ATOMIC("\n");
+
+	ltdc_crtc_update_clut(crtc);
 
 	/* Commit shadow registers = update planes at next vblank */
 	reg_set(ldev->regs, LTDC_SRCR, SRCR_VBR);
@@ -492,25 +635,27 @@ static void ltdc_crtc_atomic_flush(struct drm_crtc *crtc,
 	if (event) {
 		crtc->state->event = NULL;
 
-		spin_lock_irq(&crtc->dev->event_lock);
+		spin_lock_irq(&ddev->event_lock);
 		if (drm_crtc_vblank_get(crtc) == 0)
 			drm_crtc_arm_vblank_event(crtc, event);
 		else
 			drm_crtc_send_vblank_event(crtc, event);
-		spin_unlock_irq(&crtc->dev->event_lock);
+		spin_unlock_irq(&ddev->event_lock);
 	}
 }
 
 static const struct drm_crtc_helper_funcs ltdc_crtc_helper_funcs = {
+	.mode_valid = ltdc_crtc_mode_valid,
+	.mode_fixup = ltdc_crtc_mode_fixup,
 	.mode_set_nofb = ltdc_crtc_mode_set_nofb,
 	.atomic_flush = ltdc_crtc_atomic_flush,
 	.atomic_enable = ltdc_crtc_atomic_enable,
 	.atomic_disable = ltdc_crtc_atomic_disable,
 };
 
-int ltdc_crtc_enable_vblank(struct drm_device *ddev, unsigned int pipe)
+static int ltdc_crtc_enable_vblank(struct drm_crtc *crtc)
 {
-	struct ltdc_device *ldev = ddev->dev_private;
+	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
 
 	DRM_DEBUG_DRIVER("\n");
 	reg_set(ldev->regs, LTDC_IER, IER_LIE);
@@ -518,12 +663,59 @@ int ltdc_crtc_enable_vblank(struct drm_device *ddev, unsigned int pipe)
 	return 0;
 }
 
-void ltdc_crtc_disable_vblank(struct drm_device *ddev, unsigned int pipe)
+static void ltdc_crtc_disable_vblank(struct drm_crtc *crtc)
 {
-	struct ltdc_device *ldev = ddev->dev_private;
+	struct ltdc_device *ldev = crtc_to_ltdc(crtc);
 
 	DRM_DEBUG_DRIVER("\n");
 	reg_clear(ldev->regs, LTDC_IER, IER_LIE);
+}
+
+bool ltdc_crtc_scanoutpos(struct drm_device *ddev, unsigned int pipe,
+			  bool in_vblank_irq, int *vpos, int *hpos,
+			  ktime_t *stime, ktime_t *etime,
+			  const struct drm_display_mode *mode)
+{
+	struct ltdc_device *ldev = ddev->dev_private;
+	int line, vactive_start, vactive_end, vtotal;
+
+	if (stime)
+		*stime = ktime_get();
+
+	/* The active area starts after vsync + front porch and ends
+	 * at vsync + front porc + display size.
+	 * The total height also include back porch.
+	 * We have 3 possible cases to handle:
+	 * - line < vactive_start: vpos = line - vactive_start and will be
+	 * negative
+	 * - vactive_start < line < vactive_end: vpos = line - vactive_start
+	 * and will be positive
+	 * - line > vactive_end: vpos = line - vtotal - vactive_start
+	 * and will negative
+	 *
+	 * Computation for the two first cases are identical so we can
+	 * simplify the code and only test if line > vactive_end
+	 */
+	if (pm_runtime_active(ddev->dev)) {
+		line = reg_read(ldev->regs, LTDC_CPSR) & CPSR_CYPOS;
+		vactive_start = reg_read(ldev->regs, LTDC_BPCR) & BPCR_AVBP;
+		vactive_end = reg_read(ldev->regs, LTDC_AWCR) & AWCR_AAH;
+		vtotal = reg_read(ldev->regs, LTDC_TWCR) & TWCR_TOTALH;
+
+		if (line > vactive_end)
+			*vpos = line - vtotal - vactive_start;
+		else
+			*vpos = line - vactive_start;
+	} else {
+		*vpos = 0;
+	}
+
+	*hpos = 0;
+
+	if (etime)
+		*etime = ktime_get();
+
+	return true;
 }
 
 static const struct drm_crtc_funcs ltdc_crtc_funcs = {
@@ -533,6 +725,9 @@ static const struct drm_crtc_funcs ltdc_crtc_funcs = {
 	.reset = drm_atomic_helper_crtc_reset,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	.enable_vblank = ltdc_crtc_enable_vblank,
+	.disable_vblank = ltdc_crtc_disable_vblank,
+	.gamma_set = drm_atomic_helper_legacy_gamma_set,
 };
 
 /*
@@ -543,7 +738,7 @@ static int ltdc_plane_atomic_check(struct drm_plane *plane,
 				   struct drm_plane_state *state)
 {
 	struct drm_framebuffer *fb = state->fb;
-	u32 src_x, src_y, src_w, src_h;
+	u32 src_w, src_h;
 
 	DRM_DEBUG_DRIVER("\n");
 
@@ -551,13 +746,11 @@ static int ltdc_plane_atomic_check(struct drm_plane *plane,
 		return 0;
 
 	/* convert src_ from 16:16 format */
-	src_x = state->src_x >> 16;
-	src_y = state->src_y >> 16;
 	src_w = state->src_w >> 16;
 	src_h = state->src_h >> 16;
 
 	/* Reject scaling */
-	if ((src_w != state->crtc_w) || (src_h != state->crtc_h)) {
+	if (src_w != state->crtc_w || src_h != state->crtc_h) {
 		DRM_ERROR("Scaling is not supported");
 		return -EINVAL;
 	}
@@ -626,7 +819,7 @@ static void ltdc_plane_atomic_update(struct drm_plane *plane,
 
 	/* Configures the color frame buffer pitch in bytes & line length */
 	pitch_in_bytes = fb->pitches[0];
-	line_length = drm_format_plane_cpp(fb->format->format, 0) *
+	line_length = fb->format->cpp[0] *
 		      (x1 - x0 + 1) + (ldev->caps.bus_width >> 3) - 1;
 	val = ((pitch_in_bytes << 16) | line_length);
 	reg_update_bits(ldev->regs, LTDC_L1CFBLR + lofs,
@@ -638,6 +831,14 @@ static void ltdc_plane_atomic_update(struct drm_plane *plane,
 
 	/* Specifies the blending factors */
 	val = BF1_PAXCA | BF2_1PAXCA;
+	if (!fb->format->has_alpha)
+		val = BF1_CA | BF2_1CA;
+
+	/* Manage hw-specific capabilities */
+	if (ldev->caps.non_alpha_only_l1 &&
+	    plane->type != DRM_PLANE_TYPE_PRIMARY)
+		val = BF1_PAXCA | BF2_1PAXCA;
+
 	reg_update_bits(ldev->regs, LTDC_L1BFCR + lofs,
 			LXBFCR_BF2 | LXBFCR_BF1, val);
 
@@ -657,13 +858,15 @@ static void ltdc_plane_atomic_update(struct drm_plane *plane,
 	reg_update_bits(ldev->regs, LTDC_L1CR + lofs,
 			LXCR_LEN | LXCR_CLUTEN, val);
 
+	ldev->plane_fpsi[plane->index].counter++;
+
 	mutex_lock(&ldev->err_lock);
 	if (ldev->error_status & ISR_FUIF) {
-		DRM_DEBUG_DRIVER("Fifo underrun\n");
+		DRM_WARN("ltdc fifo underrun: please verify display mode\n");
 		ldev->error_status &= ~ISR_FUIF;
 	}
 	if (ldev->error_status & ISR_TERRIF) {
-		DRM_DEBUG_DRIVER("Transfer error\n");
+		DRM_WARN("ltdc transfer error\n");
 		ldev->error_status &= ~ISR_TERRIF;
 	}
 	mutex_unlock(&ldev->err_lock);
@@ -682,6 +885,35 @@ static void ltdc_plane_atomic_disable(struct drm_plane *plane,
 			 oldstate->crtc->base.id, plane->base.id);
 }
 
+static void ltdc_plane_atomic_print_state(struct drm_printer *p,
+					  const struct drm_plane_state *state)
+{
+	struct drm_plane *plane = state->plane;
+	struct ltdc_device *ldev = plane_to_ltdc(plane);
+	struct fps_info *fpsi = &ldev->plane_fpsi[plane->index];
+	int ms_since_last;
+	ktime_t now;
+
+	now = ktime_get();
+	ms_since_last = ktime_to_ms(ktime_sub(now, fpsi->last_timestamp));
+
+	drm_printf(p, "\tuser_updates=%dfps\n",
+		   DIV_ROUND_CLOSEST(fpsi->counter * 1000, ms_since_last));
+
+	fpsi->last_timestamp = now;
+	fpsi->counter = 0;
+}
+
+static bool ltdc_plane_format_mod_supported(struct drm_plane *plane,
+					    u32 format,
+					    u64 modifier)
+{
+	if (modifier == DRM_FORMAT_MOD_LINEAR)
+		return true;
+
+	return false;
+}
+
 static const struct drm_plane_funcs ltdc_plane_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
@@ -689,6 +921,8 @@ static const struct drm_plane_funcs ltdc_plane_funcs = {
 	.reset = drm_atomic_helper_plane_reset,
 	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
+	.atomic_print_state = ltdc_plane_atomic_print_state,
+	.format_mod_supported = ltdc_plane_format_mod_supported,
 };
 
 static const struct drm_plane_helper_funcs ltdc_plane_helper_funcs = {
@@ -706,8 +940,9 @@ static struct drm_plane *ltdc_plane_create(struct drm_device *ddev,
 	struct device *dev = ddev->dev;
 	struct drm_plane *plane;
 	unsigned int i, nb_fmt = 0;
-	u32 formats[NB_PF];
-	u32 drm_fmt;
+	u32 formats[NB_PF * 2];
+	u32 drm_fmt, drm_fmt_no_alpha;
+	const u64 *modifiers = ltdc_format_modifiers;
 	int ret;
 
 	/* Get supported pixel formats */
@@ -716,17 +951,29 @@ static struct drm_plane *ltdc_plane_create(struct drm_device *ddev,
 		if (!drm_fmt)
 			continue;
 		formats[nb_fmt++] = drm_fmt;
+
+		/* Add the no-alpha related format if any & supported */
+		drm_fmt_no_alpha = get_pixelformat_without_alpha(drm_fmt);
+		if (!drm_fmt_no_alpha)
+			continue;
+
+		/* Manage hw-specific capabilities */
+		if (ldev->caps.non_alpha_only_l1 &&
+		    type != DRM_PLANE_TYPE_PRIMARY)
+			continue;
+
+		formats[nb_fmt++] = drm_fmt_no_alpha;
 	}
 
 	plane = devm_kzalloc(dev, sizeof(*plane), GFP_KERNEL);
 	if (!plane)
-		return 0;
+		return NULL;
 
 	ret = drm_universal_plane_init(ddev, plane, possible_crtcs,
 				       &ltdc_plane_funcs, formats, nb_fmt,
-				       NULL, type, NULL);
+				       modifiers, type, NULL);
 	if (ret < 0)
-		return 0;
+		return NULL;
 
 	drm_plane_helper_add(plane, &ltdc_plane_helper_funcs);
 
@@ -766,6 +1013,9 @@ static int ltdc_crtc_init(struct drm_device *ddev, struct drm_crtc *crtc)
 
 	drm_crtc_helper_add(crtc, &ltdc_crtc_helper_funcs);
 
+	drm_mode_crtc_set_gamma_size(crtc, CLUT_SIZE);
+	drm_crtc_enable_color_mgmt(crtc, 0, false, CLUT_SIZE);
+
 	DRM_DEBUG_DRIVER("CRTC:%d created\n", crtc->base.id);
 
 	/* Add planes. Note : the first layer is used by primary plane */
@@ -793,9 +1043,8 @@ static const struct drm_encoder_funcs ltdc_encoder_funcs = {
 	.destroy = drm_encoder_cleanup,
 };
 
-static int ltdc_encoder_init(struct drm_device *ddev)
+static int ltdc_encoder_init(struct drm_device *ddev, struct drm_bridge *bridge)
 {
-	struct ltdc_device *ldev = ddev->dev_private;
 	struct drm_encoder *encoder;
 	int ret;
 
@@ -809,7 +1058,7 @@ static int ltdc_encoder_init(struct drm_device *ddev)
 	drm_encoder_init(ddev, encoder, &ltdc_encoder_funcs,
 			 DRM_MODE_ENCODER_DPI, NULL);
 
-	ret = drm_bridge_attach(encoder, ldev->bridge, NULL);
+	ret = drm_bridge_attach(encoder, bridge, NULL);
 	if (ret) {
 		drm_encoder_cleanup(encoder);
 		return -EINVAL;
@@ -825,10 +1074,13 @@ static int ltdc_get_caps(struct drm_device *ddev)
 	struct ltdc_device *ldev = ddev->dev_private;
 	u32 bus_width_log2, lcr, gc2r;
 
-	/* at least 1 layer must be managed */
+	/*
+	 * at least 1 layer must be managed & the number of layers
+	 * must not exceed LTDC_MAX_LAYER
+	 */
 	lcr = reg_read(ldev->regs, LTDC_LCR);
 
-	ldev->caps.nb_layers = max_t(int, lcr, 1);
+	ldev->caps.nb_layers = clamp((int)lcr, 1, LTDC_MAX_LAYER);
 
 	/* set data bus width */
 	gc2r = reg_read(ldev->regs, LTDC_GC2R);
@@ -841,13 +1093,50 @@ static int ltdc_get_caps(struct drm_device *ddev)
 	case HWVER_10300:
 		ldev->caps.reg_ofs = REG_OFS_NONE;
 		ldev->caps.pix_fmt_hw = ltdc_pix_fmt_a0;
+		/*
+		 * Hw older versions support non-alpha color formats derived
+		 * from native alpha color formats only on the primary layer.
+		 * For instance, RG16 native format without alpha works fine
+		 * on 2nd layer but XR24 (derived color format from AR24)
+		 * does not work on 2nd layer.
+		 */
+		ldev->caps.non_alpha_only_l1 = true;
+		ldev->caps.pad_max_freq_hz = 90000000;
+		if (ldev->caps.hw_version == HWVER_10200)
+			ldev->caps.pad_max_freq_hz = 65000000;
 		break;
 	case HWVER_20101:
 		ldev->caps.reg_ofs = REG_OFS_4;
 		ldev->caps.pix_fmt_hw = ltdc_pix_fmt_a1;
+		ldev->caps.non_alpha_only_l1 = false;
+		ldev->caps.pad_max_freq_hz = 150000000;
 		break;
 	default:
 		return -ENODEV;
+	}
+
+	return 0;
+}
+
+void ltdc_suspend(struct drm_device *ddev)
+{
+	struct ltdc_device *ldev = ddev->dev_private;
+
+	DRM_DEBUG_DRIVER("\n");
+	clk_disable_unprepare(ldev->pixel_clk);
+}
+
+int ltdc_resume(struct drm_device *ddev)
+{
+	struct ltdc_device *ldev = ddev->dev_private;
+	int ret;
+
+	DRM_DEBUG_DRIVER("\n");
+
+	ret = clk_prepare_enable(ldev->pixel_clk);
+	if (ret) {
+		DRM_ERROR("failed to enable pixel clock (%d)\n", ret);
+		return ret;
 	}
 
 	return 0;
@@ -859,18 +1148,32 @@ int ltdc_load(struct drm_device *ddev)
 	struct ltdc_device *ldev = ddev->dev_private;
 	struct device *dev = ddev->dev;
 	struct device_node *np = dev->of_node;
-	struct drm_bridge *bridge;
-	struct drm_panel *panel;
+	struct drm_bridge *bridge[MAX_ENDPOINTS] = {NULL};
+	struct drm_panel *panel[MAX_ENDPOINTS] = {NULL};
 	struct drm_crtc *crtc;
 	struct reset_control *rstc;
 	struct resource *res;
-	int irq, ret, i;
+	int irq, ret, i, endpoint_not_ready = -ENODEV;
 
 	DRM_DEBUG_DRIVER("\n");
 
-	ret = drm_of_find_panel_or_bridge(np, 0, 0, &panel, &bridge);
-	if (ret)
-		return ret;
+	/* Get endpoints if any */
+	for (i = 0; i < MAX_ENDPOINTS; i++) {
+		ret = drm_of_find_panel_or_bridge(np, 0, i, &panel[i],
+						  &bridge[i]);
+
+		/*
+		 * If at least one endpoint is -EPROBE_DEFER, defer probing,
+		 * else if at least one endpoint is ready, continue probing.
+		 */
+		if (ret == -EPROBE_DEFER)
+			return ret;
+		else if (!ret)
+			endpoint_not_ready = 0;
+	}
+
+	if (endpoint_not_ready)
+		return endpoint_not_ready;
 
 	rstc = devm_reset_control_get_exclusive(dev, NULL);
 
@@ -878,8 +1181,9 @@ int ltdc_load(struct drm_device *ddev)
 
 	ldev->pixel_clk = devm_clk_get(dev, "lcd");
 	if (IS_ERR(ldev->pixel_clk)) {
-		DRM_ERROR("Unable to get lcd clock\n");
-		return -ENODEV;
+		if (PTR_ERR(ldev->pixel_clk) != -EPROBE_DEFER)
+			DRM_ERROR("Unable to get lcd clock\n");
+		return PTR_ERR(ldev->pixel_clk);
 	}
 
 	if (clk_prepare_enable(ldev->pixel_clk)) {
@@ -887,13 +1191,13 @@ int ltdc_load(struct drm_device *ddev)
 		return -ENODEV;
 	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		DRM_ERROR("Unable to get resource\n");
-		ret = -ENODEV;
-		goto err;
+	if (!IS_ERR(rstc)) {
+		reset_control_assert(rstc);
+		usleep_range(10, 20);
+		reset_control_deassert(rstc);
 	}
 
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	ldev->regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(ldev->regs)) {
 		DRM_ERROR("Unable to get ltdc registers\n");
@@ -901,8 +1205,15 @@ int ltdc_load(struct drm_device *ddev)
 		goto err;
 	}
 
+	/* Disable interrupts */
+	reg_clear(ldev->regs, LTDC_IER,
+		  IER_LIE | IER_RRIE | IER_FUIE | IER_TERRIE);
+
 	for (i = 0; i < MAX_IRQ; i++) {
 		irq = platform_get_irq(pdev, i);
+		if (irq == -EPROBE_DEFER)
+			goto err;
+
 		if (irq < 0)
 			continue;
 
@@ -915,12 +1226,6 @@ int ltdc_load(struct drm_device *ddev)
 		}
 	}
 
-	if (!IS_ERR(rstc))
-		reset_control_deassert(rstc);
-
-	/* Disable interrupts */
-	reg_clear(ldev->regs, LTDC_IER,
-		  IER_LIE | IER_RRIE | IER_FUIE | IER_TERRIE);
 
 	ret = ltdc_get_caps(ddev);
 	if (ret) {
@@ -929,24 +1234,27 @@ int ltdc_load(struct drm_device *ddev)
 		goto err;
 	}
 
-	DRM_INFO("ltdc hw version 0x%08x - ready\n", ldev->caps.hw_version);
+	DRM_DEBUG_DRIVER("ltdc hw version 0x%08x\n", ldev->caps.hw_version);
 
-	if (panel) {
-		bridge = drm_panel_bridge_add(panel, DRM_MODE_CONNECTOR_DPI);
-		if (IS_ERR(bridge)) {
-			DRM_ERROR("Failed to create panel-bridge\n");
-			ret = PTR_ERR(bridge);
-			goto err;
+	/* Add endpoints panels or bridges if any */
+	for (i = 0; i < MAX_ENDPOINTS; i++) {
+		if (panel[i]) {
+			bridge[i] = drm_panel_bridge_add(panel[i],
+							DRM_MODE_CONNECTOR_DPI);
+			if (IS_ERR(bridge[i])) {
+				DRM_ERROR("panel-bridge endpoint %d\n", i);
+				ret = PTR_ERR(bridge[i]);
+				goto err;
+			}
 		}
-		ldev->is_panel_bridge = true;
-	}
 
-	ldev->bridge = bridge;
-
-	ret = ltdc_encoder_init(ddev);
-	if (ret) {
-		DRM_ERROR("Failed to init encoder\n");
-		goto err;
+		if (bridge[i]) {
+			ret = ltdc_encoder_init(ddev, bridge[i]);
+			if (ret) {
+				DRM_ERROR("init encoder endpoint %d\n", i);
+				goto err;
+			}
+		}
 	}
 
 	crtc = devm_kzalloc(dev, sizeof(*crtc), GFP_KERNEL);
@@ -955,6 +1263,8 @@ int ltdc_load(struct drm_device *ddev)
 		ret = -ENOMEM;
 		goto err;
 	}
+
+	ddev->mode_config.allow_fb_modifiers = true;
 
 	ret = ltdc_crtc_init(ddev, crtc);
 	if (ret) {
@@ -971,11 +1281,14 @@ int ltdc_load(struct drm_device *ddev)
 	/* Allow usage of vblank without having to call drm_irq_install */
 	ddev->irq_enabled = 1;
 
-	return 0;
+	clk_disable_unprepare(ldev->pixel_clk);
 
+	pm_runtime_enable(ddev->dev);
+
+	return 0;
 err:
-	if (ldev->is_panel_bridge)
-		drm_panel_bridge_remove(bridge);
+	for (i = 0; i < MAX_ENDPOINTS; i++)
+		drm_panel_bridge_remove(bridge[i]);
 
 	clk_disable_unprepare(ldev->pixel_clk);
 
@@ -984,14 +1297,14 @@ err:
 
 void ltdc_unload(struct drm_device *ddev)
 {
-	struct ltdc_device *ldev = ddev->dev_private;
+	int i;
 
 	DRM_DEBUG_DRIVER("\n");
 
-	if (ldev->is_panel_bridge)
-		drm_panel_bridge_remove(ldev->bridge);
+	for (i = 0; i < MAX_ENDPOINTS; i++)
+		drm_of_panel_bridge_remove(ddev->dev->of_node, 0, i);
 
-	clk_disable_unprepare(ldev->pixel_clk);
+	pm_runtime_disable(ddev->dev);
 }
 
 MODULE_AUTHOR("Philippe Cornu <philippe.cornu@st.com>");

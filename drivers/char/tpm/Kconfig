@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # TPM device configuration
 #
@@ -5,7 +6,7 @@
 menuconfig TCG_TPM
 	tristate "TPM Hardware Support"
 	depends on HAS_IOMEM
-	select SECURITYFS
+	imply SECURITYFS
 	select CRYPTO
 	select CRYPTO_HASH_INFO
 	---help---
@@ -25,6 +26,17 @@ menuconfig TCG_TPM
 	  which is required to validate the PCR 0-7 values.
 
 if TCG_TPM
+
+config HW_RANDOM_TPM
+	bool "TPM HW Random Number Generator support"
+	depends on TCG_TPM && HW_RANDOM && !(TCG_TPM=y && HW_RANDOM=m)
+	default y
+	---help---
+	  This setting exposes the TPM's Random Number Generator as a hwrng
+	  device. This allows the kernel to collect randomness from the TPM at
+	  boot, and provides the TPM randomines in /dev/hwrng.
+
+	  If unsure, say Y.
 
 config TCG_TIS_CORE
 	tristate
@@ -146,13 +158,17 @@ config TCG_CRB
 config TCG_VTPM_PROXY
 	tristate "VTPM Proxy Interface"
 	depends on TCG_TPM
-	select ANON_INODES
 	---help---
 	  This driver proxies for an emulated TPM (vTPM) running in userspace.
 	  A device /dev/vtpmx is provided that creates a device pair
 	  /dev/vtpmX and a server-side file descriptor on which the vTPM
 	  can receive commands.
 
+config TCG_FTPM_TEE
+	tristate "TEE based fTPM Interface"
+	depends on TEE && OPTEE
+	help
+	  This driver proxies for firmware TPM running in TEE.
 
 source "drivers/char/tpm/st33zp24/Kconfig"
 endif # TCG_TPM

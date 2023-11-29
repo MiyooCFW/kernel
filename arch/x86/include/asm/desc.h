@@ -108,7 +108,7 @@ static inline int desc_empty(const void *ptr)
 	return !(desc[0] | desc[1]);
 }
 
-#ifdef CONFIG_PARAVIRT
+#ifdef CONFIG_PARAVIRT_XXL
 #include <asm/paravirt.h>
 #else
 #define load_TR_desc()				native_load_tr_desc()
@@ -134,7 +134,7 @@ static inline void paravirt_alloc_ldt(struct desc_struct *ldt, unsigned entries)
 static inline void paravirt_free_ldt(struct desc_struct *ldt, unsigned entries)
 {
 }
-#endif	/* CONFIG_PARAVIRT */
+#endif	/* CONFIG_PARAVIRT_XXL */
 
 #define store_ldt(ldt) asm("sldt %0" : "=m"(ldt))
 
@@ -389,7 +389,7 @@ static inline void set_desc_limit(struct desc_struct *desc, unsigned long limit)
 void update_intr_gate(unsigned int n, const void *addr);
 void alloc_intr_gate(unsigned int n, const void *addr);
 
-extern unsigned long used_vectors[];
+extern unsigned long system_vectors[];
 
 #ifdef CONFIG_X86_64
 DECLARE_PER_CPU(u32, debug_idt_ctr);

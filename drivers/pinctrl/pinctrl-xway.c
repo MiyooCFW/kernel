@@ -1,10 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/pinctrl/pinmux-xway.c
  *  based on linux/drivers/pinctrl/pinmux-pxa910.c
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2 as
- *  publishhed by the Free Software Foundation.
  *
  *  Copyright (C) 2012 John Crispin <john@phrozen.org>
  *  Copyright (C) 2015 Martin Schiller <mschiller@tdt.de>
@@ -1727,22 +1724,18 @@ static int pinmux_xway_probe(struct platform_device *pdev)
 	xway_chip.ngpio = xway_soc->pin_count;
 
 	/* load our pad descriptors */
-	xway_info.pads = devm_kzalloc(&pdev->dev,
-			sizeof(struct pinctrl_pin_desc) * xway_chip.ngpio,
+	xway_info.pads = devm_kcalloc(&pdev->dev,
+			xway_chip.ngpio, sizeof(struct pinctrl_pin_desc),
 			GFP_KERNEL);
-	if (!xway_info.pads) {
-		dev_err(&pdev->dev, "Failed to allocate pads\n");
+	if (!xway_info.pads)
 		return -ENOMEM;
-	}
-	for (i = 0; i < xway_chip.ngpio; i++) {
-		/* strlen("ioXY") + 1 = 5 */
-		char *name = devm_kzalloc(&pdev->dev, 5, GFP_KERNEL);
 
-		if (!name) {
-			dev_err(&pdev->dev, "Failed to allocate pad name\n");
+	for (i = 0; i < xway_chip.ngpio; i++) {
+		char *name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "io%d", i);
+
+		if (!name)
 			return -ENOMEM;
-		}
-		snprintf(name, 5, "io%d", i);
+
 		xway_info.pads[i].number = GPIO0 + i;
 		xway_info.pads[i].name = name;
 	}

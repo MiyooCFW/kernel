@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	X.25 Packet Layer release 002
  *
@@ -6,12 +7,6 @@
  *	screw up. It might even work.
  *
  *	This code REQUIRES 2.1.15 or higher
- *
- *	This module:
- *		This module is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
  *
  *	History
  *	X.25 001	Jonathan Naylor	Started coding.
@@ -372,9 +367,11 @@ static void __x25_destroy_socket(struct sock *);
 /*
  *	handler for deferred kills.
  */
-static void x25_destroy_timer(unsigned long data)
+static void x25_destroy_timer(struct timer_list *t)
 {
-	x25_destroy_socket_from_timer((struct sock *)data);
+	struct sock *sk = from_timer(sk, t, sk_timer);
+
+	x25_destroy_socket_from_timer(sk);
 }
 
 /*
@@ -412,7 +409,6 @@ static void __x25_destroy_socket(struct sock *sk)
 		/* Defer: outstanding buffers */
 		sk->sk_timer.expires  = jiffies + 10 * HZ;
 		sk->sk_timer.function = x25_destroy_timer;
-		sk->sk_timer.data = (unsigned long)sk;
 		add_timer(&sk->sk_timer);
 	} else {
 		/* drop last reference so sock_put will free */
@@ -917,7 +913,7 @@ out:
 }
 
 static int x25_getname(struct socket *sock, struct sockaddr *uaddr,
-		       int *uaddr_len, int peer)
+		       int peer)
 {
 	struct sockaddr_x25 *sx25 = (struct sockaddr_x25 *)uaddr;
 	struct sock *sk = sock->sk;
@@ -934,7 +930,7 @@ static int x25_getname(struct socket *sock, struct sockaddr *uaddr,
 		sx25->sx25_addr = x25->source_addr;
 
 	sx25->sx25_family = AF_X25;
-	*uaddr_len = sizeof(*sx25);
+	rc = sizeof(*sx25);
 
 out:
 	return rc;
@@ -1410,18 +1406,6 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		break;
 	}
 
-	case SIOCGSTAMP:
-		rc = -EINVAL;
-		if (sk)
-			rc = sock_get_timestamp(sk,
-						(struct timeval __user *)argp);
-		break;
-	case SIOCGSTAMPNS:
-		rc = -EINVAL;
-		if (sk)
-			rc = sock_get_timestampns(sk,
-					(struct timespec __user *)argp);
-		break;
 	case SIOCGIFADDR:
 	case SIOCSIFADDR:
 	case SIOCGIFDSTADDR:
@@ -1693,26 +1677,12 @@ static int compat_x25_ioctl(struct socket *sock, unsigned int cmd,
 				unsigned long arg)
 {
 	void __user *argp = compat_ptr(arg);
-	struct sock *sk = sock->sk;
-
 	int rc = -ENOIOCTLCMD;
 
 	switch(cmd) {
 	case TIOCOUTQ:
 	case TIOCINQ:
 		rc = x25_ioctl(sock, cmd, (unsigned long)argp);
-		break;
-	case SIOCGSTAMP:
-		rc = -EINVAL;
-		if (sk)
-			rc = compat_sock_get_timestamp(sk,
-					(struct timeval __user*)argp);
-		break;
-	case SIOCGSTAMPNS:
-		rc = -EINVAL;
-		if (sk)
-			rc = compat_sock_get_timestampns(sk,
-					(struct timespec __user*)argp);
 		break;
 	case SIOCGIFADDR:
 	case SIOCSIFADDR:
@@ -1777,6 +1747,7 @@ static const struct proto_ops x25_proto_ops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = compat_x25_ioctl,
 #endif
+	.gettstamp =	sock_gettstamp,
 	.listen =	x25_listen,
 	.shutdown =	sock_no_shutdown,
 	.setsockopt =	x25_setsockopt,

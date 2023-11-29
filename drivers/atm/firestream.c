@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /* drivers/atm/firestream.c - FireStream 155 (MB86697) and
  *                            FireStream  50 (MB86695) device driver 
@@ -9,22 +10,6 @@
  */
 
 /*
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-
-  The GNU GPL is contained in /usr/doc/copyright/GPL on a Debian
-  system and in the file COPYING in the Linux kernel source.
 */
 
 
@@ -191,7 +176,7 @@ static char *res_strings[] = {
 	"reserved 37",
 	"reserved 38",
 	"reserved 39",
-	"reseverd 40",
+	"reserved 40",
 	"reserved 41", 
 	"reserved 42", 
 	"reserved 43", 
@@ -1414,7 +1399,7 @@ static int init_q(struct fs_dev *dev, struct queue *txq, int queue,
 
 	func_enter ();
 
-	fs_dprintk (FS_DEBUG_INIT, "Inititing queue at %x: %d entries:\n", 
+	fs_dprintk (FS_DEBUG_INIT, "Initializing queue at %x: %d entries:\n",
 		    queue, nentries);
 
 	p = aligned_kmalloc (sz, GFP_KERNEL, 0x10);
@@ -1447,7 +1432,7 @@ static int init_fp(struct fs_dev *dev, struct freepool *fp, int queue,
 {
 	func_enter ();
 
-	fs_dprintk (FS_DEBUG_INIT, "Inititing free pool at %x:\n", queue);
+	fs_dprintk (FS_DEBUG_INIT, "Initializing free pool at %x:\n", queue);
 
 	write_fs (dev, FP_CNF(queue), (bufsize * RBFP_RBS) | RBFP_RBSVAL | RBFP_CME);
 	write_fs (dev, FP_SA(queue),  0);
@@ -1650,7 +1635,7 @@ static irqreturn_t fs_irq (int irq, void *dev_id)
 	}
 
 	if (status & ISR_TBRQ_W) {
-		fs_dprintk (FS_DEBUG_IRQ, "Data tramsitted!\n");
+		fs_dprintk (FS_DEBUG_IRQ, "Data transmitted!\n");
 		process_txdone_queue (dev, &dev->tx_relq);
 	}
 
@@ -1660,9 +1645,9 @@ static irqreturn_t fs_irq (int irq, void *dev_id)
 
 
 #ifdef FS_POLL_FREQ
-static void fs_poll (unsigned long data)
+static void fs_poll (struct timer_list *t)
 {
-	struct fs_dev *dev = (struct fs_dev *) data;
+	struct fs_dev *dev = from_timer(dev, t, timer);
   
 	fs_irq (0, dev);
 	dev->timer.expires = jiffies + FS_POLL_FREQ;
@@ -1891,9 +1876,7 @@ static int fs_init(struct fs_dev *dev)
 	}
 
 #ifdef FS_POLL_FREQ
-	init_timer (&dev->timer);
-	dev->timer.data = (unsigned long) dev;
-	dev->timer.function = fs_poll;
+	timer_setup(&dev->timer, fs_poll, 0);
 	dev->timer.expires = jiffies + FS_POLL_FREQ;
 	add_timer (&dev->timer);
 #endif

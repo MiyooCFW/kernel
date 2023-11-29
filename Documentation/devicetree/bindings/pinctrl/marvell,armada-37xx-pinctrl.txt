@@ -97,8 +97,8 @@ group spi_quad
  - pins 15-16
  - functions spi, gpio
 
-group uart_2
- - pins 9-10
+group uart2
+ - pins 9-10 and 18-19
  - functions uart, gpio
 
 Available groups and functions for the South bridge:
@@ -127,12 +127,16 @@ group pcie1_clkreq
  - pins 40
  - functions pcie, gpio
 
+group pcie1_wakeup
+ - pins 41
+ - functions pcie, gpio
+
 group smi
  - pins 54-55
  - functions smi, gpio
 
 group ptp
- - pins 56-58
+ - pins 56
  - functions ptp, gpio
 
 group ptp_clk

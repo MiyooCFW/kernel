@@ -54,8 +54,7 @@ scm_version()
 			# If only the short version is requested, don't bother
 			# running further git commands
 			if $short; then
-			#comment next line to make local kernel work with your upstream build
-				#echo "+"
+				echo "+"
 				return
 			fi
 			# If we are past a tagged commit (like
@@ -105,7 +104,7 @@ scm_version()
 	# Check for mercurial and a mercurial repo.
 	if test -d .hg && hgid=`hg id 2>/dev/null`; then
 		# Do we have an tagged version?  If so, latesttagdistance == 1
-		if [ "`hg log -r . --template '{latesttagdistance}'`" == "1" ]; then
+		if [ "`hg log -r . --template '{latesttagdistance}'`" = "1" ]; then
 			id=`hg log -r . --template '{latesttag}'`
 			printf '%s%s' -hg "$id"
 		else
@@ -138,7 +137,7 @@ scm_version()
 
 collect_files()
 {
-	local file res
+	local file res=
 
 	for file; do
 		case "$file" in

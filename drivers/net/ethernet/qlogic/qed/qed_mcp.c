@@ -40,6 +40,7 @@
 #include <linux/string.h>
 #include <linux/etherdevice.h>
 #include "qed.h"
+#include "qed_cxt.h"
 #include "qed_dcbx.h"
 #include "qed_hsi.h"
 #include "qed_hw.h"
@@ -669,6 +670,35 @@ int qed_mcp_cmd(struct qed_hwfn *p_hwfn,
 	return 0;
 }
 
+static int
+qed_mcp_nvm_wr_cmd(struct qed_hwfn *p_hwfn,
+		   struct qed_ptt *p_ptt,
+		   u32 cmd,
+		   u32 param,
+		   u32 *o_mcp_resp,
+		   u32 *o_mcp_param, u32 i_txn_size, u32 *i_buf)
+{
+	struct qed_mcp_mb_params mb_params;
+	int rc;
+
+	memset(&mb_params, 0, sizeof(mb_params));
+	mb_params.cmd = cmd;
+	mb_params.param = param;
+	mb_params.p_data_src = i_buf;
+	mb_params.data_src_size = (u8)i_txn_size;
+	rc = qed_mcp_cmd_and_union(p_hwfn, p_ptt, &mb_params);
+	if (rc)
+		return rc;
+
+	*o_mcp_resp = mb_params.mcp_resp;
+	*o_mcp_param = mb_params.mcp_param;
+
+	/* nvm_info needs to be updated */
+	p_hwfn->nvm_info.valid = false;
+
+	return 0;
+}
+
 int qed_mcp_nvm_rd_cmd(struct qed_hwfn *p_hwfn,
 		       struct qed_ptt *p_ptt,
 		       u32 cmd,
@@ -1051,6 +1081,27 @@ int qed_mcp_load_req(struct qed_hwfn *p_hwfn,
 	return 0;
 }
 
+int qed_mcp_load_done(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	u32 resp = 0, param = 0;
+	int rc;
+
+	rc = qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_LOAD_DONE, 0, &resp,
+			 &param);
+	if (rc) {
+		DP_NOTICE(p_hwfn,
+			  "Failed to send a LOAD_DONE command, rc = %d\n", rc);
+		return rc;
+	}
+
+	/* Check if there is a DID mismatch between nvm-cfg/efuse */
+	if (param & FW_MB_PARAM_LOAD_DONE_DID_EFUSE_ERROR)
+		DP_NOTICE(p_hwfn,
+			  "warning: device configuration is not supported on this board type. The device may not function as expected.\n");
+
+	return 0;
+}
+
 int qed_mcp_unload_req(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 {
 	struct qed_mcp_mb_params mb_params;
@@ -1228,6 +1279,52 @@ static void qed_mcp_read_eee_config(struct qed_hwfn *p_hwfn,
 		p_link->eee_lp_adv_caps |= QED_EEE_10G_ADV;
 }
 
+static u32 qed_mcp_get_shmem_func(struct qed_hwfn *p_hwfn,
+				  struct qed_ptt *p_ptt,
+				  struct public_func *p_data, int pfid)
+{
+	u32 addr = SECTION_OFFSIZE_ADDR(p_hwfn->mcp_info->public_base,
+					PUBLIC_FUNC);
+	u32 mfw_path_offsize = qed_rd(p_hwfn, p_ptt, addr);
+	u32 func_addr;
+	u32 i, size;
+
+	func_addr = SECTION_ADDR(mfw_path_offsize, pfid);
+	memset(p_data, 0, sizeof(*p_data));
+
+	size = min_t(u32, sizeof(*p_data), QED_SECTION_SIZE(mfw_path_offsize));
+	for (i = 0; i < size / sizeof(u32); i++)
+		((u32 *)p_data)[i] = qed_rd(p_hwfn, p_ptt,
+					    func_addr + (i << 2));
+	return size;
+}
+
+static void qed_read_pf_bandwidth(struct qed_hwfn *p_hwfn,
+				  struct public_func *p_shmem_info)
+{
+	struct qed_mcp_function_info *p_info;
+
+	p_info = &p_hwfn->mcp_info->func_info;
+
+	p_info->bandwidth_min = QED_MFW_GET_FIELD(p_shmem_info->config,
+						  FUNC_MF_CFG_MIN_BW);
+	if (p_info->bandwidth_min < 1 || p_info->bandwidth_min > 100) {
+		DP_INFO(p_hwfn,
+			"bandwidth minimum out of bounds [%02x]. Set to 1\n",
+			p_info->bandwidth_min);
+		p_info->bandwidth_min = 1;
+	}
+
+	p_info->bandwidth_max = QED_MFW_GET_FIELD(p_shmem_info->config,
+						  FUNC_MF_CFG_MAX_BW);
+	if (p_info->bandwidth_max < 1 || p_info->bandwidth_max > 100) {
+		DP_INFO(p_hwfn,
+			"bandwidth maximum out of bounds [%02x]. Set to 100\n",
+			p_info->bandwidth_max);
+		p_info->bandwidth_max = 100;
+	}
+}
+
 static void qed_mcp_handle_link_change(struct qed_hwfn *p_hwfn,
 				       struct qed_ptt *p_ptt, bool b_reset)
 {
@@ -1255,10 +1352,29 @@ static void qed_mcp_handle_link_change(struct qed_hwfn *p_hwfn,
 		goto out;
 	}
 
-	if (p_hwfn->b_drv_link_init)
-		p_link->link_up = !!(status & LINK_STATUS_LINK_UP);
-	else
+	if (p_hwfn->b_drv_link_init) {
+		/* Link indication with modern MFW arrives as per-PF
+		 * indication.
+		 */
+		if (p_hwfn->mcp_info->capabilities &
+		    FW_MB_PARAM_FEATURE_SUPPORT_VLINK) {
+			struct public_func shmem_info;
+
+			qed_mcp_get_shmem_func(p_hwfn, p_ptt, &shmem_info,
+					       MCP_PF_ID(p_hwfn));
+			p_link->link_up = !!(shmem_info.status &
+					     FUNC_STATUS_VIRTUAL_LINK_UP);
+			qed_read_pf_bandwidth(p_hwfn, &shmem_info);
+			DP_VERBOSE(p_hwfn, NETIF_MSG_LINK,
+				   "Virtual link_up = %d\n", p_link->link_up);
+		} else {
+			p_link->link_up = !!(status & LINK_STATUS_LINK_UP);
+			DP_VERBOSE(p_hwfn, NETIF_MSG_LINK,
+				   "Physical link_up = %d\n", p_link->link_up);
+		}
+	} else {
 		p_link->link_up = false;
+	}
 
 	p_link->full_duplex = true;
 	switch ((status & LINK_STATUS_SPEED_AND_DUPLEX_MASK)) {
@@ -1444,6 +1560,60 @@ int qed_mcp_set_link(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt, bool b_up)
 	return 0;
 }
 
+u32 qed_get_process_kill_counter(struct qed_hwfn *p_hwfn,
+				 struct qed_ptt *p_ptt)
+{
+	u32 path_offsize_addr, path_offsize, path_addr, proc_kill_cnt;
+
+	if (IS_VF(p_hwfn->cdev))
+		return -EINVAL;
+
+	path_offsize_addr = SECTION_OFFSIZE_ADDR(p_hwfn->mcp_info->public_base,
+						 PUBLIC_PATH);
+	path_offsize = qed_rd(p_hwfn, p_ptt, path_offsize_addr);
+	path_addr = SECTION_ADDR(path_offsize, QED_PATH_ID(p_hwfn));
+
+	proc_kill_cnt = qed_rd(p_hwfn, p_ptt,
+			       path_addr +
+			       offsetof(struct public_path, process_kill)) &
+			PROCESS_KILL_COUNTER_MASK;
+
+	return proc_kill_cnt;
+}
+
+static void qed_mcp_handle_process_kill(struct qed_hwfn *p_hwfn,
+					struct qed_ptt *p_ptt)
+{
+	struct qed_dev *cdev = p_hwfn->cdev;
+	u32 proc_kill_cnt;
+
+	/* Prevent possible attentions/interrupts during the recovery handling
+	 * and till its load phase, during which they will be re-enabled.
+	 */
+	qed_int_igu_disable_int(p_hwfn, p_ptt);
+
+	DP_NOTICE(p_hwfn, "Received a process kill indication\n");
+
+	/* The following operations should be done once, and thus in CMT mode
+	 * are carried out by only the first HW function.
+	 */
+	if (p_hwfn != QED_LEADING_HWFN(cdev))
+		return;
+
+	if (cdev->recov_in_prog) {
+		DP_NOTICE(p_hwfn,
+			  "Ignoring the indication since a recovery process is already in progress\n");
+		return;
+	}
+
+	cdev->recov_in_prog = true;
+
+	proc_kill_cnt = qed_get_process_kill_counter(p_hwfn, p_ptt);
+	DP_NOTICE(p_hwfn, "Process kill counter: %d\n", proc_kill_cnt);
+
+	qed_schedule_recovery_handler(p_hwfn);
+}
+
 static void qed_mcp_send_protocol_stats(struct qed_hwfn *p_hwfn,
 					struct qed_ptt *p_ptt,
 					enum MFW_DRV_MSG_TYPE type)
@@ -1485,53 +1655,6 @@ static void qed_mcp_send_protocol_stats(struct qed_hwfn *p_hwfn,
 	qed_mcp_cmd_and_union(p_hwfn, p_ptt, &mb_params);
 }
 
-static void qed_read_pf_bandwidth(struct qed_hwfn *p_hwfn,
-				  struct public_func *p_shmem_info)
-{
-	struct qed_mcp_function_info *p_info;
-
-	p_info = &p_hwfn->mcp_info->func_info;
-
-	p_info->bandwidth_min = (p_shmem_info->config &
-				 FUNC_MF_CFG_MIN_BW_MASK) >>
-					FUNC_MF_CFG_MIN_BW_SHIFT;
-	if (p_info->bandwidth_min < 1 || p_info->bandwidth_min > 100) {
-		DP_INFO(p_hwfn,
-			"bandwidth minimum out of bounds [%02x]. Set to 1\n",
-			p_info->bandwidth_min);
-		p_info->bandwidth_min = 1;
-	}
-
-	p_info->bandwidth_max = (p_shmem_info->config &
-				 FUNC_MF_CFG_MAX_BW_MASK) >>
-					FUNC_MF_CFG_MAX_BW_SHIFT;
-	if (p_info->bandwidth_max < 1 || p_info->bandwidth_max > 100) {
-		DP_INFO(p_hwfn,
-			"bandwidth maximum out of bounds [%02x]. Set to 100\n",
-			p_info->bandwidth_max);
-		p_info->bandwidth_max = 100;
-	}
-}
-
-static u32 qed_mcp_get_shmem_func(struct qed_hwfn *p_hwfn,
-				  struct qed_ptt *p_ptt,
-				  struct public_func *p_data, int pfid)
-{
-	u32 addr = SECTION_OFFSIZE_ADDR(p_hwfn->mcp_info->public_base,
-					PUBLIC_FUNC);
-	u32 mfw_path_offsize = qed_rd(p_hwfn, p_ptt, addr);
-	u32 func_addr = SECTION_ADDR(mfw_path_offsize, pfid);
-	u32 i, size;
-
-	memset(p_data, 0, sizeof(*p_data));
-
-	size = min_t(u32, sizeof(*p_data), QED_SECTION_SIZE(mfw_path_offsize));
-	for (i = 0; i < size / sizeof(u32); i++)
-		((u32 *)p_data)[i] = qed_rd(p_hwfn, p_ptt,
-					    func_addr + (i << 2));
-	return size;
-}
-
 static void qed_mcp_update_bw(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 {
 	struct qed_mcp_function_info *p_info;
@@ -1562,16 +1685,114 @@ static void qed_mcp_update_stag(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 	p_hwfn->mcp_info->func_info.ovlan = (u16)shmem_info.ovlan_stag &
 						 FUNC_MF_CFG_OV_STAG_MASK;
 	p_hwfn->hw_info.ovlan = p_hwfn->mcp_info->func_info.ovlan;
-	if ((p_hwfn->hw_info.hw_mode & BIT(MODE_MF_SD)) &&
-	    (p_hwfn->hw_info.ovlan != QED_MCP_VLAN_UNSET)) {
-		qed_wr(p_hwfn, p_ptt,
-		       NIG_REG_LLH_FUNC_TAG_VALUE, p_hwfn->hw_info.ovlan);
+	if (test_bit(QED_MF_OVLAN_CLSS, &p_hwfn->cdev->mf_bits)) {
+		if (p_hwfn->hw_info.ovlan != QED_MCP_VLAN_UNSET) {
+			qed_wr(p_hwfn, p_ptt, NIG_REG_LLH_FUNC_TAG_VALUE,
+			       p_hwfn->hw_info.ovlan);
+			qed_wr(p_hwfn, p_ptt, NIG_REG_LLH_FUNC_TAG_EN, 1);
+
+			/* Configure DB to add external vlan to EDPM packets */
+			qed_wr(p_hwfn, p_ptt, DORQ_REG_TAG1_OVRD_MODE, 1);
+			qed_wr(p_hwfn, p_ptt, DORQ_REG_PF_EXT_VID_BB_K2,
+			       p_hwfn->hw_info.ovlan);
+		} else {
+			qed_wr(p_hwfn, p_ptt, NIG_REG_LLH_FUNC_TAG_EN, 0);
+			qed_wr(p_hwfn, p_ptt, NIG_REG_LLH_FUNC_TAG_VALUE, 0);
+			qed_wr(p_hwfn, p_ptt, DORQ_REG_TAG1_OVRD_MODE, 0);
+			qed_wr(p_hwfn, p_ptt, DORQ_REG_PF_EXT_VID_BB_K2, 0);
+		}
+
 		qed_sp_pf_update_stag(p_hwfn);
 	}
+
+	DP_VERBOSE(p_hwfn, QED_MSG_SP, "ovlan = %d hw_mode = 0x%x\n",
+		   p_hwfn->mcp_info->func_info.ovlan, p_hwfn->hw_info.hw_mode);
 
 	/* Acknowledge the MFW */
 	qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_S_TAG_UPDATE_ACK, 0,
 		    &resp, &param);
+}
+
+void qed_mcp_read_ufp_config(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct public_func shmem_info;
+	u32 port_cfg, val;
+
+	if (!test_bit(QED_MF_UFP_SPECIFIC, &p_hwfn->cdev->mf_bits))
+		return;
+
+	memset(&p_hwfn->ufp_info, 0, sizeof(p_hwfn->ufp_info));
+	port_cfg = qed_rd(p_hwfn, p_ptt, p_hwfn->mcp_info->port_addr +
+			  offsetof(struct public_port, oem_cfg_port));
+	val = (port_cfg & OEM_CFG_CHANNEL_TYPE_MASK) >>
+		OEM_CFG_CHANNEL_TYPE_OFFSET;
+	if (val != OEM_CFG_CHANNEL_TYPE_STAGGED)
+		DP_NOTICE(p_hwfn,
+			  "Incorrect UFP Channel type  %d port_id 0x%02x\n",
+			  val, MFW_PORT(p_hwfn));
+
+	val = (port_cfg & OEM_CFG_SCHED_TYPE_MASK) >> OEM_CFG_SCHED_TYPE_OFFSET;
+	if (val == OEM_CFG_SCHED_TYPE_ETS) {
+		p_hwfn->ufp_info.mode = QED_UFP_MODE_ETS;
+	} else if (val == OEM_CFG_SCHED_TYPE_VNIC_BW) {
+		p_hwfn->ufp_info.mode = QED_UFP_MODE_VNIC_BW;
+	} else {
+		p_hwfn->ufp_info.mode = QED_UFP_MODE_UNKNOWN;
+		DP_NOTICE(p_hwfn,
+			  "Unknown UFP scheduling mode %d port_id 0x%02x\n",
+			  val, MFW_PORT(p_hwfn));
+	}
+
+	qed_mcp_get_shmem_func(p_hwfn, p_ptt, &shmem_info, MCP_PF_ID(p_hwfn));
+	val = (shmem_info.oem_cfg_func & OEM_CFG_FUNC_TC_MASK) >>
+		OEM_CFG_FUNC_TC_OFFSET;
+	p_hwfn->ufp_info.tc = (u8)val;
+	val = (shmem_info.oem_cfg_func & OEM_CFG_FUNC_HOST_PRI_CTRL_MASK) >>
+		OEM_CFG_FUNC_HOST_PRI_CTRL_OFFSET;
+	if (val == OEM_CFG_FUNC_HOST_PRI_CTRL_VNIC) {
+		p_hwfn->ufp_info.pri_type = QED_UFP_PRI_VNIC;
+	} else if (val == OEM_CFG_FUNC_HOST_PRI_CTRL_OS) {
+		p_hwfn->ufp_info.pri_type = QED_UFP_PRI_OS;
+	} else {
+		p_hwfn->ufp_info.pri_type = QED_UFP_PRI_UNKNOWN;
+		DP_NOTICE(p_hwfn,
+			  "Unknown Host priority control %d port_id 0x%02x\n",
+			  val, MFW_PORT(p_hwfn));
+	}
+
+	DP_NOTICE(p_hwfn,
+		  "UFP shmem config: mode = %d tc = %d pri_type = %d port_id 0x%02x\n",
+		  p_hwfn->ufp_info.mode, p_hwfn->ufp_info.tc,
+		  p_hwfn->ufp_info.pri_type, MFW_PORT(p_hwfn));
+}
+
+static int
+qed_mcp_handle_ufp_event(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	qed_mcp_read_ufp_config(p_hwfn, p_ptt);
+
+	if (p_hwfn->ufp_info.mode == QED_UFP_MODE_VNIC_BW) {
+		p_hwfn->qm_info.ooo_tc = p_hwfn->ufp_info.tc;
+		qed_hw_info_set_offload_tc(&p_hwfn->hw_info,
+					   p_hwfn->ufp_info.tc);
+
+		qed_qm_reconf(p_hwfn, p_ptt);
+	} else if (p_hwfn->ufp_info.mode == QED_UFP_MODE_ETS) {
+		/* Merge UFP TC with the dcbx TC data */
+		qed_dcbx_mib_update_event(p_hwfn, p_ptt,
+					  QED_DCBX_OPERATIONAL_MIB);
+	} else {
+		DP_ERR(p_hwfn, "Invalid sched type, discard the UFP config\n");
+		return -EINVAL;
+	}
+
+	/* update storm FW with negotiation results */
+	qed_sp_pf_update_ufp(p_hwfn);
+
+	/* update stag pcp value */
+	qed_sp_pf_update_stag(p_hwfn);
+
+	return 0;
 }
 
 int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
@@ -1617,8 +1838,14 @@ int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 			qed_dcbx_mib_update_event(p_hwfn, p_ptt,
 						  QED_DCBX_OPERATIONAL_MIB);
 			break;
+		case MFW_DRV_MSG_OEM_CFG_UPDATE:
+			qed_mcp_handle_ufp_event(p_hwfn, p_ptt);
+			break;
 		case MFW_DRV_MSG_TRANSCEIVER_STATE_CHANGE:
 			qed_mcp_handle_transceiver_change(p_hwfn, p_ptt);
+			break;
+		case MFW_DRV_MSG_ERROR_RECOVERY:
+			qed_mcp_handle_process_kill(p_hwfn, p_ptt);
 			break;
 		case MFW_DRV_MSG_GET_LAN_STATS:
 		case MFW_DRV_MSG_GET_FCOE_STATS:
@@ -1632,6 +1859,8 @@ int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 		case MFW_DRV_MSG_S_TAG_UPDATE:
 			qed_mcp_update_stag(p_hwfn, p_ptt);
 			break;
+		case MFW_DRV_MSG_GET_TLV_REQ:
+			qed_mfw_tlv_req(p_hwfn);
 			break;
 		default:
 			DP_INFO(p_hwfn, "Unimplemented MFW message %d\n", i);
@@ -1736,6 +1965,8 @@ int qed_mcp_get_mbi_ver(struct qed_hwfn *p_hwfn,
 int qed_mcp_get_media_type(struct qed_hwfn *p_hwfn,
 			   struct qed_ptt *p_ptt, u32 *p_media_type)
 {
+	*p_media_type = MEDIA_UNSPECIFIED;
+
 	if (IS_VF(p_hwfn->cdev))
 		return -EINVAL;
 
@@ -1753,6 +1984,189 @@ int qed_mcp_get_media_type(struct qed_hwfn *p_hwfn,
 			       p_hwfn->mcp_info->port_addr +
 			       offsetof(struct public_port,
 					media_type));
+
+	return 0;
+}
+
+int qed_mcp_get_transceiver_data(struct qed_hwfn *p_hwfn,
+				 struct qed_ptt *p_ptt,
+				 u32 *p_transceiver_state,
+				 u32 *p_transceiver_type)
+{
+	u32 transceiver_info;
+
+	*p_transceiver_type = ETH_TRANSCEIVER_TYPE_NONE;
+	*p_transceiver_state = ETH_TRANSCEIVER_STATE_UPDATING;
+
+	if (IS_VF(p_hwfn->cdev))
+		return -EINVAL;
+
+	if (!qed_mcp_is_init(p_hwfn)) {
+		DP_NOTICE(p_hwfn, "MFW is not initialized!\n");
+		return -EBUSY;
+	}
+
+	transceiver_info = qed_rd(p_hwfn, p_ptt,
+				  p_hwfn->mcp_info->port_addr +
+				  offsetof(struct public_port,
+					   transceiver_data));
+
+	*p_transceiver_state = (transceiver_info &
+				ETH_TRANSCEIVER_STATE_MASK) >>
+				ETH_TRANSCEIVER_STATE_OFFSET;
+
+	if (*p_transceiver_state == ETH_TRANSCEIVER_STATE_PRESENT)
+		*p_transceiver_type = (transceiver_info &
+				       ETH_TRANSCEIVER_TYPE_MASK) >>
+				       ETH_TRANSCEIVER_TYPE_OFFSET;
+	else
+		*p_transceiver_type = ETH_TRANSCEIVER_TYPE_UNKNOWN;
+
+	return 0;
+}
+static bool qed_is_transceiver_ready(u32 transceiver_state,
+				     u32 transceiver_type)
+{
+	if ((transceiver_state & ETH_TRANSCEIVER_STATE_PRESENT) &&
+	    ((transceiver_state & ETH_TRANSCEIVER_STATE_UPDATING) == 0x0) &&
+	    (transceiver_type != ETH_TRANSCEIVER_TYPE_NONE))
+		return true;
+
+	return false;
+}
+
+int qed_mcp_trans_speed_mask(struct qed_hwfn *p_hwfn,
+			     struct qed_ptt *p_ptt, u32 *p_speed_mask)
+{
+	u32 transceiver_type, transceiver_state;
+	int ret;
+
+	ret = qed_mcp_get_transceiver_data(p_hwfn, p_ptt, &transceiver_state,
+					   &transceiver_type);
+	if (ret)
+		return ret;
+
+	if (qed_is_transceiver_ready(transceiver_state, transceiver_type) ==
+				     false)
+		return -EINVAL;
+
+	switch (transceiver_type) {
+	case ETH_TRANSCEIVER_TYPE_1G_LX:
+	case ETH_TRANSCEIVER_TYPE_1G_SX:
+	case ETH_TRANSCEIVER_TYPE_1G_PCC:
+	case ETH_TRANSCEIVER_TYPE_1G_ACC:
+	case ETH_TRANSCEIVER_TYPE_1000BASET:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_1G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_10G_SR:
+	case ETH_TRANSCEIVER_TYPE_10G_LR:
+	case ETH_TRANSCEIVER_TYPE_10G_LRM:
+	case ETH_TRANSCEIVER_TYPE_10G_ER:
+	case ETH_TRANSCEIVER_TYPE_10G_PCC:
+	case ETH_TRANSCEIVER_TYPE_10G_ACC:
+	case ETH_TRANSCEIVER_TYPE_4x10G:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_40G_LR4:
+	case ETH_TRANSCEIVER_TYPE_40G_SR4:
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_10G_40G_SR:
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_10G_40G_LR:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_40G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_100G_AOC:
+	case ETH_TRANSCEIVER_TYPE_100G_SR4:
+	case ETH_TRANSCEIVER_TYPE_100G_LR4:
+	case ETH_TRANSCEIVER_TYPE_100G_ER4:
+	case ETH_TRANSCEIVER_TYPE_100G_ACC:
+		*p_speed_mask =
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_BB_100G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_25G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_25G_SR:
+	case ETH_TRANSCEIVER_TYPE_25G_LR:
+	case ETH_TRANSCEIVER_TYPE_25G_AOC:
+	case ETH_TRANSCEIVER_TYPE_25G_ACC_S:
+	case ETH_TRANSCEIVER_TYPE_25G_ACC_M:
+	case ETH_TRANSCEIVER_TYPE_25G_ACC_L:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_25G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_25G_CA_N:
+	case ETH_TRANSCEIVER_TYPE_25G_CA_S:
+	case ETH_TRANSCEIVER_TYPE_25G_CA_L:
+	case ETH_TRANSCEIVER_TYPE_4x25G_CR:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_25G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_1G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_40G_CR4:
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_10G_40G_CR:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_40G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_1G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_100G_CR4:
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_40G_100G_CR:
+		*p_speed_mask =
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_BB_100G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_50G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_40G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_25G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_20G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_1G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_40G_100G_SR:
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_40G_100G_LR:
+	case ETH_TRANSCEIVER_TYPE_MULTI_RATE_40G_100G_AOC:
+		*p_speed_mask =
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_BB_100G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_40G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_25G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_XLPPI:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_40G;
+		break;
+	case ETH_TRANSCEIVER_TYPE_10G_BASET:
+		*p_speed_mask = NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_10G |
+		    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_1G;
+		break;
+	default:
+		DP_INFO(p_hwfn, "Unknown transceiver type 0x%x\n",
+			transceiver_type);
+		*p_speed_mask = 0xff;
+		break;
+	}
+
+	return 0;
+}
+
+int qed_mcp_get_board_config(struct qed_hwfn *p_hwfn,
+			     struct qed_ptt *p_ptt, u32 *p_board_config)
+{
+	u32 nvm_cfg_addr, nvm_cfg1_offset, port_cfg_addr;
+
+	if (IS_VF(p_hwfn->cdev))
+		return -EINVAL;
+
+	if (!qed_mcp_is_init(p_hwfn)) {
+		DP_NOTICE(p_hwfn, "MFW is not initialized!\n");
+		return -EBUSY;
+	}
+	if (!p_ptt) {
+		*p_board_config = NVM_CFG1_PORT_PORT_TYPE_UNDEFINED;
+		return -EINVAL;
+	}
+
+	nvm_cfg_addr = qed_rd(p_hwfn, p_ptt, MISC_REG_GEN_PURP_CR0);
+	nvm_cfg1_offset = qed_rd(p_hwfn, p_ptt, nvm_cfg_addr + 4);
+	port_cfg_addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
+			offsetof(struct nvm_cfg1, port[MFW_PORT(p_hwfn)]);
+	*p_board_config = qed_rd(p_hwfn, p_ptt,
+				 port_cfg_addr +
+				 offsetof(struct nvm_cfg1_port,
+					  board_cfg));
 
 	return 0;
 }
@@ -1801,12 +2215,12 @@ qed_mcp_get_shmem_proto_mfw(struct qed_hwfn *p_hwfn,
 	case FW_MB_PARAM_GET_PF_RDMA_ROCE:
 		*p_proto = QED_PCI_ETH_ROCE;
 		break;
-	case FW_MB_PARAM_GET_PF_RDMA_BOTH:
-		DP_NOTICE(p_hwfn,
-			  "Current day drivers don't support RoCE & iWARP. Default to RoCE-only\n");
-		*p_proto = QED_PCI_ETH_ROCE;
-		break;
 	case FW_MB_PARAM_GET_PF_RDMA_IWARP:
+		*p_proto = QED_PCI_ETH_IWARP;
+		break;
+	case FW_MB_PARAM_GET_PF_RDMA_BOTH:
+		*p_proto = QED_PCI_ETH_RDMA;
+		break;
 	default:
 		DP_NOTICE(p_hwfn,
 			  "MFW answers GET_PF_RDMA_PROTOCOL but param is %08x\n",
@@ -1976,6 +2390,43 @@ int qed_mcp_get_flash_size(struct qed_hwfn *p_hwfn,
 	*p_flash_size = flash_size;
 
 	return 0;
+}
+
+int qed_start_recovery_process(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct qed_dev *cdev = p_hwfn->cdev;
+
+	if (cdev->recov_in_prog) {
+		DP_NOTICE(p_hwfn,
+			  "Avoid triggering a recovery since such a process is already in progress\n");
+		return -EAGAIN;
+	}
+
+	DP_NOTICE(p_hwfn, "Triggering a recovery process\n");
+	qed_wr(p_hwfn, p_ptt, MISC_REG_AEU_GENERAL_ATTN_35, 0x1);
+
+	return 0;
+}
+
+#define QED_RECOVERY_PROLOG_SLEEP_MS    100
+
+int qed_recovery_prolog(struct qed_dev *cdev)
+{
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *p_ptt = p_hwfn->p_main_ptt;
+	int rc;
+
+	/* Allow ongoing PCIe transactions to complete */
+	msleep(QED_RECOVERY_PROLOG_SLEEP_MS);
+
+	/* Clear the PF's internal FID_enable in the PXP */
+	rc = qed_pglueb_set_pfid_enable(p_hwfn, p_ptt, false);
+	if (rc)
+		DP_NOTICE(p_hwfn,
+			  "qed_pglueb_set_pfid_enable() failed. rc = %d.\n",
+			  rc);
+
+	return rc;
 }
 
 static int
@@ -2378,7 +2829,7 @@ int qed_mcp_nvm_read(struct qed_dev *cdev, u32 addr, u8 *p_buf, u32 len)
 					DRV_MSG_CODE_NVM_READ_NVRAM,
 					addr + offset +
 					(bytes_to_copy <<
-					 DRV_MB_PARAM_NVM_LEN_SHIFT),
+					 DRV_MB_PARAM_NVM_LEN_OFFSET),
 					&resp, &resp_param,
 					&read_len,
 					(u32 *)(p_buf + offset));
@@ -2403,6 +2854,152 @@ int qed_mcp_nvm_read(struct qed_dev *cdev, u32 addr, u8 *p_buf, u32 len)
 	qed_ptt_release(p_hwfn, p_ptt);
 
 	return rc;
+}
+
+int qed_mcp_nvm_resp(struct qed_dev *cdev, u8 *p_buf)
+{
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *p_ptt;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt)
+		return -EBUSY;
+
+	memcpy(p_buf, &cdev->mcp_nvm_resp, sizeof(cdev->mcp_nvm_resp));
+	qed_ptt_release(p_hwfn, p_ptt);
+
+	return 0;
+}
+
+int qed_mcp_nvm_write(struct qed_dev *cdev,
+		      u32 cmd, u32 addr, u8 *p_buf, u32 len)
+{
+	u32 buf_idx = 0, buf_size, nvm_cmd, nvm_offset, resp = 0, param;
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *p_ptt;
+	int rc = -EINVAL;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt)
+		return -EBUSY;
+
+	switch (cmd) {
+	case QED_PUT_FILE_BEGIN:
+		nvm_cmd = DRV_MSG_CODE_NVM_PUT_FILE_BEGIN;
+		break;
+	case QED_PUT_FILE_DATA:
+		nvm_cmd = DRV_MSG_CODE_NVM_PUT_FILE_DATA;
+		break;
+	case QED_NVM_WRITE_NVRAM:
+		nvm_cmd = DRV_MSG_CODE_NVM_WRITE_NVRAM;
+		break;
+	default:
+		DP_NOTICE(p_hwfn, "Invalid nvm write command 0x%x\n", cmd);
+		rc = -EINVAL;
+		goto out;
+	}
+
+	buf_size = min_t(u32, (len - buf_idx), MCP_DRV_NVM_BUF_LEN);
+	while (buf_idx < len) {
+		if (cmd == QED_PUT_FILE_BEGIN)
+			nvm_offset = addr;
+		else
+			nvm_offset = ((buf_size <<
+				       DRV_MB_PARAM_NVM_LEN_OFFSET) | addr) +
+				       buf_idx;
+		rc = qed_mcp_nvm_wr_cmd(p_hwfn, p_ptt, nvm_cmd, nvm_offset,
+					&resp, &param, buf_size,
+					(u32 *)&p_buf[buf_idx]);
+		if (rc) {
+			DP_NOTICE(cdev, "nvm write failed, rc = %d\n", rc);
+			resp = FW_MSG_CODE_ERROR;
+			break;
+		}
+
+		if (resp != FW_MSG_CODE_OK &&
+		    resp != FW_MSG_CODE_NVM_OK &&
+		    resp != FW_MSG_CODE_NVM_PUT_FILE_FINISH_OK) {
+			DP_NOTICE(cdev,
+				  "nvm write failed, resp = 0x%08x\n", resp);
+			rc = -EINVAL;
+			break;
+		}
+
+		/* This can be a lengthy process, and it's possible scheduler
+		 * isn't pre-emptable. Sleep a bit to prevent CPU hogging.
+		 */
+		if (buf_idx % 0x1000 > (buf_idx + buf_size) % 0x1000)
+			usleep_range(1000, 2000);
+
+		/* For MBI upgrade, MFW response includes the next buffer offset
+		 * to be delivered to MFW.
+		 */
+		if (param && cmd == QED_PUT_FILE_DATA) {
+			buf_idx = QED_MFW_GET_FIELD(param,
+					FW_MB_PARAM_NVM_PUT_FILE_REQ_OFFSET);
+			buf_size = QED_MFW_GET_FIELD(param,
+					 FW_MB_PARAM_NVM_PUT_FILE_REQ_SIZE);
+		} else {
+			buf_idx += buf_size;
+			buf_size = min_t(u32, (len - buf_idx),
+					 MCP_DRV_NVM_BUF_LEN);
+		}
+	}
+
+	cdev->mcp_nvm_resp = resp;
+out:
+	qed_ptt_release(p_hwfn, p_ptt);
+
+	return rc;
+}
+
+int qed_mcp_phy_sfp_read(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
+			 u32 port, u32 addr, u32 offset, u32 len, u8 *p_buf)
+{
+	u32 bytes_left, bytes_to_copy, buf_size, nvm_offset = 0;
+	u32 resp, param;
+	int rc;
+
+	nvm_offset |= (port << DRV_MB_PARAM_TRANSCEIVER_PORT_OFFSET) &
+		       DRV_MB_PARAM_TRANSCEIVER_PORT_MASK;
+	nvm_offset |= (addr << DRV_MB_PARAM_TRANSCEIVER_I2C_ADDRESS_OFFSET) &
+		       DRV_MB_PARAM_TRANSCEIVER_I2C_ADDRESS_MASK;
+
+	addr = offset;
+	offset = 0;
+	bytes_left = len;
+	while (bytes_left > 0) {
+		bytes_to_copy = min_t(u32, bytes_left,
+				      MAX_I2C_TRANSACTION_SIZE);
+		nvm_offset &= (DRV_MB_PARAM_TRANSCEIVER_I2C_ADDRESS_MASK |
+			       DRV_MB_PARAM_TRANSCEIVER_PORT_MASK);
+		nvm_offset |= ((addr + offset) <<
+			       DRV_MB_PARAM_TRANSCEIVER_OFFSET_OFFSET) &
+			       DRV_MB_PARAM_TRANSCEIVER_OFFSET_MASK;
+		nvm_offset |= (bytes_to_copy <<
+			       DRV_MB_PARAM_TRANSCEIVER_SIZE_OFFSET) &
+			       DRV_MB_PARAM_TRANSCEIVER_SIZE_MASK;
+		rc = qed_mcp_nvm_rd_cmd(p_hwfn, p_ptt,
+					DRV_MSG_CODE_TRANSCEIVER_READ,
+					nvm_offset, &resp, &param, &buf_size,
+					(u32 *)(p_buf + offset));
+		if (rc) {
+			DP_NOTICE(p_hwfn,
+				  "Failed to send a transceiver read command to the MFW. rc = %d.\n",
+				  rc);
+			return rc;
+		}
+
+		if (resp == FW_MSG_CODE_TRANSCEIVER_NOT_PRESENT)
+			return -ENODEV;
+		else if (resp != FW_MSG_CODE_TRANSCEIVER_DIAG_OK)
+			return -EINVAL;
+
+		offset += buf_size;
+		bytes_left -= buf_size;
+	}
+
+	return 0;
 }
 
 int qed_mcp_bist_register_test(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
@@ -2447,9 +3044,9 @@ int qed_mcp_bist_clock_test(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 	return rc;
 }
 
-int qed_mcp_bist_nvm_test_get_num_images(struct qed_hwfn *p_hwfn,
-					 struct qed_ptt *p_ptt,
-					 u32 *num_images)
+int qed_mcp_bist_nvm_get_num_images(struct qed_hwfn *p_hwfn,
+				    struct qed_ptt *p_ptt,
+				    u32 *num_images)
 {
 	u32 drv_mb_param = 0, rsp;
 	int rc = 0;
@@ -2468,10 +3065,10 @@ int qed_mcp_bist_nvm_test_get_num_images(struct qed_hwfn *p_hwfn,
 	return rc;
 }
 
-int qed_mcp_bist_nvm_test_get_image_att(struct qed_hwfn *p_hwfn,
-					struct qed_ptt *p_ptt,
-					struct bist_nvm_image_att *p_image_att,
-					u32 image_index)
+int qed_mcp_bist_nvm_get_image_att(struct qed_hwfn *p_hwfn,
+				   struct qed_ptt *p_ptt,
+				   struct bist_nvm_image_att *p_image_att,
+				   u32 image_index)
 {
 	u32 buf_size = 0, param, resp = 0, resp_param = 0;
 	int rc;
@@ -2495,16 +3092,89 @@ int qed_mcp_bist_nvm_test_get_image_att(struct qed_hwfn *p_hwfn,
 	return rc;
 }
 
-static int
+int qed_mcp_nvm_info_populate(struct qed_hwfn *p_hwfn)
+{
+	struct qed_nvm_image_info nvm_info;
+	struct qed_ptt *p_ptt;
+	int rc;
+	u32 i;
+
+	if (p_hwfn->nvm_info.valid)
+		return 0;
+
+	p_ptt = qed_ptt_acquire(p_hwfn);
+	if (!p_ptt) {
+		DP_ERR(p_hwfn, "failed to acquire ptt\n");
+		return -EBUSY;
+	}
+
+	/* Acquire from MFW the amount of available images */
+	nvm_info.num_images = 0;
+	rc = qed_mcp_bist_nvm_get_num_images(p_hwfn,
+					     p_ptt, &nvm_info.num_images);
+	if (rc == -EOPNOTSUPP) {
+		DP_INFO(p_hwfn, "DRV_MSG_CODE_BIST_TEST is not supported\n");
+		goto out;
+	} else if (rc || !nvm_info.num_images) {
+		DP_ERR(p_hwfn, "Failed getting number of images\n");
+		goto err0;
+	}
+
+	nvm_info.image_att = kmalloc_array(nvm_info.num_images,
+					   sizeof(struct bist_nvm_image_att),
+					   GFP_KERNEL);
+	if (!nvm_info.image_att) {
+		rc = -ENOMEM;
+		goto err0;
+	}
+
+	/* Iterate over images and get their attributes */
+	for (i = 0; i < nvm_info.num_images; i++) {
+		rc = qed_mcp_bist_nvm_get_image_att(p_hwfn, p_ptt,
+						    &nvm_info.image_att[i], i);
+		if (rc) {
+			DP_ERR(p_hwfn,
+			       "Failed getting image index %d attributes\n", i);
+			goto err1;
+		}
+
+		DP_VERBOSE(p_hwfn, QED_MSG_SP, "image index %d, size %x\n", i,
+			   nvm_info.image_att[i].len);
+	}
+out:
+	/* Update hwfn's nvm_info */
+	if (nvm_info.num_images) {
+		p_hwfn->nvm_info.num_images = nvm_info.num_images;
+		kfree(p_hwfn->nvm_info.image_att);
+		p_hwfn->nvm_info.image_att = nvm_info.image_att;
+		p_hwfn->nvm_info.valid = true;
+	}
+
+	qed_ptt_release(p_hwfn, p_ptt);
+	return 0;
+
+err1:
+	kfree(nvm_info.image_att);
+err0:
+	qed_ptt_release(p_hwfn, p_ptt);
+	return rc;
+}
+
+void qed_mcp_nvm_info_free(struct qed_hwfn *p_hwfn)
+{
+	kfree(p_hwfn->nvm_info.image_att);
+	p_hwfn->nvm_info.image_att = NULL;
+	p_hwfn->nvm_info.valid = false;
+}
+
+int
 qed_mcp_get_nvm_image_att(struct qed_hwfn *p_hwfn,
-			  struct qed_ptt *p_ptt,
 			  enum qed_nvm_images image_id,
 			  struct qed_nvm_image_att *p_image_att)
 {
-	struct bist_nvm_image_att mfw_image_att;
 	enum nvm_image_type type;
-	u32 num_images, i;
 	int rc;
+	u32 i;
 
 	/* Translate image_id into MFW definitions */
 	switch (image_id) {
@@ -2514,41 +3184,42 @@ qed_mcp_get_nvm_image_att(struct qed_hwfn *p_hwfn,
 	case QED_NVM_IMAGE_FCOE_CFG:
 		type = NVM_TYPE_FCOE_CFG;
 		break;
+	case QED_NVM_IMAGE_NVM_CFG1:
+		type = NVM_TYPE_NVM_CFG1;
+		break;
+	case QED_NVM_IMAGE_DEFAULT_CFG:
+		type = NVM_TYPE_DEFAULT_CFG;
+		break;
+	case QED_NVM_IMAGE_NVM_META:
+		type = NVM_TYPE_META;
+		break;
 	default:
 		DP_NOTICE(p_hwfn, "Unknown request of image_id %08x\n",
 			  image_id);
 		return -EINVAL;
 	}
 
-	/* Learn number of images, then traverse and see if one fits */
-	rc = qed_mcp_bist_nvm_test_get_num_images(p_hwfn, p_ptt, &num_images);
-	if (rc || !num_images)
-		return -EINVAL;
+	rc = qed_mcp_nvm_info_populate(p_hwfn);
+	if (rc)
+		return rc;
 
-	for (i = 0; i < num_images; i++) {
-		rc = qed_mcp_bist_nvm_test_get_image_att(p_hwfn, p_ptt,
-							 &mfw_image_att, i);
-		if (rc)
-			return rc;
-
-		if (type == mfw_image_att.image_type)
+	for (i = 0; i < p_hwfn->nvm_info.num_images; i++)
+		if (type == p_hwfn->nvm_info.image_att[i].image_type)
 			break;
-	}
-	if (i == num_images) {
+	if (i == p_hwfn->nvm_info.num_images) {
 		DP_VERBOSE(p_hwfn, QED_MSG_STORAGE,
 			   "Failed to find nvram image of type %08x\n",
 			   image_id);
-		return -EINVAL;
+		return -ENOENT;
 	}
 
-	p_image_att->start_addr = mfw_image_att.nvm_start_addr;
-	p_image_att->length = mfw_image_att.len;
+	p_image_att->start_addr = p_hwfn->nvm_info.image_att[i].nvm_start_addr;
+	p_image_att->length = p_hwfn->nvm_info.image_att[i].len;
 
 	return 0;
 }
 
 int qed_mcp_get_nvm_image(struct qed_hwfn *p_hwfn,
-			  struct qed_ptt *p_ptt,
 			  enum qed_nvm_images image_id,
 			  u8 *p_buffer, u32 buffer_len)
 {
@@ -2557,7 +3228,7 @@ int qed_mcp_get_nvm_image(struct qed_hwfn *p_hwfn,
 
 	memset(p_buffer, 0, buffer_len);
 
-	rc = qed_mcp_get_nvm_image_att(p_hwfn, p_ptt, image_id, &image_att);
+	rc = qed_mcp_get_nvm_image_att(p_hwfn, image_id, &image_att);
 	if (rc)
 		return rc;
 
@@ -2568,9 +3239,6 @@ int qed_mcp_get_nvm_image(struct qed_hwfn *p_hwfn,
 			   image_id, image_att.length);
 		return -EINVAL;
 	}
-
-	/* Each NVM image is suffixed by CRC; Upper-layer has no need for it */
-	image_att.length -= 4;
 
 	if (image_att.length > buffer_len) {
 		DP_VERBOSE(p_hwfn,
@@ -2831,7 +3499,7 @@ static int qed_mcp_resource_cmd(struct qed_hwfn *p_hwfn,
 	return rc;
 }
 
-int
+static int
 __qed_mcp_resc_lock(struct qed_hwfn *p_hwfn,
 		    struct qed_ptt *p_ptt,
 		    struct qed_resc_lock_params *p_params)
@@ -3008,6 +3676,12 @@ void qed_mcp_resc_lock_default_init(struct qed_resc_lock_params *p_lock,
 	}
 }
 
+bool qed_mcp_is_smart_an_supported(struct qed_hwfn *p_hwfn)
+{
+	return !!(p_hwfn->mcp_info->capabilities &
+		  FW_MB_PARAM_FEATURE_SUPPORT_SMARTLINQ);
+}
+
 int qed_mcp_get_capabilities(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 {
 	u32 mcp_resp;
@@ -3027,8 +3701,135 @@ int qed_mcp_set_capabilities(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 {
 	u32 mcp_resp, mcp_param, features;
 
-	features = DRV_MB_PARAM_FEATURE_SUPPORT_PORT_EEE;
+	features = DRV_MB_PARAM_FEATURE_SUPPORT_PORT_EEE |
+		   DRV_MB_PARAM_FEATURE_SUPPORT_FUNC_VLINK;
 
 	return qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_FEATURE_SUPPORT,
 			   features, &mcp_resp, &mcp_param);
+}
+
+int qed_mcp_get_engine_config(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct qed_mcp_mb_params mb_params = {0};
+	struct qed_dev *cdev = p_hwfn->cdev;
+	u8 fir_valid, l2_valid;
+	int rc;
+
+	mb_params.cmd = DRV_MSG_CODE_GET_ENGINE_CONFIG;
+	rc = qed_mcp_cmd_and_union(p_hwfn, p_ptt, &mb_params);
+	if (rc)
+		return rc;
+
+	if (mb_params.mcp_resp == FW_MSG_CODE_UNSUPPORTED) {
+		DP_INFO(p_hwfn,
+			"The get_engine_config command is unsupported by the MFW\n");
+		return -EOPNOTSUPP;
+	}
+
+	fir_valid = QED_MFW_GET_FIELD(mb_params.mcp_param,
+				      FW_MB_PARAM_ENG_CFG_FIR_AFFIN_VALID);
+	if (fir_valid)
+		cdev->fir_affin =
+		    QED_MFW_GET_FIELD(mb_params.mcp_param,
+				      FW_MB_PARAM_ENG_CFG_FIR_AFFIN_VALUE);
+
+	l2_valid = QED_MFW_GET_FIELD(mb_params.mcp_param,
+				     FW_MB_PARAM_ENG_CFG_L2_AFFIN_VALID);
+	if (l2_valid)
+		cdev->l2_affin_hint =
+		    QED_MFW_GET_FIELD(mb_params.mcp_param,
+				      FW_MB_PARAM_ENG_CFG_L2_AFFIN_VALUE);
+
+	DP_INFO(p_hwfn,
+		"Engine affinity config: FIR={valid %hhd, value %hhd}, L2_hint={valid %hhd, value %hhd}\n",
+		fir_valid, cdev->fir_affin, l2_valid, cdev->l2_affin_hint);
+
+	return 0;
+}
+
+int qed_mcp_get_ppfid_bitmap(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct qed_mcp_mb_params mb_params = {0};
+	struct qed_dev *cdev = p_hwfn->cdev;
+	int rc;
+
+	mb_params.cmd = DRV_MSG_CODE_GET_PPFID_BITMAP;
+	rc = qed_mcp_cmd_and_union(p_hwfn, p_ptt, &mb_params);
+	if (rc)
+		return rc;
+
+	if (mb_params.mcp_resp == FW_MSG_CODE_UNSUPPORTED) {
+		DP_INFO(p_hwfn,
+			"The get_ppfid_bitmap command is unsupported by the MFW\n");
+		return -EOPNOTSUPP;
+	}
+
+	cdev->ppfid_bitmap = QED_MFW_GET_FIELD(mb_params.mcp_param,
+					       FW_MB_PARAM_PPFID_BITMAP);
+
+	DP_VERBOSE(p_hwfn, QED_MSG_SP, "PPFID bitmap 0x%hhx\n",
+		   cdev->ppfid_bitmap);
+
+	return 0;
+}
+
+int qed_mcp_nvm_get_cfg(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
+			u16 option_id, u8 entity_id, u16 flags, u8 *p_buf,
+			u32 *p_len)
+{
+	u32 mb_param = 0, resp, param;
+	int rc;
+
+	QED_MFW_SET_FIELD(mb_param, DRV_MB_PARAM_NVM_CFG_OPTION_ID, option_id);
+	if (flags & QED_NVM_CFG_OPTION_INIT)
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_INIT, 1);
+	if (flags & QED_NVM_CFG_OPTION_FREE)
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_FREE, 1);
+	if (flags & QED_NVM_CFG_OPTION_ENTITY_SEL) {
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_ENTITY_SEL, 1);
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_ENTITY_ID,
+				  entity_id);
+	}
+
+	rc = qed_mcp_nvm_rd_cmd(p_hwfn, p_ptt,
+				DRV_MSG_CODE_GET_NVM_CFG_OPTION,
+				mb_param, &resp, &param, p_len, (u32 *)p_buf);
+
+	return rc;
+}
+
+int qed_mcp_nvm_set_cfg(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
+			u16 option_id, u8 entity_id, u16 flags, u8 *p_buf,
+			u32 len)
+{
+	u32 mb_param = 0, resp, param;
+
+	QED_MFW_SET_FIELD(mb_param, DRV_MB_PARAM_NVM_CFG_OPTION_ID, option_id);
+	if (flags & QED_NVM_CFG_OPTION_ALL)
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_ALL, 1);
+	if (flags & QED_NVM_CFG_OPTION_INIT)
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_INIT, 1);
+	if (flags & QED_NVM_CFG_OPTION_COMMIT)
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_COMMIT, 1);
+	if (flags & QED_NVM_CFG_OPTION_FREE)
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_FREE, 1);
+	if (flags & QED_NVM_CFG_OPTION_ENTITY_SEL) {
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_ENTITY_SEL, 1);
+		QED_MFW_SET_FIELD(mb_param,
+				  DRV_MB_PARAM_NVM_CFG_OPTION_ENTITY_ID,
+				  entity_id);
+	}
+
+	return qed_mcp_nvm_wr_cmd(p_hwfn, p_ptt,
+				  DRV_MSG_CODE_SET_NVM_CFG_OPTION,
+				  mb_param, &resp, &param, len, (u32 *)p_buf);
 }

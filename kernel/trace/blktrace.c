@@ -1,18 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2006 Jens Axboe <axboe@kernel.dk>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -541,13 +529,11 @@ static int do_blk_trace_setup(struct request_queue *q, char *name, dev_t dev,
 	 * and scsi-generic block devices we create a temporary new debugfs
 	 * directory that will be removed once the trace ends.
 	 */
-	if (q->mq_ops && bdev && bdev == bdev->bd_contains)
+	if (queue_is_mq(q) && bdev && bdev == bdev->bd_contains)
 		dir = q->debugfs_dir;
 	else
 #endif
 		bt->dir = dir = debugfs_create_dir(buts->name, blk_debugfs_root);
-	if (!dir)
-		goto err;
 
 	/*
 	 * As blktrace relies on debugfs for its interface the debugfs directory
@@ -568,12 +554,8 @@ static int do_blk_trace_setup(struct request_queue *q, char *name, dev_t dev,
 	ret = -EIO;
 	bt->dropped_file = debugfs_create_file("dropped", 0444, dir, bt,
 					       &blk_dropped_fops);
-	if (!bt->dropped_file)
-		goto err;
 
 	bt->msg_file = debugfs_create_file("msg", 0222, dir, bt, &blk_msg_fops);
-	if (!bt->msg_file)
-		goto err;
 
 	bt->rchan = relay_open("trace", dir, buts->buf_size,
 				buts->buf_nr, &blk_relay_callbacks, bt);
@@ -769,6 +751,7 @@ int blk_trace_ioctl(struct block_device *bdev, unsigned cmd, char __user *arg)
 #endif
 	case BLKTRACESTART:
 		start = 1;
+		/* fall through */
 	case BLKTRACESTOP:
 		ret = __blk_trace_startstop(q, start);
 		break;
@@ -812,9 +795,9 @@ blk_trace_bio_get_cgid(struct request_queue *q, struct bio *bio)
 	if (!bt || !(blk_tracer_flags.val & TRACE_BLK_OPT_CGROUP))
 		return NULL;
 
-	if (!bio->bi_css)
+	if (!bio->bi_blkg)
 		return NULL;
-	return cgroup_get_kernfs_id(bio->bi_css->cgroup);
+	return cgroup_get_kernfs_id(bio_blkcg(bio)->css.cgroup);
 }
 #else
 static union kernfs_node_id *
@@ -913,7 +896,7 @@ static void blk_add_trace_rq_complete(void *ignore, struct request *rq,
  *
  **/
 static void blk_add_trace_bio(struct request_queue *q, struct bio *bio,
-			      u32 what, int error, union kernfs_node_id *cgid)
+			      u32 what, int error)
 {
 	struct blk_trace *bt;
 
@@ -925,23 +908,22 @@ static void blk_add_trace_bio(struct request_queue *q, struct bio *bio,
 	}
 
 	__blk_add_trace(bt, bio->bi_iter.bi_sector, bio->bi_iter.bi_size,
-			bio_op(bio), bio->bi_opf, what, error, 0, NULL, cgid);
+			bio_op(bio), bio->bi_opf, what, error, 0, NULL,
+			blk_trace_bio_get_cgid(q, bio));
 	rcu_read_unlock();
 }
 
 static void blk_add_trace_bio_bounce(void *ignore,
 				     struct request_queue *q, struct bio *bio)
 {
-	blk_add_trace_bio(q, bio, BLK_TA_BOUNCE, 0,
-			  blk_trace_bio_get_cgid(q, bio));
+	blk_add_trace_bio(q, bio, BLK_TA_BOUNCE, 0);
 }
 
 static void blk_add_trace_bio_complete(void *ignore,
 				       struct request_queue *q, struct bio *bio,
 				       int error)
 {
-	blk_add_trace_bio(q, bio, BLK_TA_COMPLETE, error,
-			  blk_trace_bio_get_cgid(q, bio));
+	blk_add_trace_bio(q, bio, BLK_TA_COMPLETE, error);
 }
 
 static void blk_add_trace_bio_backmerge(void *ignore,
@@ -949,8 +931,7 @@ static void blk_add_trace_bio_backmerge(void *ignore,
 					struct request *rq,
 					struct bio *bio)
 {
-	blk_add_trace_bio(q, bio, BLK_TA_BACKMERGE, 0,
-			 blk_trace_bio_get_cgid(q, bio));
+	blk_add_trace_bio(q, bio, BLK_TA_BACKMERGE, 0);
 }
 
 static void blk_add_trace_bio_frontmerge(void *ignore,
@@ -958,15 +939,13 @@ static void blk_add_trace_bio_frontmerge(void *ignore,
 					 struct request *rq,
 					 struct bio *bio)
 {
-	blk_add_trace_bio(q, bio, BLK_TA_FRONTMERGE, 0,
-			  blk_trace_bio_get_cgid(q, bio));
+	blk_add_trace_bio(q, bio, BLK_TA_FRONTMERGE, 0);
 }
 
 static void blk_add_trace_bio_queue(void *ignore,
 				    struct request_queue *q, struct bio *bio)
 {
-	blk_add_trace_bio(q, bio, BLK_TA_QUEUE, 0,
-			  blk_trace_bio_get_cgid(q, bio));
+	blk_add_trace_bio(q, bio, BLK_TA_QUEUE, 0);
 }
 
 static void blk_add_trace_getrq(void *ignore,
@@ -974,8 +953,7 @@ static void blk_add_trace_getrq(void *ignore,
 				struct bio *bio, int rw)
 {
 	if (bio)
-		blk_add_trace_bio(q, bio, BLK_TA_GETRQ, 0,
-				  blk_trace_bio_get_cgid(q, bio));
+		blk_add_trace_bio(q, bio, BLK_TA_GETRQ, 0);
 	else {
 		struct blk_trace *bt;
 
@@ -994,8 +972,7 @@ static void blk_add_trace_sleeprq(void *ignore,
 				  struct bio *bio, int rw)
 {
 	if (bio)
-		blk_add_trace_bio(q, bio, BLK_TA_SLEEPRQ, 0,
-				  blk_trace_bio_get_cgid(q, bio));
+		blk_add_trace_bio(q, bio, BLK_TA_SLEEPRQ, 0);
 	else {
 		struct blk_trace *bt;
 

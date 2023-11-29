@@ -21,20 +21,23 @@
  *
  * Authors: Alex Deucher
  */
+
 #include <linux/firmware.h>
 #include <linux/slab.h>
 #include <linux/module.h>
-#include <drm/drmP.h>
+
+#include <drm/drm_pci.h>
+#include <drm/radeon_drm.h>
+
+#include "atom.h"
+#include "cayman_blit_shaders.h"
+#include "clearstate_cayman.h"
+#include "ni_reg.h"
+#include "nid.h"
 #include "radeon.h"
 #include "radeon_asic.h"
 #include "radeon_audio.h"
-#include <drm/radeon_drm.h>
-#include "nid.h"
-#include "atom.h"
-#include "ni_reg.h"
-#include "cayman_blit_shaders.h"
 #include "radeon_ucode.h"
-#include "clearstate_cayman.h"
 
 /*
  * Indirect registers accessor
@@ -1148,6 +1151,7 @@ static void cayman_gpu_init(struct radeon_device *rdev)
 						rdev->config.cayman.max_shader_engines,
 						CAYMAN_MAX_BACKENDS, disabled_rb_mask);
 	}
+	rdev->config.cayman.backend_map = tmp;
 	WREG32(GB_BACKEND_MAP, tmp);
 
 	cgts_tcc_disable = 0xffff0000;

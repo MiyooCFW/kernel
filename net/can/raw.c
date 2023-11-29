@@ -1,5 +1,5 @@
-/*
- * raw.c - Raw sockets for protocol family CAN
+// SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-3-Clause)
+/* raw.c - Raw sockets for protocol family CAN
  *
  * Copyright (c) 2002-2007 Volkswagen Group Electronic Research
  * All rights reserved.
@@ -62,10 +62,11 @@ MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Urs Thuermann <urs.thuermann@volkswagen.de>");
 MODULE_ALIAS("can-proto-1");
 
+#define RAW_MIN_NAMELEN CAN_REQUIRED_SIZE(struct sockaddr_can, can_ifindex)
+
 #define MASK_ALL 0
 
-/*
- * A raw socket has a list of can_filters attached to it, each receiving
+/* A raw socket has a list of can_filters attached to it, each receiving
  * the CAN frames matching that filter.  If the filter list is empty,
  * no CAN frames will be received by the socket.  The default after
  * opening the socket, is to have one filter which receives all frames.
@@ -100,8 +101,7 @@ static LIST_HEAD(raw_notifier_list);
 static DEFINE_SPINLOCK(raw_notifier_lock);
 static struct raw_sock *raw_busy_notifier;
 
-/*
- * Return pointer to store the extra msg flags for raw_recvmsg().
+/* Return pointer to store the extra msg flags for raw_recvmsg().
  * We use the space of one unsigned int beyond the 'struct sockaddr_can'
  * in skb->cb.
  */
@@ -160,8 +160,7 @@ static void raw_rcv(struct sk_buff *oskb, void *data)
 	if (!skb)
 		return;
 
-	/*
-	 *  Put the datagram to the queue so that raw_recvmsg() can
+	/*  Put the datagram to the queue so that raw_recvmsg() can
 	 *  get it from there.  We need to pass the interface index to
 	 *  raw_recvmsg().  We pass a whole struct sockaddr_can in skb->cb
 	 *  containing the interface index.
@@ -282,7 +281,6 @@ static void raw_notify(struct raw_sock *ro, unsigned long msg,
 		return;
 
 	switch (msg) {
-
 	case NETDEV_UNREGISTER:
 		lock_sock(sk);
 		/* remove current filters & unregister */
@@ -396,8 +394,9 @@ static int raw_release(struct socket *sock)
 				raw_disable_allfilters(dev_net(dev), dev, sk);
 				dev_put(dev);
 			}
-		} else
+		} else {
 			raw_disable_allfilters(sock_net(sk), NULL, sk);
+		}
 	}
 
 	if (ro->count > 1)
@@ -426,7 +425,9 @@ static int raw_bind(struct socket *sock, struct sockaddr *uaddr, int len)
 	int err = 0;
 	int notify_enetdown = 0;
 
-	if (len < sizeof(*addr))
+	if (len < RAW_MIN_NAMELEN)
+		return -EINVAL;
+	if (addr->can_family != AF_CAN)
 		return -EINVAL;
 
 	lock_sock(sk);
@@ -475,8 +476,9 @@ static int raw_bind(struct socket *sock, struct sockaddr *uaddr, int len)
 							       dev, sk);
 					dev_put(dev);
 				}
-			} else
+			} else {
 				raw_disable_allfilters(sock_net(sk), NULL, sk);
+			}
 		}
 		ro->ifindex = ifindex;
 		ro->bound = 1;
@@ -495,7 +497,7 @@ static int raw_bind(struct socket *sock, struct sockaddr *uaddr, int len)
 }
 
 static int raw_getname(struct socket *sock, struct sockaddr *uaddr,
-		       int *len, int peer)
+		       int peer)
 {
 	struct sockaddr_can *addr = (struct sockaddr_can *)uaddr;
 	struct sock *sk = sock->sk;
@@ -504,13 +506,11 @@ static int raw_getname(struct socket *sock, struct sockaddr *uaddr,
 	if (peer)
 		return -EOPNOTSUPP;
 
-	memset(addr, 0, sizeof(*addr));
+	memset(addr, 0, RAW_MIN_NAMELEN);
 	addr->can_family  = AF_CAN;
 	addr->can_ifindex = ro->ifindex;
 
-	*len = sizeof(*addr);
-
-	return 0;
+	return RAW_MIN_NAMELEN;
 }
 
 static int raw_setsockopt(struct socket *sock, int level, int optname,
@@ -529,7 +529,6 @@ static int raw_setsockopt(struct socket *sock, int level, int optname,
 		return -EINVAL;
 
 	switch (optname) {
-
 	case CAN_RAW_FILTER:
 		if (optlen % sizeof(struct can_filter) != 0)
 			return -EINVAL;
@@ -708,17 +707,18 @@ static int raw_getsockopt(struct socket *sock, int level, int optname,
 		return -EINVAL;
 
 	switch (optname) {
-
 	case CAN_RAW_FILTER:
 		lock_sock(sk);
 		if (ro->count > 0) {
 			int fsize = ro->count * sizeof(struct can_filter);
+
 			if (len > fsize)
 				len = fsize;
 			if (copy_to_user(optval, ro->filter, len))
 				err = -EFAULT;
-		} else
+		} else {
 			len = 0;
+		}
 		release_sock(sk);
 
 		if (!err)
@@ -778,15 +778,16 @@ static int raw_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 	if (msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_can *, addr, msg->msg_name);
 
-		if (msg->msg_namelen < sizeof(*addr))
+		if (msg->msg_namelen < RAW_MIN_NAMELEN)
 			return -EINVAL;
 
 		if (addr->can_family != AF_CAN)
 			return -EINVAL;
 
 		ifindex = addr->can_ifindex;
-	} else
+	} else {
 		ifindex = ro->ifindex;
+	}
 
 	dev = dev_get_by_index(sock_net(sk), ifindex);
 	if (!dev)
@@ -866,8 +867,8 @@ static int raw_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	sock_recv_ts_and_drops(msg, sk, skb);
 
 	if (msg->msg_name) {
-		__sockaddr_check_size(sizeof(struct sockaddr_can));
-		msg->msg_namelen = sizeof(struct sockaddr_can);
+		__sockaddr_check_size(RAW_MIN_NAMELEN);
+		msg->msg_namelen = RAW_MIN_NAMELEN;
 		memcpy(msg->msg_name, skb->cb, msg->msg_namelen);
 	}
 
@@ -879,6 +880,13 @@ static int raw_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	return size;
 }
 
+static int raw_sock_no_ioctlcmd(struct socket *sock, unsigned int cmd,
+				unsigned long arg)
+{
+	/* no ioctls for socket layer -> hand it down to NIC layer */
+	return -ENOIOCTLCMD;
+}
+
 static const struct proto_ops raw_ops = {
 	.family        = PF_CAN,
 	.release       = raw_release,
@@ -888,7 +896,8 @@ static const struct proto_ops raw_ops = {
 	.accept        = sock_no_accept,
 	.getname       = raw_getname,
 	.poll          = datagram_poll,
-	.ioctl         = can_ioctl,	/* use can_ioctl() from af_can.c */
+	.ioctl         = raw_sock_no_ioctlcmd,
+	.gettstamp     = sock_gettstamp,
 	.listen        = sock_no_listen,
 	.shutdown      = sock_no_shutdown,
 	.setsockopt    = raw_setsockopt,
@@ -925,7 +934,7 @@ static __init int raw_module_init(void)
 
 	err = can_proto_register(&raw_can_proto);
 	if (err < 0)
-		printk(KERN_ERR "can: registration of raw protocol failed\n");
+		pr_err("can: registration of raw protocol failed\n");
 	else
 		register_netdevice_notifier(&canraw_notifier);
 

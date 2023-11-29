@@ -1,20 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
  * Copyright (c) 2014 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifdef CONFIG_MSM_OCMEM
@@ -35,6 +24,7 @@
 	 A3XX_INT0_CP_RB_INT |             \
 	 A3XX_INT0_CP_REG_PROTECT_FAULT |  \
 	 A3XX_INT0_CP_AHB_ERROR_HALT |     \
+	 A3XX_INT0_CACHE_FLUSH_TS |        \
 	 A3XX_INT0_UCHE_OOB_ACCESS)
 
 extern bool hang_debug;
@@ -44,7 +34,7 @@ static bool a3xx_idle(struct msm_gpu *gpu);
 
 static bool a3xx_me_init(struct msm_gpu *gpu)
 {
-	struct msm_ringbuffer *ring = gpu->rb;
+	struct msm_ringbuffer *ring = gpu->rb[0];
 
 	OUT_PKT3(ring, CP_ME_INIT, 17);
 	OUT_RING(ring, 0x000003f7);
@@ -65,7 +55,7 @@ static bool a3xx_me_init(struct msm_gpu *gpu)
 	OUT_RING(ring, 0x00000000);
 	OUT_RING(ring, 0x00000000);
 
-	gpu->funcs->flush(gpu);
+	gpu->funcs->flush(gpu, ring);
 	return a3xx_idle(gpu);
 }
 
@@ -225,6 +215,16 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 	if (ret)
 		return ret;
 
+	/*
+	 * Use the default ringbuffer size and block size but disable the RPTR
+	 * shadow
+	 */
+	gpu_write(gpu, REG_AXXX_CP_RB_CNTL,
+		MSM_GPU_RB_CNTL_DEFAULT | AXXX_CP_RB_CNTL_NO_UPDATE);
+
+	/* Set the ringbuffer address */
+	gpu_write(gpu, REG_AXXX_CP_RB_BASE, lower_32_bits(gpu->rb[0]->iova));
+
 	/* setup access protection: */
 	gpu_write(gpu, REG_A3XX_CP_PROTECT_CTRL, 0x00000007);
 
@@ -256,8 +256,8 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 	 */
 
 	/* Load PM4: */
-	ptr = (uint32_t *)(adreno_gpu->pm4->data);
-	len = adreno_gpu->pm4->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PM4]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PM4]->size / 4;
 	DBG("loading PM4 ucode version: %x", ptr[1]);
 
 	gpu_write(gpu, REG_AXXX_CP_DEBUG,
@@ -268,8 +268,8 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 		gpu_write(gpu, REG_AXXX_CP_ME_RAM_DATA, ptr[i]);
 
 	/* Load PFP: */
-	ptr = (uint32_t *)(adreno_gpu->pfp->data);
-	len = adreno_gpu->pfp->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PFP]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PFP]->size / 4;
 	DBG("loading PFP ucode version: %x", ptr[5]);
 
 	gpu_write(gpu, REG_A3XX_CP_PFP_UCODE_ADDR, 0);
@@ -339,7 +339,7 @@ static void a3xx_destroy(struct msm_gpu *gpu)
 static bool a3xx_idle(struct msm_gpu *gpu)
 {
 	/* wait for ringbuffer to drain: */
-	if (!adreno_idle(gpu))
+	if (!adreno_idle(gpu, gpu->rb[0]))
 		return false;
 
 	/* then wait for GPU to finish: */
@@ -408,15 +408,6 @@ static const unsigned int a3xx_registers[] = {
 	~0   /* sentinel */
 };
 
-#ifdef CONFIG_DEBUG_FS
-static void a3xx_show(struct msm_gpu *gpu, struct seq_file *m)
-{
-	seq_printf(m, "status:   %08x\n",
-			gpu_read(gpu, REG_A3XX_RBBM_STATUS));
-	adreno_show(gpu, m);
-}
-#endif
-
 /* would be nice to not have to duplicate the _show() stuff with printk(): */
 static void a3xx_dump(struct msm_gpu *gpu)
 {
@@ -424,6 +415,21 @@ static void a3xx_dump(struct msm_gpu *gpu)
 			gpu_read(gpu, REG_A3XX_RBBM_STATUS));
 	adreno_dump(gpu);
 }
+
+static struct msm_gpu_state *a3xx_gpu_state_get(struct msm_gpu *gpu)
+{
+	struct msm_gpu_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
+
+	if (!state)
+		return ERR_PTR(-ENOMEM);
+
+	adreno_gpu_state_get(gpu, state);
+
+	state->rbbm_status = gpu_read(gpu, REG_A3XX_RBBM_STATUS);
+
+	return state;
+}
+
 /* Register offset defines for A3XX */
 static const unsigned int a3xx_register_offsets[REG_ADRENO_REGISTER_MAX] = {
 	REG_ADRENO_DEFINE(REG_ADRENO_CP_RB_BASE, REG_AXXX_CP_RB_BASE),
@@ -442,14 +448,16 @@ static const struct adreno_gpu_funcs funcs = {
 		.pm_suspend = msm_gpu_pm_suspend,
 		.pm_resume = msm_gpu_pm_resume,
 		.recover = a3xx_recover,
-		.last_fence = adreno_last_fence,
 		.submit = adreno_submit,
 		.flush = adreno_flush,
+		.active_ring = adreno_active_ring,
 		.irq = a3xx_irq,
 		.destroy = a3xx_destroy,
-#ifdef CONFIG_DEBUG_FS
-		.show = a3xx_show,
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_DEV_COREDUMP)
+		.show = adreno_show,
 #endif
+		.gpu_state_get = a3xx_gpu_state_get,
+		.gpu_state_put = adreno_gpu_state_put,
 	},
 };
 
@@ -470,7 +478,7 @@ struct msm_gpu *a3xx_gpu_init(struct drm_device *dev)
 	int ret;
 
 	if (!pdev) {
-		dev_err(dev->dev, "no a3xx device\n");
+		DRM_DEV_ERROR(dev->dev, "no a3xx device\n");
 		ret = -ENXIO;
 		goto fail;
 	}
@@ -490,7 +498,7 @@ struct msm_gpu *a3xx_gpu_init(struct drm_device *dev)
 	adreno_gpu->registers = a3xx_registers;
 	adreno_gpu->reg_offsets = a3xx_register_offsets;
 
-	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs);
+	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs, 1);
 	if (ret)
 		goto fail;
 
@@ -517,7 +525,7 @@ struct msm_gpu *a3xx_gpu_init(struct drm_device *dev)
 		 * to not be possible to restrict access, then we must
 		 * implement a cmdstream validator.
 		 */
-		dev_err(dev->dev, "No memory protection without IOMMU\n");
+		DRM_DEV_ERROR(dev->dev, "No memory protection without IOMMU\n");
 		ret = -ENXIO;
 		goto fail;
 	}

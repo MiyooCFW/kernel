@@ -1,15 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Copyright © 2017 Broadcom
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/amba/clcd-regs.h>
 #include <linux/seq_file.h>
+
 #include <drm/drm_debugfs.h>
-#include <drm/drmP.h>
+#include <drm/drm_file.h>
+
 #include "pl111_drm.h"
 
 #define REGDEF(reg) { reg, #reg }
@@ -22,8 +21,14 @@ static const struct {
 	REGDEF(CLCD_TIM2),
 	REGDEF(CLCD_TIM3),
 	REGDEF(CLCD_UBAS),
+	REGDEF(CLCD_LBAS),
 	REGDEF(CLCD_PL111_CNTL),
 	REGDEF(CLCD_PL111_IENB),
+	REGDEF(CLCD_PL111_RIS),
+	REGDEF(CLCD_PL111_MIS),
+	REGDEF(CLCD_PL111_ICR),
+	REGDEF(CLCD_PL111_UCUR),
+	REGDEF(CLCD_PL111_LCUR),
 };
 
 int pl111_debugfs_regs(struct seq_file *m, void *unused)

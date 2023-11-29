@@ -1,18 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2016,2017 ARM Limited, All Rights Reserved.
  * Author: Marc Zyngier <marc.zyngier@arm.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/interrupt.h>
@@ -177,6 +166,7 @@ int its_map_vlpi(int irq, struct its_vlpi_map *map)
 			.map      = map,
 		},
 	};
+	int ret;
 
 	/*
 	 * The host will never see that interrupt firing again, so it
@@ -184,7 +174,11 @@ int its_map_vlpi(int irq, struct its_vlpi_map *map)
 	 */
 	irq_set_status_flags(irq, IRQ_DISABLE_UNLAZY);
 
-	return irq_set_vcpu_affinity(irq, &info);
+	ret = irq_set_vcpu_affinity(irq, &info);
+	if (ret)
+		irq_clear_status_flags(irq, IRQ_DISABLE_UNLAZY);
+
+	return ret;
 }
 
 int its_get_vlpi(int irq, struct its_vlpi_map *map)

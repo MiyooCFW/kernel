@@ -1,21 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Intel CHT Whiskey Cove PMIC I2C Master driver
  * Copyright (C) 2017 Hans de Goede <hdegoede@redhat.com>
  *
  * Based on various non upstream patches to support the CHT Whiskey Cove PMIC:
  * Copyright (C) 2011 - 2014 Intel Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version
- * 2 as published by the Free Software Foundation, or (at your option)
- * any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
+#include <linux/acpi.h>
 #include <linux/completion.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
@@ -25,6 +17,7 @@
 #include <linux/mfd/intel_soc_pmic.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/power/bq24190_charger.h>
 #include <linux/slab.h>
 
 #define CHT_WC_I2C_CTRL			0x5e24
@@ -277,11 +270,34 @@ static const struct irq_chip cht_wc_i2c_irq_chip = {
 	.name			= "cht_wc_ext_chrg_irq_chip",
 };
 
+static const char * const bq24190_suppliers[] = {
+	"tcpm-source-psy-i2c-fusb302" };
+
 static const struct property_entry bq24190_props[] = {
-	PROPERTY_ENTRY_STRING("extcon-name", "cht_wcove_pwrsrc"),
+	PROPERTY_ENTRY_STRING_ARRAY("supplied-from", bq24190_suppliers),
 	PROPERTY_ENTRY_BOOL("omit-battery-class"),
 	PROPERTY_ENTRY_BOOL("disable-reset"),
 	{ }
+};
+
+static struct regulator_consumer_supply fusb302_consumer = {
+	.supply = "vbus",
+	/* Must match fusb302 dev_name in intel_cht_int33fe.c */
+	.dev_name = "i2c-fusb302",
+};
+
+static const struct regulator_init_data bq24190_vbus_init_data = {
+	.constraints = {
+		/* The name is used in intel_cht_int33fe.c do not change. */
+		.name = "cht_wc_usb_typec_vbus",
+		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
+	},
+	.consumer_supplies = &fusb302_consumer,
+	.num_consumer_supplies = 1,
+};
+
+static struct bq24190_platform_data bq24190_pdata = {
+	.regulator_init_data = &bq24190_vbus_init_data,
 };
 
 static int cht_wc_i2c_adap_i2c_probe(struct platform_device *pdev)
@@ -291,7 +307,9 @@ static int cht_wc_i2c_adap_i2c_probe(struct platform_device *pdev)
 	struct i2c_board_info board_info = {
 		.type = "bq24190",
 		.addr = 0x6b,
+		.dev_name = "bq24190",
 		.properties = bq24190_props,
+		.platform_data = &bq24190_pdata,
 	};
 	int ret, reg, irq;
 
@@ -360,11 +378,21 @@ static int cht_wc_i2c_adap_i2c_probe(struct platform_device *pdev)
 	if (ret)
 		goto remove_irq_domain;
 
-	board_info.irq = adap->client_irq;
-	adap->client = i2c_new_device(&adap->adapter, &board_info);
-	if (!adap->client) {
-		ret = -ENOMEM;
-		goto del_adapter;
+	/*
+	 * Normally the Whiskey Cove PMIC is paired with a TI bq24292i charger,
+	 * connected to this i2c bus, and a max17047 fuel-gauge and a fusb302
+	 * USB Type-C controller connected to another i2c bus. In this setup
+	 * the max17047 and fusb302 devices are enumerated through an INT33FE
+	 * ACPI device. If this device is present register an i2c-client for
+	 * the TI bq24292i charger.
+	 */
+	if (acpi_dev_present("INT33FE", NULL, -1)) {
+		board_info.irq = adap->client_irq;
+		adap->client = i2c_new_device(&adap->adapter, &board_info);
+		if (!adap->client) {
+			ret = -ENOMEM;
+			goto del_adapter;
+		}
 	}
 
 	platform_set_drvdata(pdev, adap);
@@ -388,7 +416,7 @@ static int cht_wc_i2c_adap_i2c_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_device_id cht_wc_i2c_adap_id_table[] = {
+static const struct platform_device_id cht_wc_i2c_adap_id_table[] = {
 	{ .name = "cht_wcove_ext_chgr" },
 	{},
 };

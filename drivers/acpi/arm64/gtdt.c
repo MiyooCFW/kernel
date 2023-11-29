@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ARM Specific GTDT table Support
  *
@@ -5,10 +6,6 @@
  * Author: Daniel Lezcano <daniel.lezcano@linaro.org>
  *         Fu Wei <fu.wei@linaro.org>
  *         Hanjun Guo <hanjun.guo@linaro.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/acpi.h>
@@ -199,7 +196,7 @@ static int __init gtdt_parse_timer_block(struct acpi_gtdt_timer_block *block,
 	struct acpi_gtdt_timer_entry *gtdt_frame;
 
 	if (!block->timer_count) {
-		pr_err(FW_BUG "GT block present, but frame count is zero.");
+		pr_err(FW_BUG "GT block present, but frame count is zero.\n");
 		return -ENODEV;
 	}
 

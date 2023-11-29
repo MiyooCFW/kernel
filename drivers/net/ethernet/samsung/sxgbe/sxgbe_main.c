@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* 10G controller driver for Samsung SoCs
  *
  * Copyright (C) 2013 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  *
  * Author: Siva Reddy Kallam <siva.kallam@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -57,9 +54,9 @@
 static int debug = -1;
 static int eee_timer = SXGBE_DEFAULT_LPI_TIMER;
 
-module_param(eee_timer, int, S_IRUGO | S_IWUSR);
+module_param(eee_timer, int, 0644);
 
-module_param(debug, int, S_IRUGO | S_IWUSR);
+module_param(debug, int, 0644);
 static const u32 default_msg_level = (NETIF_MSG_DRV | NETIF_MSG_PROBE |
 				      NETIF_MSG_LINK | NETIF_MSG_IFUP |
 				      NETIF_MSG_IFDOWN | NETIF_MSG_TIMER);
@@ -105,9 +102,9 @@ void sxgbe_disable_eee_mode(struct sxgbe_priv_data * const priv)
  *  If there is no data transfer and if we are not in LPI state,
  *  then MAC Transmitter can be moved to LPI state.
  */
-static void sxgbe_eee_ctrl_timer(unsigned long arg)
+static void sxgbe_eee_ctrl_timer(struct timer_list *t)
 {
-	struct sxgbe_priv_data *priv = (struct sxgbe_priv_data *)arg;
+	struct sxgbe_priv_data *priv = from_timer(priv, t, eee_ctrl_timer);
 
 	sxgbe_enable_eee_mode(priv);
 	mod_timer(&priv->eee_ctrl_timer, SXGBE_LPI_TIMER(eee_timer));
@@ -134,8 +131,7 @@ bool sxgbe_eee_init(struct sxgbe_priv_data * const priv)
 			return false;
 
 		priv->eee_active = 1;
-		setup_timer(&priv->eee_ctrl_timer, sxgbe_eee_ctrl_timer,
-			    (unsigned long)priv);
+		timer_setup(&priv->eee_ctrl_timer, sxgbe_eee_ctrl_timer, 0);
 		priv->eee_ctrl_timer.expires = SXGBE_LPI_TIMER(eee_timer);
 		add_timer(&priv->eee_ctrl_timer);
 
@@ -299,8 +295,8 @@ static int sxgbe_init_phy(struct net_device *ndev)
 	/* Stop Advertising 1000BASE Capability if interface is not GMII */
 	if ((phy_iface == PHY_INTERFACE_MODE_MII) ||
 	    (phy_iface == PHY_INTERFACE_MODE_RMII))
-		phydev->advertising &= ~(SUPPORTED_1000baseT_Half |
-					 SUPPORTED_1000baseT_Full);
+		phy_set_max_speed(phydev, SPEED_1000);
+
 	if (phydev->phy_id == 0) {
 		phy_disconnect(phydev);
 		return -ENODEV;
@@ -401,9 +397,9 @@ static int init_tx_ring(struct device *dev, u8 queue_no,
 	}
 
 	/* allocate memory for TX descriptors */
-	tx_ring->dma_tx = dma_zalloc_coherent(dev,
-					      tx_rsize * sizeof(struct sxgbe_tx_norm_desc),
-					      &tx_ring->dma_tx_phy, GFP_KERNEL);
+	tx_ring->dma_tx = dma_alloc_coherent(dev,
+					     tx_rsize * sizeof(struct sxgbe_tx_norm_desc),
+					     &tx_ring->dma_tx_phy, GFP_KERNEL);
 	if (!tx_ring->dma_tx)
 		return -ENOMEM;
 
@@ -480,9 +476,9 @@ static int init_rx_ring(struct net_device *dev, u8 queue_no,
 	rx_ring->queue_no = queue_no;
 
 	/* allocate memory for RX descriptors */
-	rx_ring->dma_rx = dma_zalloc_coherent(priv->device,
-					      rx_rsize * sizeof(struct sxgbe_rx_norm_desc),
-					      &rx_ring->dma_rx_phy, GFP_KERNEL);
+	rx_ring->dma_rx = dma_alloc_coherent(priv->device,
+					     rx_rsize * sizeof(struct sxgbe_rx_norm_desc),
+					     &rx_ring->dma_rx_phy, GFP_KERNEL);
 
 	if (rx_ring->dma_rx == NULL)
 		return -ENOMEM;
@@ -1002,13 +998,13 @@ static void sxgbe_disable_mtl_engine(struct sxgbe_priv_data *priv)
 
 /**
  * sxgbe_tx_timer: mitigation sw timer for tx.
- * @data: data pointer
+ * @t: timer pointer
  * Description:
  * This is the timer handler to directly invoke the sxgbe_tx_clean.
  */
-static void sxgbe_tx_timer(unsigned long data)
+static void sxgbe_tx_timer(struct timer_list *t)
 {
-	struct sxgbe_tx_queue *p = (struct sxgbe_tx_queue *)data;
+	struct sxgbe_tx_queue *p = from_timer(p, t, txtimer);
 	sxgbe_tx_queue_clean(p);
 }
 
@@ -1028,8 +1024,7 @@ static void sxgbe_tx_init_coalesce(struct sxgbe_priv_data *priv)
 		struct sxgbe_tx_queue *p = priv->txq[queue_num];
 		p->tx_coal_frames =  SXGBE_TX_FRAMES;
 		p->tx_coal_timer = SXGBE_COAL_TX_TIMER;
-		setup_timer(&p->txtimer, sxgbe_tx_timer,
-			    (unsigned long)&priv->txq[queue_num]);
+		timer_setup(&p->txtimer, sxgbe_tx_timer, 0);
 		p->txtimer.expires = SXGBE_COAL_TIMER(p->tx_coal_timer);
 		add_timer(&p->txtimer);
 	}

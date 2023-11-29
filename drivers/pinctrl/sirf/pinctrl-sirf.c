@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * pinmux driver for CSR SiRFprimaII
  *
@@ -8,8 +9,6 @@
  *
  * Copyright (c) 2011 - 2014 Cambridge Silicon Radio Limited, a CSR plc group
  * company.
- *
- * Licensed under GPLv2 or later.
  */
 
 #include <linux/init.h>
@@ -27,7 +26,7 @@
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 #include <linux/bitops.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/of_gpio.h>
 
 #include "pinctrl-sirf.h"
@@ -108,7 +107,7 @@ static int sirfsoc_dt_node_to_map(struct pinctrl_dev *pctldev,
 		return -ENODEV;
 	}
 
-	*map = kzalloc(sizeof(**map) * count, GFP_KERNEL);
+	*map = kcalloc(count, sizeof(**map), GFP_KERNEL);
 	if (!*map)
 		return -ENOMEM;
 
@@ -587,7 +586,7 @@ static void sirfsoc_gpio_handle_irq(struct irq_desc *desc)
 		if ((status & 0x1) && (ctrl & SIRFSOC_GPIO_CTL_INTR_EN_MASK)) {
 			pr_debug("%s: gpio id %d idx %d happens\n",
 				__func__, bank->id, idx);
-			generic_handle_irq(irq_find_mapping(gc->irqdomain, idx +
+			generic_handle_irq(irq_find_mapping(gc->irq.domain, idx +
 					bank->id * SIRFSOC_GPIO_BANK_SIZE));
 		}
 
@@ -614,7 +613,7 @@ static int sirfsoc_gpio_request(struct gpio_chip *chip, unsigned offset)
 	struct sirfsoc_gpio_bank *bank = sirfsoc_gpio_to_bank(sgpio, offset);
 	unsigned long flags;
 
-	if (pinctrl_request_gpio(chip->base + offset))
+	if (pinctrl_gpio_request(chip->base + offset))
 		return -ENODEV;
 
 	spin_lock_irqsave(&bank->lock, flags);
@@ -644,7 +643,7 @@ static void sirfsoc_gpio_free(struct gpio_chip *chip, unsigned offset)
 
 	spin_unlock_irqrestore(&bank->lock, flags);
 
-	pinctrl_free_gpio(chip->base + offset);
+	pinctrl_gpio_free(chip->base + offset);
 }
 
 static int sirfsoc_gpio_direction_input(struct gpio_chip *chip, unsigned gpio)
@@ -782,7 +781,7 @@ static void sirfsoc_gpio_set_pulldown(struct sirfsoc_gpio_chip *sgpio,
 static int sirfsoc_gpio_probe(struct device_node *np)
 {
 	int i, err = 0;
-	static struct sirfsoc_gpio_chip *sgpio;
+	struct sirfsoc_gpio_chip *sgpio;
 	struct sirfsoc_gpio_bank *bank;
 	void __iomem *regs;
 	struct platform_device *pdev;

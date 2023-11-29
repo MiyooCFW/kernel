@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) Maxime Coquelin 2015
  * Copyright (C) STMicroelectronics SA 2017
  * Authors:  Maxime Coquelin <mcoquelin.stm32@gmail.com>
  *	     Gerald Baeza <gerald_baeza@yahoo.fr>
- * License terms:  GNU General Public License (GPL), version 2
  */
 
 #define DRIVER_NAME "stm32-usart"
@@ -27,6 +27,7 @@ struct stm32_usart_config {
 	bool has_7bits_data;
 	bool has_wakeup;
 	bool has_fifo;
+	int fifosize;
 };
 
 struct stm32_usart_info {
@@ -54,6 +55,7 @@ struct stm32_usart_info stm32f4_info = {
 	.cfg = {
 		.uart_enable_bit = 13,
 		.has_7bits_data = false,
+		.fifosize = 1,
 	}
 };
 
@@ -74,6 +76,7 @@ struct stm32_usart_info stm32f7_info = {
 	.cfg = {
 		.uart_enable_bit = 0,
 		.has_7bits_data = true,
+		.fifosize = 1,
 	}
 };
 
@@ -96,6 +99,7 @@ struct stm32_usart_info stm32h7_info = {
 		.has_7bits_data = true,
 		.has_wakeup = true,
 		.has_fifo = true,
+		.fifosize = 16,
 	}
 };
 
@@ -130,6 +134,7 @@ struct stm32_usart_info stm32h7_info = {
 #define USART_BRR_DIV_F_MASK	GENMASK(3, 0)
 #define USART_BRR_DIV_M_MASK	GENMASK(15, 4)
 #define USART_BRR_DIV_M_SHIFT	4
+#define USART_BRR_04_R_SHIFT	1
 
 /* USART_CR1 */
 #define USART_CR1_SBK		BIT(0)
@@ -145,8 +150,7 @@ struct stm32_usart_info stm32h7_info = {
 #define USART_CR1_PS		BIT(9)
 #define USART_CR1_PCE		BIT(10)
 #define USART_CR1_WAKE		BIT(11)
-#define USART_CR1_M		BIT(12)
-#define USART_CR1_M0		BIT(12)		/* F7 */
+#define USART_CR1_M0		BIT(12)		/* F7 (CR1_M for F4) */
 #define USART_CR1_MME		BIT(13)		/* F7 */
 #define USART_CR1_CMIE		BIT(14)		/* F7 */
 #define USART_CR1_OVER8		BIT(15)
@@ -157,6 +161,8 @@ struct stm32_usart_info stm32h7_info = {
 #define USART_CR1_M1		BIT(28)		/* F7 */
 #define USART_CR1_IE_MASK	(GENMASK(8, 4) | BIT(14) | BIT(26) | BIT(27))
 #define USART_CR1_FIFOEN	BIT(29)		/* H7 */
+#define USART_CR1_DEAT_SHIFT 21
+#define USART_CR1_DEDT_SHIFT 16
 
 /* USART_CR2 */
 #define USART_CR2_ADD_MASK	GENMASK(3, 0)	/* F4 */
@@ -199,6 +205,19 @@ struct stm32_usart_info stm32h7_info = {
 #define USART_CR3_WUS_MASK	GENMASK(21, 20)	/* H7 */
 #define USART_CR3_WUS_START_BIT	BIT(21)		/* H7 */
 #define USART_CR3_WUFIE		BIT(22)		/* H7 */
+#define USART_CR3_TXFTIE	BIT(23)		/* H7 */
+#define USART_CR3_TCBGTIE	BIT(24)		/* H7 */
+#define USART_CR3_RXFTCFG_MASK	GENMASK(27, 25)	/* H7 */
+#define USART_CR3_RXFTCFG_SHIFT	25		/* H7 */
+#define USART_CR3_RXFTIE	BIT(28)		/* H7 */
+#define USART_CR3_TXFTCFG_MASK	GENMASK(31, 29)	/* H7 */
+#define USART_CR3_TXFTCFG_SHIFT	29		/* H7 */
+
+/* TX FIFO threashold set to half of its depth */
+#define USART_CR3_TXFTCFG_HALF	0x2
+
+/* RX FIFO threashold set to half of its depth */
+#define USART_CR3_RXFTCFG_HALF	0x2
 
 /* USART_GTPR */
 #define USART_GTPR_PSC_MASK	GENMASK(7, 0)
@@ -227,7 +246,7 @@ struct stm32_usart_info stm32h7_info = {
 #define USART_ICR_CMCF		BIT(17)		/* F7 */
 #define USART_ICR_WUCF		BIT(20)		/* H7 */
 
-#define STM32_SERIAL_NAME "ttyS"
+#define STM32_SERIAL_NAME "ttySTM"
 #define STM32_MAX_PORTS 8
 
 #define RX_BUF_L 200		 /* dma rx buffer length     */
@@ -244,11 +263,14 @@ struct stm32_port {
 	struct dma_chan *tx_ch;  /* dma tx channel            */
 	dma_addr_t tx_dma_buf;   /* dma tx buffer bus address */
 	unsigned char *tx_buf;   /* dma tx buffer cpu address */
+	u32 cr1_irq;		 /* USART_CR1_RXNEIE or RTOIE */
+	u32 cr3_irq;		 /* USART_CR3_RXFTIE */
 	int last_res;
 	bool tx_dma_busy;	 /* dma tx busy               */
 	bool hw_flow_control;
 	bool fifoen;
 	int wakeirq;
+	int rdr_mask;		/* receive data register mask */
 };
 
 static struct stm32_port stm32_ports[STM32_MAX_PORTS];

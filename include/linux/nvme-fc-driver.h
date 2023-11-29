@@ -1,18 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2016, Avago Technologies
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 
 #ifndef _NVME_FC_DRIVER_H
 #define _NVME_FC_DRIVER_H 1
+
+#include <linux/scatterlist.h>
 
 
 /*
@@ -25,12 +19,6 @@
 
 
 
-/* FC Port role bitmask - can merge with FC Port Roles in fc transport */
-#define FC_PORT_ROLE_NVME_INITIATOR	0x10
-#define FC_PORT_ROLE_NVME_TARGET	0x20
-#define FC_PORT_ROLE_NVME_DISCOVERY	0x40
-
-
 /**
  * struct nvme_fc_port_info - port-specific ids and FC connection-specific
  *                            data element used during NVME Host role
@@ -40,6 +28,8 @@
  * @node_name: FC WWNN for the port
  * @port_name: FC WWPN for the port
  * @port_role: What NVME roles are supported (see FC_PORT_ROLE_xxx)
+ * @dev_loss_tmo: maximum delay for reconnects to an association on
+ *             this device. Used only on a remoteport.
  *
  * Initialization values for dynamic port fields:
  * @port_id:      FC N_Port_ID currently assigned the port. Upper 8 bits must
@@ -50,6 +40,7 @@ struct nvme_fc_port_info {
 	u64			port_name;
 	u32			port_role;
 	u32			port_id;
+	u32			dev_loss_tmo;
 };
 
 
@@ -101,8 +92,6 @@ enum nvmefc_fcp_datadir {
 	NVMEFC_FCP_READ,
 };
 
-
-#define NVME_FC_MAX_SEGMENTS		256
 
 /**
  * struct nvmefc_fcp_req - Request structure passed from NVME-FC transport
@@ -202,6 +191,9 @@ enum nvme_fc_obj_state {
  *             The length of the buffer corresponds to the local_priv_sz
  *             value specified in the nvme_fc_port_template supplied by
  *             the LLDD.
+ * @dev_loss_tmo: maximum delay for reconnects to an association on
+ *             this device. To modify, lldd must call
+ *             nvme_fc_set_remoteport_devloss().
  *
  * Fields with dynamic values. Values may change base on link state. LLDD
  * may reference fields directly to change them. Initialized by the
@@ -259,10 +251,9 @@ struct nvme_fc_remote_port {
 	u32 port_role;
 	u64 node_name;
 	u64 port_name;
-
 	struct nvme_fc_local_port *localport;
-
 	void *private;
+	u32 dev_loss_tmo;
 
 	/* dynamic fields */
 	u32 port_id;
@@ -400,7 +391,6 @@ struct nvme_fc_port_template {
 				void **handle);
 	void	(*delete_queue)(struct nvme_fc_local_port *,
 				unsigned int qidx, void *handle);
-	void	(*poll_queue)(struct nvme_fc_local_port *, void *handle);
 	int	(*ls_req)(struct nvme_fc_local_port *,
 				struct nvme_fc_remote_port *,
 				struct nvmefc_ls_req *);
@@ -446,6 +436,10 @@ int nvme_fc_register_remoteport(struct nvme_fc_local_port *localport,
 
 int nvme_fc_unregister_remoteport(struct nvme_fc_remote_port *remoteport);
 
+void nvme_fc_rescan_remoteport(struct nvme_fc_remote_port *remoteport);
+
+int nvme_fc_set_remoteport_devloss(struct nvme_fc_remote_port *remoteport,
+			u32 dev_loss_tmo);
 
 
 /*
@@ -642,22 +636,6 @@ enum {
 		 * sequence in one LLDD operation. Errors during Data
 		 * sequence transmit must not allow RSP sequence to be sent.
 		 */
-	NVMET_FCTGTFEAT_CMD_IN_ISR = (1 << 1),
-		/* Bit 2: When 0, the LLDD is calling the cmd rcv handler
-		 * in a non-isr context, allowing the transport to finish
-		 * op completion in the calling context. When 1, the LLDD
-		 * is calling the cmd rcv handler in an ISR context,
-		 * requiring the transport to transition to a workqueue
-		 * for op completion.
-		 */
-	NVMET_FCTGTFEAT_OPDONE_IN_ISR = (1 << 2),
-		/* Bit 3: When 0, the LLDD is calling the op done handler
-		 * in a non-isr context, allowing the transport to finish
-		 * op completion in the calling context. When 1, the LLDD
-		 * is calling the op done handler in an ISR context,
-		 * requiring the transport to transition to a workqueue
-		 * for op completion.
-		 */
 };
 
 
@@ -815,6 +793,11 @@ struct nvmet_fc_target_port {
  *       nvmefc_tgt_fcp_req.
  *       Entrypoint is Optional.
  *
+ * @discovery_event:  Called by the transport to generate an RSCN
+ *       change notifications to NVME initiators. The RSCN notifications
+ *       should cause the initiator to rescan the discovery controller
+ *       on the targetport.
+ *
  * @max_hw_queues:  indicates the maximum number of hw queues the LLDD
  *       supports for cpu affinitization.
  *       Value is Mandatory. Must be at least 1.
@@ -856,6 +839,7 @@ struct nvmet_fc_target_template {
 				struct nvmefc_tgt_fcp_req *fcpreq);
 	void (*defer_rcv)(struct nvmet_fc_target_port *tgtport,
 				struct nvmefc_tgt_fcp_req *fcpreq);
+	void (*discovery_event)(struct nvmet_fc_target_port *tgtport);
 
 	u32	max_hw_queues;
 	u16	max_sgl_segments;

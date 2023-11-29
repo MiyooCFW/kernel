@@ -1,15 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Marvell 88E6xxx VLAN [Spanning Tree] Translation Unit (VTU [STU]) support
  *
  * Copyright (c) 2008 Marvell Semiconductor
  * Copyright (c) 2015 CMC Electronics, Inc.
  * Copyright (c) 2017 Savoir-faire Linux, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
+
+#include <linux/bitfield.h>
+#include <linux/interrupt.h>
+#include <linux/irqdomain.h>
 
 #include "chip.h"
 #include "global1.h"
@@ -68,8 +68,9 @@ static int mv88e6xxx_g1_vtu_sid_write(struct mv88e6xxx_chip *chip,
 
 static int mv88e6xxx_g1_vtu_op_wait(struct mv88e6xxx_chip *chip)
 {
-	return mv88e6xxx_g1_wait(chip, MV88E6XXX_G1_VTU_OP,
-				 MV88E6XXX_G1_VTU_OP_BUSY);
+	int bit = __bf_shf(MV88E6XXX_G1_VTU_OP_BUSY);
+
+	return mv88e6xxx_g1_wait_bit(chip, MV88E6XXX_G1_VTU_OP, bit, 0);
 }
 
 static int mv88e6xxx_g1_vtu_op(struct mv88e6xxx_chip *chip, u16 op)
@@ -335,6 +336,39 @@ static int mv88e6xxx_g1_vtu_getnext(struct mv88e6xxx_chip *chip,
 	return mv88e6xxx_g1_vtu_vid_read(chip, entry);
 }
 
+int mv88e6250_g1_vtu_getnext(struct mv88e6xxx_chip *chip,
+			     struct mv88e6xxx_vtu_entry *entry)
+{
+	u16 val;
+	int err;
+
+	err = mv88e6xxx_g1_vtu_getnext(chip, entry);
+	if (err)
+		return err;
+
+	if (entry->valid) {
+		err = mv88e6185_g1_vtu_data_read(chip, entry);
+		if (err)
+			return err;
+
+		err = mv88e6185_g1_stu_data_read(chip, entry);
+		if (err)
+			return err;
+
+		/* VTU DBNum[3:0] are located in VTU Operation 3:0
+		 * VTU DBNum[5:4] are located in VTU Operation 9:8
+		 */
+		err = mv88e6xxx_g1_read(chip, MV88E6XXX_G1_VTU_OP, &val);
+		if (err)
+			return err;
+
+		entry->fid = val & 0x000f;
+		entry->fid |= (val & 0x0300) >> 4;
+	}
+
+	return 0;
+}
+
 int mv88e6185_g1_vtu_getnext(struct mv88e6xxx_chip *chip,
 			     struct mv88e6xxx_vtu_entry *entry)
 {
@@ -430,6 +464,35 @@ int mv88e6390_g1_vtu_getnext(struct mv88e6xxx_chip *chip,
 	}
 
 	return 0;
+}
+
+int mv88e6250_g1_vtu_loadpurge(struct mv88e6xxx_chip *chip,
+			       struct mv88e6xxx_vtu_entry *entry)
+{
+	u16 op = MV88E6XXX_G1_VTU_OP_VTU_LOAD_PURGE;
+	int err;
+
+	err = mv88e6xxx_g1_vtu_op_wait(chip);
+	if (err)
+		return err;
+
+	err = mv88e6xxx_g1_vtu_vid_write(chip, entry);
+	if (err)
+		return err;
+
+	if (entry->valid) {
+		err = mv88e6185_g1_vtu_data_write(chip, entry);
+		if (err)
+			return err;
+
+		/* VTU DBNum[3:0] are located in VTU Operation 3:0
+		 * VTU DBNum[5:4] are located in VTU Operation 9:8
+		 */
+		op |= entry->fid & 0x000f;
+		op |= (entry->fid & 0x0030) << 4;
+	}
+
+	return mv88e6xxx_g1_vtu_op(chip, op);
 }
 
 int mv88e6185_g1_vtu_loadpurge(struct mv88e6xxx_chip *chip,
@@ -551,4 +614,78 @@ int mv88e6xxx_g1_vtu_flush(struct mv88e6xxx_chip *chip)
 		return err;
 
 	return mv88e6xxx_g1_vtu_op(chip, MV88E6XXX_G1_VTU_OP_FLUSH_ALL);
+}
+
+static irqreturn_t mv88e6xxx_g1_vtu_prob_irq_thread_fn(int irq, void *dev_id)
+{
+	struct mv88e6xxx_chip *chip = dev_id;
+	struct mv88e6xxx_vtu_entry entry;
+	int spid;
+	int err;
+	u16 val;
+
+	mv88e6xxx_reg_lock(chip);
+
+	err = mv88e6xxx_g1_vtu_op(chip, MV88E6XXX_G1_VTU_OP_GET_CLR_VIOLATION);
+	if (err)
+		goto out;
+
+	err = mv88e6xxx_g1_read(chip, MV88E6XXX_G1_VTU_OP, &val);
+	if (err)
+		goto out;
+
+	err = mv88e6xxx_g1_vtu_vid_read(chip, &entry);
+	if (err)
+		goto out;
+
+	spid = val & MV88E6XXX_G1_VTU_OP_SPID_MASK;
+
+	if (val & MV88E6XXX_G1_VTU_OP_MEMBER_VIOLATION) {
+		dev_err_ratelimited(chip->dev, "VTU member violation for vid %d, source port %d\n",
+				    entry.vid, spid);
+		chip->ports[spid].vtu_member_violation++;
+	}
+
+	if (val & MV88E6XXX_G1_VTU_OP_MISS_VIOLATION) {
+		dev_dbg_ratelimited(chip->dev, "VTU miss violation for vid %d, source port %d\n",
+				    entry.vid, spid);
+		chip->ports[spid].vtu_miss_violation++;
+	}
+
+	mv88e6xxx_reg_unlock(chip);
+
+	return IRQ_HANDLED;
+
+out:
+	mv88e6xxx_reg_unlock(chip);
+
+	dev_err(chip->dev, "VTU problem: error %d while handling interrupt\n",
+		err);
+
+	return IRQ_HANDLED;
+}
+
+int mv88e6xxx_g1_vtu_prob_irq_setup(struct mv88e6xxx_chip *chip)
+{
+	int err;
+
+	chip->vtu_prob_irq = irq_find_mapping(chip->g1_irq.domain,
+					      MV88E6XXX_G1_STS_IRQ_VTU_PROB);
+	if (chip->vtu_prob_irq < 0)
+		return chip->vtu_prob_irq;
+
+	err = request_threaded_irq(chip->vtu_prob_irq, NULL,
+				   mv88e6xxx_g1_vtu_prob_irq_thread_fn,
+				   IRQF_ONESHOT, "mv88e6xxx-g1-vtu-prob",
+				   chip);
+	if (err)
+		irq_dispose_mapping(chip->vtu_prob_irq);
+
+	return err;
+}
+
+void mv88e6xxx_g1_vtu_prob_irq_free(struct mv88e6xxx_chip *chip)
+{
+	free_irq(chip->vtu_prob_irq, chip);
+	irq_dispose_mapping(chip->vtu_prob_irq);
 }

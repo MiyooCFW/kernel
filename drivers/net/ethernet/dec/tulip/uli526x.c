@@ -1,13 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
-    This program is free software; you can redistribute it and/or
-    modify it under the terms of the GNU General Public License
-    as published by the Free Software Foundation; either version 2
-    of the License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
 
 
 */
@@ -241,7 +233,7 @@ static void phy_write_1bit(struct uli526x_board_info *db, u32);
 static u16 phy_read_1bit(struct uli526x_board_info *db);
 static u8 uli526x_sense_speed(struct uli526x_board_info *);
 static void uli526x_process_mode(struct uli526x_board_info *);
-static void uli526x_timer(unsigned long);
+static void uli526x_timer(struct timer_list *t);
 static void uli526x_rx_packet(struct net_device *, struct uli526x_board_info *);
 static void uli526x_free_tx_pkt(struct net_device *, struct uli526x_board_info *);
 static void uli526x_reuse_skb(struct uli526x_board_info *, struct sk_buff *);
@@ -491,10 +483,8 @@ static int uli526x_open(struct net_device *dev)
 	netif_wake_queue(dev);
 
 	/* set and active a timer process */
-	init_timer(&db->timer);
+	timer_setup(&db->timer, uli526x_timer, 0);
 	db->timer.expires = ULI526X_TIMER_WUT + HZ * 2;
-	db->timer.data = (unsigned long)dev;
-	db->timer.function = uli526x_timer;
 	add_timer(&db->timer);
 
 	return 0;
@@ -1023,10 +1013,10 @@ static const struct ethtool_ops netdev_ethtool_ops = {
  *	Dynamic media sense, allocate Rx buffer...
  */
 
-static void uli526x_timer(unsigned long data)
+static void uli526x_timer(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *) data;
-	struct uli526x_board_info *db = netdev_priv(dev);
+	struct uli526x_board_info *db = from_timer(db, t, timer);
+	struct net_device *dev = pci_get_drvdata(db->pdev);
 	struct uli_phy_ops *phy = &db->phy;
 	void __iomem *ioaddr = db->ioaddr;
  	unsigned long flags;

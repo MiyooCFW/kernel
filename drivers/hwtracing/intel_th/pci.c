@@ -1,16 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Intel(R) Trace Hub pci driver
  *
  * Copyright (C) 2014-2015 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 
 #define pr_fmt(fmt)	KBUILD_MODNAME ": " fmt
@@ -25,7 +17,13 @@
 
 #define DRIVER_NAME "intel_th_pci"
 
-#define BAR_MASK (BIT(TH_MMIO_CONFIG) | BIT(TH_MMIO_SW))
+enum {
+	TH_PCI_CONFIG_BAR	= 0,
+	TH_PCI_STH_SW_BAR	= 2,
+	TH_PCI_RTIT_BAR		= 4,
+};
+
+#define BAR_MASK (BIT(TH_PCI_CONFIG_BAR) | BIT(TH_PCI_STH_SW_BAR))
 
 #define PCI_REG_NPKDSC	0x80
 #define NPKDSC_TSACT	BIT(5)
@@ -74,8 +72,12 @@ static int intel_th_pci_probe(struct pci_dev *pdev,
 			      const struct pci_device_id *id)
 {
 	struct intel_th_drvdata *drvdata = (void *)id->driver_data;
+	struct resource resource[TH_MMIO_END + TH_NVEC_MAX] = {
+		[TH_MMIO_CONFIG]	= pdev->resource[TH_PCI_CONFIG_BAR],
+		[TH_MMIO_SW]		= pdev->resource[TH_PCI_STH_SW_BAR],
+	};
+	int err, r = TH_MMIO_SW + 1, i;
 	struct intel_th *th;
-	int err;
 
 	err = pcim_enable_device(pdev);
 	if (err)
@@ -85,10 +87,23 @@ static int intel_th_pci_probe(struct pci_dev *pdev,
 	if (err)
 		return err;
 
-	th = intel_th_alloc(&pdev->dev, drvdata, pdev->resource,
-			    DEVICE_COUNT_RESOURCE, pdev->irq);
-	if (IS_ERR(th))
-		return PTR_ERR(th);
+	if (pdev->resource[TH_PCI_RTIT_BAR].start) {
+		resource[TH_MMIO_RTIT] = pdev->resource[TH_PCI_RTIT_BAR];
+		r++;
+	}
+
+	err = pci_alloc_irq_vectors(pdev, 1, 8, PCI_IRQ_ALL_TYPES);
+	if (err > 0)
+		for (i = 0; i < err; i++, r++) {
+			resource[r].flags = IORESOURCE_IRQ;
+			resource[r].start = pci_irq_vector(pdev, i);
+		}
+
+	th = intel_th_alloc(&pdev->dev, drvdata, resource, r);
+	if (IS_ERR(th)) {
+		err = PTR_ERR(th);
+		goto err_free_irq;
+	}
 
 	th->activate   = intel_th_pci_activate;
 	th->deactivate = intel_th_pci_deactivate;
@@ -96,6 +111,10 @@ static int intel_th_pci_probe(struct pci_dev *pdev,
 	pci_set_master(pdev);
 
 	return 0;
+
+err_free_irq:
+	pci_free_irq_vectors(pdev);
+	return err;
 }
 
 static void intel_th_pci_remove(struct pci_dev *pdev)
@@ -103,10 +122,17 @@ static void intel_th_pci_remove(struct pci_dev *pdev)
 	struct intel_th *th = pci_get_drvdata(pdev);
 
 	intel_th_free(th);
+
+	pci_free_irq_vectors(pdev);
 }
+
+static const struct intel_th_drvdata intel_th_1x_multi_is_broken = {
+	.multi_is_broken	= 1,
+};
 
 static const struct intel_th_drvdata intel_th_2x = {
 	.tscu_enable	= 1,
+	.has_mintctl	= 1,
 };
 
 static const struct pci_device_id intel_th_pci_id_table[] = {
@@ -136,7 +162,7 @@ static const struct pci_device_id intel_th_pci_id_table[] = {
 	{
 		/* Kaby Lake PCH-H */
 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xa2a6),
-		.driver_data = (kernel_ulong_t)0,
+		.driver_data = (kernel_ulong_t)&intel_th_1x_multi_is_broken,
 	},
 	{
 		/* Denverton */
@@ -191,7 +217,7 @@ static const struct pci_device_id intel_th_pci_id_table[] = {
 	{
 		/* Comet Lake PCH-V */
 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xa3a6),
-		.driver_data = (kernel_ulong_t)&intel_th_2x,
+		.driver_data = (kernel_ulong_t)&intel_th_1x_multi_is_broken,
 	},
 	{
 		/* Ice Lake NNPI */
@@ -259,13 +285,13 @@ static const struct pci_device_id intel_th_pci_id_table[] = {
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{
-		/* Raptor Lake-S */
-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7a26),
+		/* Meteor Lake-P */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7e24),
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{
-		/* Meteor Lake-P */
-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7e24),
+		/* Raptor Lake-S */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7a26),
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{

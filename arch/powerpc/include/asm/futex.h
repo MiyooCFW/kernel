@@ -8,7 +8,7 @@
 #include <linux/uaccess.h>
 #include <asm/errno.h>
 #include <asm/synch.h>
-#include <asm/asm-compat.h>
+#include <asm/asm-405.h>
 
 #define __futex_atomic_op(insn, ret, oldval, uaddr, oparg) \
   __asm__ __volatile ( \
@@ -35,7 +35,7 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
 {
 	int oldval = 0, ret;
 
-	allow_write_to_user(uaddr, sizeof(*uaddr));
+	allow_read_write_user(uaddr, uaddr, sizeof(*uaddr));
 	pagefault_disable();
 
 	switch (op) {
@@ -62,7 +62,7 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
 
 	*oval = oldval;
 
-	prevent_write_to_user(uaddr, sizeof(*uaddr));
+	prevent_read_write_user(uaddr, uaddr, sizeof(*uaddr));
 	return ret;
 }
 
@@ -73,10 +73,11 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
 	int ret = 0;
 	u32 prev;
 
-	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
+	if (!access_ok(uaddr, sizeof(u32)))
 		return -EFAULT;
 
-	allow_write_to_user(uaddr, sizeof(*uaddr));
+	allow_read_write_user(uaddr, uaddr, sizeof(*uaddr));
+
         __asm__ __volatile__ (
         PPC_ATOMIC_ENTRY_BARRIER
 "1:     lwarx   %1,0,%3         # futex_atomic_cmpxchg_inatomic\n\
@@ -97,7 +98,8 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
         : "cc", "memory");
 
 	*uval = prev;
-	prevent_write_to_user(uaddr, sizeof(*uaddr));
+	prevent_read_write_user(uaddr, uaddr, sizeof(*uaddr));
+
         return ret;
 }
 

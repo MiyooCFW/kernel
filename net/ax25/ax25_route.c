@@ -1,8 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  *
  * Copyright (C) Alan Cox GW4PTS (alan@lxorguk.ukuu.org.uk)
  * Copyright (C) Jonathan Naylor G4KLX (g4klx@g4klx.demon.co.uk)
@@ -332,26 +329,12 @@ static int ax25_rt_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations ax25_rt_seqops = {
+const struct seq_operations ax25_rt_seqops = {
 	.start = ax25_rt_seq_start,
 	.next = ax25_rt_seq_next,
 	.stop = ax25_rt_seq_stop,
 	.show = ax25_rt_seq_show,
 };
-
-static int ax25_rt_info_open(struct inode *inode, struct file *file)
-{
-	return seq_open(file, &ax25_rt_seqops);
-}
-
-const struct file_operations ax25_route_fops = {
-	.owner = THIS_MODULE,
-	.open = ax25_rt_info_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = seq_release,
-};
-
 #endif
 
 /*

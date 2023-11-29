@@ -58,13 +58,6 @@ static const struct header_ops lowpan_header_ops = {
 	.create	= lowpan_header_create,
 };
 
-static int lowpan_dev_init(struct net_device *ldev)
-{
-	netdev_lockdep_set_classes(ldev);
-
-	return 0;
-}
-
 static int lowpan_open(struct net_device *dev)
 {
 	if (!open_count)
@@ -96,7 +89,6 @@ static int lowpan_get_iflink(const struct net_device *dev)
 }
 
 static const struct net_device_ops lowpan_netdev_ops = {
-	.ndo_init		= lowpan_dev_init,
 	.ndo_start_xmit		= lowpan_xmit,
 	.ndo_open		= lowpan_open,
 	.ndo_stop		= lowpan_stop,
@@ -110,6 +102,7 @@ static void lowpan_setup(struct net_device *ldev)
 	/* We need an ipv6hdr as minimum len when calling xmit */
 	ldev->hard_header_len	= sizeof(struct ipv6hdr);
 	ldev->flags		= IFF_BROADCAST | IFF_MULTICAST;
+	ldev->priv_flags	|= IFF_NO_QUEUE;
 
 	ldev->netdev_ops	= &lowpan_netdev_ops;
 	ldev->header_ops	= &lowpan_header_ops;

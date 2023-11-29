@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/mmc/core/host.c
  *
  *  Copyright (C) 2003 Russell King, All Rights Reserved.
  *  Copyright (C) 2007-2008 Pierre Ossman
  *  Copyright (C) 2010 Linus Walleij
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  *  MMC host class device management
  */
@@ -36,6 +33,42 @@
 
 static DEFINE_IDA(mmc_host_ida);
 
+#ifdef CONFIG_PM_SLEEP
+static int mmc_host_class_prepare(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+
+	/*
+	 * It's safe to access the bus_ops pointer, as both userspace and the
+	 * workqueue for detecting cards are frozen at this point.
+	 */
+	if (!host->bus_ops)
+		return 0;
+
+	/* Validate conditions for system suspend. */
+	if (host->bus_ops->pre_suspend)
+		return host->bus_ops->pre_suspend(host);
+
+	return 0;
+}
+
+static void mmc_host_class_complete(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+
+	_mmc_detect_change(host, 0, false);
+}
+
+static const struct dev_pm_ops mmc_host_class_dev_pm_ops = {
+	.prepare = mmc_host_class_prepare,
+	.complete = mmc_host_class_complete,
+};
+
+#define MMC_HOST_CLASS_DEV_PM_OPS (&mmc_host_class_dev_pm_ops)
+#else
+#define MMC_HOST_CLASS_DEV_PM_OPS NULL
+#endif
+
 static void mmc_host_classdev_release(struct device *dev)
 {
 	struct mmc_host *host = cls_dev_to_mmc_host(dev);
@@ -43,9 +76,19 @@ static void mmc_host_classdev_release(struct device *dev)
 	kfree(host);
 }
 
+static int mmc_host_classdev_shutdown(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+
+	__mmc_stop_host(host);
+	return 0;
+}
+
 static struct class mmc_host_class = {
 	.name		= "mmc_host",
 	.dev_release	= mmc_host_classdev_release,
+	.shutdown_pre	= mmc_host_classdev_shutdown,
+	.pm		= MMC_HOST_CLASS_DEV_PM_OPS,
 };
 
 int mmc_register_host_class(void)
@@ -111,12 +154,6 @@ void mmc_retune_hold(struct mmc_host *host)
 	host->hold_retune += 1;
 }
 
-void mmc_retune_hold_now(struct mmc_host *host)
-{
-	host->retune_now = 0;
-	host->hold_retune += 1;
-}
-
 void mmc_retune_release(struct mmc_host *host)
 {
 	if (host->hold_retune)
@@ -124,6 +161,7 @@ void mmc_retune_release(struct mmc_host *host)
 	else
 		WARN_ON(1);
 }
+EXPORT_SYMBOL(mmc_retune_release);
 
 int mmc_retune(struct mmc_host *host)
 {
@@ -148,9 +186,6 @@ int mmc_retune(struct mmc_host *host)
 			goto out;
 
 		return_to_hs400 = true;
-
-		if (host->ops->prepare_hs400_tuning)
-			host->ops->prepare_hs400_tuning(host, &host->ios);
 	}
 
 	err = mmc_execute_tuning(host->card);
@@ -165,9 +200,9 @@ out:
 	return err;
 }
 
-static void mmc_retune_timer(unsigned long data)
+static void mmc_retune_timer(struct timer_list *t)
 {
-	struct mmc_host *host = (struct mmc_host *)data;
+	struct mmc_host *host = from_timer(host, t, retune_timer);
 
 	mmc_retune_needed(host);
 }
@@ -184,10 +219,9 @@ static void mmc_retune_timer(unsigned long data)
 int mmc_of_parse(struct mmc_host *host)
 {
 	struct device *dev = host->parent;
-	u32 bus_width;
+	u32 bus_width, drv_type, cd_debounce_delay_ms;
 	int ret;
 	bool cd_cap_invert, cd_gpio_invert = false;
-	bool ro_cap_invert, ro_gpio_invert = false;
 
 	if (!dev || !dev_fwnode(dev))
 		return 0;
@@ -202,7 +236,7 @@ int mmc_of_parse(struct mmc_host *host)
 	switch (bus_width) {
 	case 8:
 		host->caps |= MMC_CAP_8_BIT_DATA;
-		/* Hosts capable of 8-bit transfers can also do 4 bits */
+		/* fall through - Hosts capable of 8-bit can also do 4 bits */
 	case 4:
 		host->caps |= MMC_CAP_4_BIT_DATA;
 		break;
@@ -235,11 +269,16 @@ int mmc_of_parse(struct mmc_host *host)
 	} else {
 		cd_cap_invert = device_property_read_bool(dev, "cd-inverted");
 
+		if (device_property_read_u32(dev, "cd-debounce-delay-ms",
+					     &cd_debounce_delay_ms))
+			cd_debounce_delay_ms = 200;
+
 		if (device_property_read_bool(dev, "broken-cd"))
 			host->caps |= MMC_CAP_NEEDS_POLL;
 
-		ret = mmc_gpiod_request_cd(host, "cd", 0, true,
-					   0, &cd_gpio_invert);
+		ret = mmc_gpiod_request_cd(host, "cd", 0, false,
+					   cd_debounce_delay_ms * 1000,
+					   &cd_gpio_invert);
 		if (!ret)
 			dev_info(host->parent, "Got CD GPIO\n");
 		else if (ret != -ENOENT && ret != -ENOSYS)
@@ -261,9 +300,11 @@ int mmc_of_parse(struct mmc_host *host)
 	}
 
 	/* Parse Write Protection */
-	ro_cap_invert = device_property_read_bool(dev, "wp-inverted");
 
-	ret = mmc_gpiod_request_ro(host, "wp", 0, false, 0, &ro_gpio_invert);
+	if (device_property_read_bool(dev, "wp-inverted"))
+		host->caps2 |= MMC_CAP2_RO_ACTIVE_HIGH;
+
+	ret = mmc_gpiod_request_ro(host, "wp", 0, 0, NULL);
 	if (!ret)
 		dev_info(host->parent, "Got WP GPIO\n");
 	else if (ret != -ENOENT && ret != -ENOSYS)
@@ -271,10 +312,6 @@ int mmc_of_parse(struct mmc_host *host)
 
 	if (device_property_read_bool(dev, "disable-wp"))
 		host->caps2 |= MMC_CAP2_NO_WRITE_PROTECT;
-
-	/* See the comment on CD inversion above */
-	if (ro_cap_invert ^ ro_gpio_invert)
-		host->caps2 |= MMC_CAP2_RO_ACTIVE_HIGH;
 
 	if (device_property_read_bool(dev, "cap-sd-highspeed"))
 		host->caps |= MMC_CAP_SD_HIGHSPEED;
@@ -326,6 +363,15 @@ int mmc_of_parse(struct mmc_host *host)
 	if (device_property_read_bool(dev, "no-mmc"))
 		host->caps2 |= MMC_CAP2_NO_MMC;
 
+	/* Must be after "non-removable" check */
+	if (device_property_read_u32(dev, "fixed-emmc-driver-type", &drv_type) == 0) {
+		if (host->caps & MMC_CAP_NONREMOVABLE)
+			host->fixed_drv_type = drv_type;
+		else
+			dev_err(host->parent,
+				"can't use fixed driver type, media is removable\n");
+	}
+
 	host->dsr_req = !device_property_read_u32(dev, "dsr", &host->dsr);
 	if (host->dsr_req && (host->dsr & ~0xffff)) {
 		dev_err(host->parent,
@@ -334,10 +380,57 @@ int mmc_of_parse(struct mmc_host *host)
 		host->dsr_req = 0;
 	}
 
+	device_property_read_u32(dev, "post-power-on-delay-ms",
+				 &host->ios.power_delay_ms);
+
 	return mmc_pwrseq_alloc(host);
 }
 
 EXPORT_SYMBOL(mmc_of_parse);
+
+/**
+ * mmc_of_parse_voltage - return mask of supported voltages
+ * @np: The device node need to be parsed.
+ * @mask: mask of voltages available for MMC/SD/SDIO
+ *
+ * Parse the "voltage-ranges" DT property, returning zero if it is not
+ * found, negative errno if the voltage-range specification is invalid,
+ * or one if the voltage-range is specified and successfully parsed.
+ */
+int mmc_of_parse_voltage(struct device_node *np, u32 *mask)
+{
+	const u32 *voltage_ranges;
+	int num_ranges, i;
+
+	voltage_ranges = of_get_property(np, "voltage-ranges", &num_ranges);
+	if (!voltage_ranges) {
+		pr_debug("%pOF: voltage-ranges unspecified\n", np);
+		return 0;
+	}
+	num_ranges = num_ranges / sizeof(*voltage_ranges) / 2;
+	if (!num_ranges) {
+		pr_err("%pOF: voltage-ranges empty\n", np);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < num_ranges; i++) {
+		const int j = i * 2;
+		u32 ocr_mask;
+
+		ocr_mask = mmc_vddrange_to_ocrmask(
+				be32_to_cpu(voltage_ranges[j]),
+				be32_to_cpu(voltage_ranges[j + 1]));
+		if (!ocr_mask) {
+			pr_err("%pOF: voltage-range #%d is invalid\n",
+				np, i);
+			return -EINVAL;
+		}
+		*mask |= ocr_mask;
+	}
+
+	return 1;
+}
+EXPORT_SYMBOL(mmc_of_parse_voltage);
 
 /**
  *	mmc_alloc_host - initialise the per-host structure.
@@ -383,7 +476,7 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	init_waitqueue_head(&host->wq);
 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
 	INIT_DELAYED_WORK(&host->sdio_irq_work, sdio_irq_work);
-	setup_timer(&host->retune_timer, mmc_retune_timer, (unsigned long)host);
+	timer_setup(&host->retune_timer, mmc_retune_timer, 0);
 
 	/*
 	 * By default, hosts do not support SGIO or large requests.
@@ -395,6 +488,9 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	host->max_req_size = PAGE_SIZE;
 	host->max_blk_size = 512;
 	host->max_blk_count = PAGE_SIZE / 512;
+
+	host->fixed_drv_type = -EINVAL;
+	host->ios.power_delay_ms = 10;
 
 	return host;
 }
@@ -438,8 +534,6 @@ int mmc_add_host(struct mmc_host *host)
 #endif
 
 	mmc_start_host(host);
-	mmc_register_pm_notifier(host);
-
 	return 0;
 }
 
@@ -455,7 +549,6 @@ EXPORT_SYMBOL(mmc_add_host);
  */
 void mmc_remove_host(struct mmc_host *host)
 {
-	mmc_unregister_pm_notifier(host);
 	mmc_stop_host(host);
 
 #ifdef CONFIG_DEBUG_FS

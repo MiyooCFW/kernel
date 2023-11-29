@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/kernel/setup.c
  *
  *  Copyright (C) 1995-2001 Russell King
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 #include <linux/efi.h>
 #include <linux/export.h>
@@ -16,12 +13,12 @@
 #include <linux/utsname.h>
 #include <linux/initrd.h>
 #include <linux/console.h>
-#include <linux/bootmem.h>
 #include <linux/seq_file.h>
 #include <linux/screen_info.h>
 #include <linux/of_platform.h>
 #include <linux/init.h>
 #include <linux/kexec.h>
+#include <linux/libfdt.h>
 #include <linux/of_fdt.h>
 #include <linux/cpu.h>
 #include <linux/interrupt.h>
@@ -766,7 +763,7 @@ int __init arm_add_memory(u64 start, u64 size)
 	else
 		size -= aligned_start - start;
 
-#ifndef CONFIG_ARCH_PHYS_ADDR_T_64BIT
+#ifndef CONFIG_PHYS_ADDR_T_64BIT
 	if (aligned_start > ULONG_MAX) {
 		pr_crit("Ignoring memory at 0x%08llx outside 32-bit physical address space\n",
 			(long long)start);
@@ -869,7 +866,10 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 		 */
 		boot_alias_start = phys_to_idmap(start);
 		if (arm_has_idmap_alias() && boot_alias_start != IDMAP_INVALID_ADDR) {
-			res = memblock_virt_alloc(sizeof(*res), 0);
+			res = memblock_alloc(sizeof(*res), SMP_CACHE_BYTES);
+			if (!res)
+				panic("%s: Failed to allocate %zu bytes\n",
+				      __func__, sizeof(*res));
 			res->name = "System RAM (boot alias)";
 			res->start = boot_alias_start;
 			res->end = phys_to_idmap(end);
@@ -877,7 +877,10 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 			request_resource(&iomem_resource, res);
 		}
 
-		res = memblock_virt_alloc(sizeof(*res), 0);
+		res = memblock_alloc(sizeof(*res), SMP_CACHE_BYTES);
+		if (!res)
+			panic("%s: Failed to allocate %zu bytes\n", __func__,
+			      sizeof(*res));
 		res->name  = "System RAM";
 		res->start = start;
 		res->end = end;
@@ -1075,12 +1078,30 @@ void __init hyp_mode_check(void)
 
 void __init setup_arch(char **cmdline_p)
 {
-	const struct machine_desc *mdesc;
+	const struct machine_desc *mdesc = NULL;
+	void *atags_vaddr = NULL;
+
+	if (__atags_pointer)
+		atags_vaddr = FDT_VIRT_BASE(__atags_pointer);
 
 	setup_processor();
-	mdesc = setup_machine_fdt(__atags_pointer);
+	if (atags_vaddr) {
+		mdesc = setup_machine_fdt(atags_vaddr);
+		if (mdesc)
+			memblock_reserve(__atags_pointer,
+					 fdt_totalsize(atags_vaddr));
+	}
 	if (!mdesc)
-		mdesc = setup_machine_tags(__atags_pointer, __machine_arch_type);
+		mdesc = setup_machine_tags(atags_vaddr, __machine_arch_type);
+	if (!mdesc) {
+		early_print("\nError: invalid dtb and unrecognized/unsupported machine ID\n");
+		early_print("  r1=0x%08x, r2=0x%08x\n", __machine_arch_type,
+			    __atags_pointer);
+		if (__atags_pointer)
+			early_print("  r2[]=%*ph\n", 16, atags_vaddr);
+		dump_machine_table();
+	}
+
 	machine_desc = mdesc;
 	machine_name = mdesc->name;
 	dump_stack_set_arch_desc("%s", mdesc->name);
@@ -1147,7 +1168,7 @@ void __init setup_arch(char **cmdline_p)
 
 	reserve_crashkernel();
 
-#ifdef CONFIG_MULTI_IRQ_HANDLER
+#ifdef CONFIG_GENERIC_IRQ_MULTI_HANDLER
 	handle_arch_irq = mdesc->handle_irq;
 #endif
 

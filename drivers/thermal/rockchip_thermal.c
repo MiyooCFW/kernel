@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014-2016, Fuzhou Rockchip Electronics Co., Ltd
  * Caesar Wang <wxt@rock-chips.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 
 #include <linux/clk.h>
@@ -222,10 +214,14 @@ struct rockchip_thermal_data {
 #define GRF_TSADC_TESTBIT_L			0x0e648
 #define GRF_TSADC_TESTBIT_H			0x0e64c
 
+#define PX30_GRF_SOC_CON2			0x0408
+
 #define GRF_SARADC_TESTBIT_ON			(0x10001 << 2)
 #define GRF_TSADC_TESTBIT_H_ON			(0x10001 << 2)
 #define GRF_TSADC_VCM_EN_L			(0x10001 << 7)
 #define GRF_TSADC_VCM_EN_H			(0x10001 << 7)
+
+#define GRF_CON_TSADC_CH_INV			(0x10001 << 1)
 
 /**
  * struct tsadc_table - code to temperature conversion table
@@ -240,6 +236,45 @@ struct rockchip_thermal_data {
 struct tsadc_table {
 	u32 code;
 	int temp;
+};
+
+static const struct tsadc_table rv1108_table[] = {
+	{0, -40000},
+	{374, -40000},
+	{382, -35000},
+	{389, -30000},
+	{397, -25000},
+	{405, -20000},
+	{413, -15000},
+	{421, -10000},
+	{429, -5000},
+	{436, 0},
+	{444, 5000},
+	{452, 10000},
+	{460, 15000},
+	{468, 20000},
+	{476, 25000},
+	{483, 30000},
+	{491, 35000},
+	{499, 40000},
+	{507, 45000},
+	{515, 50000},
+	{523, 55000},
+	{531, 60000},
+	{539, 65000},
+	{547, 70000},
+	{555, 75000},
+	{562, 80000},
+	{570, 85000},
+	{578, 90000},
+	{586, 95000},
+	{594, 100000},
+	{602, 105000},
+	{610, 110000},
+	{618, 115000},
+	{626, 120000},
+	{634, 125000},
+	{TSADCV2_DATA_MASK, 125000},
 };
 
 static const struct tsadc_table rk3228_code_table[] = {
@@ -650,6 +685,13 @@ static void rk_tsadcv3_initialize(struct regmap *grf, void __iomem *regs,
 			       regs + TSADCV2_AUTO_CON);
 }
 
+static void rk_tsadcv4_initialize(struct regmap *grf, void __iomem *regs,
+				  enum tshut_polarity tshut_polarity)
+{
+	rk_tsadcv2_initialize(grf, regs, tshut_polarity);
+	regmap_write(grf, PX30_GRF_SOC_CON2, GRF_CON_TSADC_CH_INV);
+}
+
 static void rk_tsadcv2_irq_ack(void __iomem *regs)
 {
 	u32 val;
@@ -778,6 +820,54 @@ static void rk_tsadcv2_tshut_mode(int chn, void __iomem *regs,
 
 	writel_relaxed(val, regs + TSADCV2_INT_EN);
 }
+
+static const struct rockchip_tsadc_chip px30_tsadc_data = {
+	.chn_id[SENSOR_CPU] = 0, /* cpu sensor is channel 0 */
+	.chn_id[SENSOR_GPU] = 1, /* gpu sensor is channel 1 */
+	.chn_num = 2, /* 2 channels for tsadc */
+
+	.tshut_mode = TSHUT_MODE_CRU, /* default TSHUT via CRU */
+	.tshut_temp = 95000,
+
+	.initialize = rk_tsadcv4_initialize,
+	.irq_ack = rk_tsadcv3_irq_ack,
+	.control = rk_tsadcv3_control,
+	.get_temp = rk_tsadcv2_get_temp,
+	.set_alarm_temp = rk_tsadcv2_alarm_temp,
+	.set_tshut_temp = rk_tsadcv2_tshut_temp,
+	.set_tshut_mode = rk_tsadcv2_tshut_mode,
+
+	.table = {
+		.id = rk3328_code_table,
+		.length = ARRAY_SIZE(rk3328_code_table),
+		.data_mask = TSADCV2_DATA_MASK,
+		.mode = ADC_INCREMENT,
+	},
+};
+
+static const struct rockchip_tsadc_chip rv1108_tsadc_data = {
+	.chn_id[SENSOR_CPU] = 0, /* cpu sensor is channel 0 */
+	.chn_num = 1, /* one channel for tsadc */
+
+	.tshut_mode = TSHUT_MODE_GPIO, /* default TSHUT via GPIO give PMIC */
+	.tshut_polarity = TSHUT_LOW_ACTIVE, /* default TSHUT LOW ACTIVE */
+	.tshut_temp = 95000,
+
+	.initialize = rk_tsadcv2_initialize,
+	.irq_ack = rk_tsadcv3_irq_ack,
+	.control = rk_tsadcv3_control,
+	.get_temp = rk_tsadcv2_get_temp,
+	.set_alarm_temp = rk_tsadcv2_alarm_temp,
+	.set_tshut_temp = rk_tsadcv2_tshut_temp,
+	.set_tshut_mode = rk_tsadcv2_tshut_mode,
+
+	.table = {
+		.id = rv1108_table,
+		.length = ARRAY_SIZE(rv1108_table),
+		.data_mask = TSADCV2_DATA_MASK,
+		.mode = ADC_INCREMENT,
+	},
+};
 
 static const struct rockchip_tsadc_chip rk3228_tsadc_data = {
 	.chn_id[SENSOR_CPU] = 0, /* cpu sensor is channel 0 */
@@ -927,6 +1017,13 @@ static const struct rockchip_tsadc_chip rk3399_tsadc_data = {
 };
 
 static const struct of_device_id of_rockchip_thermal_match[] = {
+	{	.compatible = "rockchip,px30-tsadc",
+		.data = (void *)&px30_tsadc_data,
+	},
+	{
+		.compatible = "rockchip,rv1108-tsadc",
+		.data = (void *)&rv1108_tsadc_data,
+	},
 	{
 		.compatible = "rockchip,rk3228-tsadc",
 		.data = (void *)&rk3228_tsadc_data,
@@ -1260,8 +1357,7 @@ static int rockchip_thermal_remove(struct platform_device *pdev)
 
 static int __maybe_unused rockchip_thermal_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct rockchip_thermal_data *thermal = platform_get_drvdata(pdev);
+	struct rockchip_thermal_data *thermal = dev_get_drvdata(dev);
 	int i;
 
 	for (i = 0; i < thermal->chip->chn_num; i++)
@@ -1279,8 +1375,7 @@ static int __maybe_unused rockchip_thermal_suspend(struct device *dev)
 
 static int __maybe_unused rockchip_thermal_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct rockchip_thermal_data *thermal = platform_get_drvdata(pdev);
+	struct rockchip_thermal_data *thermal = dev_get_drvdata(dev);
 	int i;
 	int error;
 
@@ -1309,7 +1404,7 @@ static int __maybe_unused rockchip_thermal_resume(struct device *dev)
 					      id, thermal->regs,
 					      thermal->tshut_temp);
 		if (error)
-			dev_err(&pdev->dev, "%s: invalid tshut=%d, error=%d\n",
+			dev_err(dev, "%s: invalid tshut=%d, error=%d\n",
 				__func__, thermal->tshut_temp, error);
 	}
 

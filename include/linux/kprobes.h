@@ -1,22 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef _LINUX_KPROBES_H
 #define _LINUX_KPROBES_H
 /*
  *  Kernel Probes (KProbes)
  *  include/linux/kprobes.h
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * Copyright (C) IBM Corporation, 2002, 2004
  *
@@ -63,7 +50,6 @@ struct pt_regs;
 struct kretprobe;
 struct kretprobe_instance;
 typedef int (*kprobe_pre_handler_t) (struct kprobe *, struct pt_regs *);
-typedef int (*kprobe_break_handler_t) (struct kprobe *, struct pt_regs *);
 typedef void (*kprobe_post_handler_t) (struct kprobe *, struct pt_regs *,
 				       unsigned long flags);
 typedef int (*kprobe_fault_handler_t) (struct kprobe *, struct pt_regs *,
@@ -100,12 +86,6 @@ struct kprobe {
 	 * Return 1 if it handled fault, otherwise kernel will see it.
 	 */
 	kprobe_fault_handler_t fault_handler;
-
-	/*
-	 * ... called if breakpoint trap occurs in probe handler.
-	 * Return 1 if it handled break, otherwise kernel will see it.
-	 */
-	kprobe_break_handler_t break_handler;
 
 	/* Saved opcode (which has been replaced with breakpoint) */
 	kprobe_opcode_t opcode;
@@ -153,24 +133,6 @@ static inline int kprobe_ftrace(struct kprobe *p)
 {
 	return p->flags & KPROBE_FLAG_FTRACE;
 }
-
-/*
- * Special probe type that uses setjmp-longjmp type tricks to resume
- * execution at a specified entry with a matching prototype corresponding
- * to the probed function - a trick to enable arguments to become
- * accessible seamlessly by probe handling logic.
- * Note:
- * Because of the way compilers allocate stack space for local variables
- * etc upfront, regardless of sub-scopes within a function, this mirroring
- * principle currently works only for probes placed on function entry points.
- */
-struct jprobe {
-	struct kprobe kp;
-	void *entry;	/* probe handling code to jump to */
-};
-
-/* For backward compatibility with old code using JPROBE_ENTRY() */
-#define JPROBE_ENTRY(handler)	(handler)
 
 /*
  * Function-return probe -
@@ -270,10 +232,13 @@ extern int arch_init_kprobes(void);
 extern void show_registers(struct pt_regs *regs);
 extern void kprobes_inc_nmissed_count(struct kprobe *p);
 extern bool arch_within_kprobe_blacklist(unsigned long addr);
+extern int arch_populate_kprobe_blacklist(void);
 extern bool arch_kprobe_on_func_entry(unsigned long offset);
-extern bool kprobe_on_func_entry(kprobe_opcode_t *addr, const char *sym, unsigned long offset);
+extern int kprobe_on_func_entry(kprobe_opcode_t *addr, const char *sym, unsigned long offset);
 
 extern bool within_kprobe_blacklist(unsigned long addr);
+extern int kprobe_add_ksym_blacklist(unsigned long entry);
+extern int kprobe_add_area_blacklist(unsigned long start, unsigned long end);
 
 struct kprobe_insn_cache {
 	struct mutex mutex;
@@ -398,13 +363,6 @@ int register_kprobe(struct kprobe *p);
 void unregister_kprobe(struct kprobe *p);
 int register_kprobes(struct kprobe **kps, int num);
 void unregister_kprobes(struct kprobe **kps, int num);
-int setjmp_pre_handler(struct kprobe *, struct pt_regs *);
-int longjmp_break_handler(struct kprobe *, struct pt_regs *);
-int register_jprobe(struct jprobe *p);
-void unregister_jprobe(struct jprobe *p);
-int register_jprobes(struct jprobe **jps, int num);
-void unregister_jprobes(struct jprobe **jps, int num);
-void jprobe_return(void);
 unsigned long arch_deref_entry_point(void *);
 
 int register_kretprobe(struct kretprobe *rp);
@@ -415,10 +373,15 @@ void unregister_kretprobes(struct kretprobe **rps, int num);
 void kprobe_flush_task(struct task_struct *tk);
 void recycle_rp_inst(struct kretprobe_instance *ri, struct hlist_head *head);
 
+void kprobe_free_init_mem(void);
+
 int disable_kprobe(struct kprobe *kp);
 int enable_kprobe(struct kprobe *kp);
 
 void dump_kprobe(struct kprobe *kp);
+
+void *alloc_insn_page(void);
+void free_insn_page(void *page);
 
 #else /* !CONFIG_KPROBES: */
 
@@ -452,23 +415,6 @@ static inline void unregister_kprobe(struct kprobe *p)
 static inline void unregister_kprobes(struct kprobe **kps, int num)
 {
 }
-static inline int register_jprobe(struct jprobe *p)
-{
-	return -ENOSYS;
-}
-static inline int register_jprobes(struct jprobe **jps, int num)
-{
-	return -ENOSYS;
-}
-static inline void unregister_jprobe(struct jprobe *p)
-{
-}
-static inline void unregister_jprobes(struct jprobe **jps, int num)
-{
-}
-static inline void jprobe_return(void)
-{
-}
 static inline int register_kretprobe(struct kretprobe *rp)
 {
 	return -ENOSYS;
@@ -486,6 +432,9 @@ static inline void unregister_kretprobes(struct kretprobe **rps, int num)
 static inline void kprobe_flush_task(struct task_struct *tk)
 {
 }
+static inline void kprobe_free_init_mem(void)
+{
+}
 static inline int disable_kprobe(struct kprobe *kp)
 {
 	return -ENOSYS;
@@ -493,6 +442,11 @@ static inline int disable_kprobe(struct kprobe *kp)
 static inline int enable_kprobe(struct kprobe *kp)
 {
 	return -ENOSYS;
+}
+
+static inline bool within_kprobe_blacklist(unsigned long addr)
+{
+	return true;
 }
 #endif /* CONFIG_KPROBES */
 static inline int disable_kretprobe(struct kretprobe *rp)
@@ -502,14 +456,6 @@ static inline int disable_kretprobe(struct kretprobe *rp)
 static inline int enable_kretprobe(struct kretprobe *rp)
 {
 	return enable_kprobe(&rp->kp);
-}
-static inline int disable_jprobe(struct jprobe *jp)
-{
-	return disable_kprobe(&jp->kp);
-}
-static inline int enable_jprobe(struct jprobe *jp)
-{
-	return enable_kprobe(&jp->kp);
 }
 
 #ifndef CONFIG_KPROBES
@@ -524,5 +470,24 @@ static inline bool is_kprobe_optinsn_slot(unsigned long addr)
 	return false;
 }
 #endif
+
+/* Returns true if kprobes handled the fault */
+static nokprobe_inline bool kprobe_page_fault(struct pt_regs *regs,
+					      unsigned int trap)
+{
+	if (!kprobes_built_in())
+		return false;
+	if (user_mode(regs))
+		return false;
+	/*
+	 * To be potentially processing a kprobe fault and to be allowed
+	 * to call kprobe_running(), we have to be non-preemptible.
+	 */
+	if (preemptible())
+		return false;
+	if (!kprobe_running())
+		return false;
+	return kprobe_fault_handler(regs, trap);
+}
 
 #endif /* _LINUX_KPROBES_H */

@@ -1,13 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * GPIO driver for AMD
  *
  * Copyright (c) 2014,2015 Ken Xue <Ken.Xue@amd.com>
  *		Jeff Wu <Jeff.Wu@amd.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
  */
 
 #ifndef _PINCTRL_AMD_H
@@ -21,6 +17,7 @@
 #define AMD_GPIO_PINS_BANK3     32
 
 #define WAKE_INT_MASTER_REG 0xfc
+#define INTERNAL_GPIO0_DEBOUNCE (1 << 15)
 #define EOI_MASK (1 << 29)
 
 #define WAKE_INT_STATUS_REG0 0x2f8
@@ -53,6 +50,10 @@
 #define DB_CNTRl_MASK	0x3UL
 #define ACTIVE_LEVEL_MASK	0x3UL
 #define DRV_STRENGTH_SEL_MASK	0x3UL
+
+#define ACTIVE_LEVEL_HIGH	0x0UL
+#define ACTIVE_LEVEL_LOW	0x1UL
+#define ACTIVE_LEVEL_BOTH	0x2UL
 
 #define DB_TYPE_NO_DEBOUNCE               0x0UL
 #define DB_TYPE_PRESERVE_LOW_GLITCH       0x1UL

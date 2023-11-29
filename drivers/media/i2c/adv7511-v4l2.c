@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Analog Devices ADV7511 HDMI Transmitter Device Driver
  *
  * Copyright 2013 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
- *
- * This program is free software; you may redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
  */
 
 /*
@@ -567,7 +555,7 @@ static void log_infoframe(struct v4l2_subdev *sd, const struct adv7511_cfg_read_
 	buffer[3] = 0;
 	buffer[3] = hdmi_infoframe_checksum(buffer, len + 4);
 
-	if (hdmi_infoframe_unpack(&frame, buffer) < 0) {
+	if (hdmi_infoframe_unpack(&frame, buffer, len + 4) < 0) {
 		v4l2_err(sd, "%s: unpack of %s infoframe failed\n", __func__, cri->desc);
 		return;
 	}
@@ -749,8 +737,8 @@ static int adv7511_cec_adap_enable(struct cec_adapter *adap, bool enable)
 		/* power up cec section */
 		adv7511_cec_write_and_or(sd, 0x4e, 0xfc, 0x01);
 		/* legacy mode and clear all rx buffers */
+		adv7511_cec_write(sd, 0x4a, 0x00);
 		adv7511_cec_write(sd, 0x4a, 0x07);
-		adv7511_cec_write(sd, 0x4a, 0);
 		adv7511_cec_write_and_or(sd, 0x11, 0xfe, 0); /* initially disable tx */
 		/* enabled irqs: */
 		/* tx: ready */
@@ -848,8 +836,8 @@ static int adv7511_cec_adap_transmit(struct cec_adapter *adap, u8 attempts,
 	 */
 	adv7511_cec_write_and_or(sd, 0x12, ~0x70, max(1, attempts - 1) << 4);
 
-	/* blocking, clear cec tx irq status */
-	adv7511_wr_and_or(sd, 0x97, 0xc7, 0x38);
+	/* clear cec tx irq status */
+	adv7511_wr(sd, 0x97, 0x38);
 
 	/* write data */
 	for (i = 0; i < len; i++)
@@ -934,9 +922,6 @@ static void adv7511_set_isr(struct v4l2_subdev *sd, bool enable)
 	else if (adv7511_have_hotplug(sd))
 		irqs |= MASK_ADV7511_EDID_RDY_INT;
 
-	adv7511_wr_and_or(sd, 0x95, 0xc0,
-			  (state->cec_enabled_adap && enable) ? 0x39 : 0x00);
-
 	/*
 	 * This i2c write can fail (approx. 1 in 1000 writes). But it
 	 * is essential that this register is correct, so retry it
@@ -950,9 +935,11 @@ static void adv7511_set_isr(struct v4l2_subdev *sd, bool enable)
 		irqs_rd = adv7511_rd(sd, 0x94);
 	} while (retries-- && irqs_rd != irqs);
 
-	if (irqs_rd == irqs)
-		return;
-	v4l2_err(sd, "Could not set interrupts: hw failure?\n");
+	if (irqs_rd != irqs)
+		v4l2_err(sd, "Could not set interrupts: hw failure?\n");
+
+	adv7511_wr_and_or(sd, 0x95, 0xc0,
+			  (state->cec_enabled_adap && enable) ? 0x39 : 0x00);
 }
 
 /* Interrupt handler */
@@ -999,8 +986,8 @@ static int adv7511_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 			for (i = 0; i < msg.len; i++)
 				msg.msg[i] = adv7511_cec_read(sd, i + 0x15);
 
-			adv7511_cec_write(sd, 0x4a, 1); /* toggle to re-enable rx 1 */
-			adv7511_cec_write(sd, 0x4a, 0);
+			adv7511_cec_write(sd, 0x4a, 0); /* toggle to re-enable rx 1 */
+			adv7511_cec_write(sd, 0x4a, 1);
 			cec_received_msg(state->cec_adap, &msg);
 		}
 	}
@@ -1373,10 +1360,10 @@ static int adv7511_set_fmt(struct v4l2_subdev *sd,
 	state->xfer_func = format->format.xfer_func;
 
 	switch (format->format.colorspace) {
-	case V4L2_COLORSPACE_ADOBERGB:
+	case V4L2_COLORSPACE_OPRGB:
 		c = HDMI_COLORIMETRY_EXTENDED;
-		ec = y ? HDMI_EXTENDED_COLORIMETRY_ADOBE_YCC_601 :
-			 HDMI_EXTENDED_COLORIMETRY_ADOBE_RGB;
+		ec = y ? HDMI_EXTENDED_COLORIMETRY_OPYCC_601 :
+			 HDMI_EXTENDED_COLORIMETRY_OPRGB;
 		break;
 	case V4L2_COLORSPACE_SMPTE170M:
 		c = y ? HDMI_COLORIMETRY_ITU_601 : HDMI_COLORIMETRY_NONE;
@@ -1795,6 +1782,7 @@ static void adv7511_init_setup(struct v4l2_subdev *sd)
 
 	/* legacy mode */
 	adv7511_cec_write(sd, 0x4a, 0x00);
+	adv7511_cec_write(sd, 0x4a, 0x07);
 
 	if (cec_clk % 750000 != 0)
 		v4l2_err(sd, "%s: cec_clk %d, not multiple of 750 Khz\n",
@@ -1864,6 +1852,7 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 		goto err_hdl;
 	}
 	state->pad.flags = MEDIA_PAD_FL_SINK;
+	sd->entity.function = MEDIA_ENT_F_DV_ENCODER;
 	err = media_entity_pads_init(&sd->entity, 1, &state->pad);
 	if (err)
 		goto err_hdl;
@@ -1883,11 +1872,11 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 		goto err_entity;
 	}
 
-	state->i2c_edid = i2c_new_dummy(client->adapter,
+	state->i2c_edid = i2c_new_dummy_device(client->adapter,
 					state->i2c_edid_addr >> 1);
-	if (state->i2c_edid == NULL) {
+	if (IS_ERR(state->i2c_edid)) {
 		v4l2_err(sd, "failed to register edid i2c client\n");
-		err = -ENOMEM;
+		err = PTR_ERR(state->i2c_edid);
 		goto err_entity;
 	}
 
@@ -1900,11 +1889,11 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 	}
 
 	if (state->pdata.cec_clk) {
-		state->i2c_cec = i2c_new_dummy(client->adapter,
+		state->i2c_cec = i2c_new_dummy_device(client->adapter,
 					       state->i2c_cec_addr >> 1);
-		if (state->i2c_cec == NULL) {
+		if (IS_ERR(state->i2c_cec)) {
 			v4l2_err(sd, "failed to register cec i2c client\n");
-			err = -ENOMEM;
+			err = PTR_ERR(state->i2c_cec);
 			goto err_unreg_edid;
 		}
 		adv7511_wr(sd, 0xe2, 0x00); /* power up cec section */
@@ -1912,10 +1901,10 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 		adv7511_wr(sd, 0xe2, 0x01); /* power down cec section */
 	}
 
-	state->i2c_pktmem = i2c_new_dummy(client->adapter, state->i2c_pktmem_addr >> 1);
-	if (state->i2c_pktmem == NULL) {
+	state->i2c_pktmem = i2c_new_dummy_device(client->adapter, state->i2c_pktmem_addr >> 1);
+	if (IS_ERR(state->i2c_pktmem)) {
 		v4l2_err(sd, "failed to register pktmem i2c client\n");
-		err = -ENOMEM;
+		err = PTR_ERR(state->i2c_pktmem);
 		goto err_unreg_cec;
 	}
 
@@ -1951,8 +1940,7 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 err_unreg_pktmem:
 	i2c_unregister_device(state->i2c_pktmem);
 err_unreg_cec:
-	if (state->i2c_cec)
-		i2c_unregister_device(state->i2c_cec);
+	i2c_unregister_device(state->i2c_cec);
 err_unreg_edid:
 	i2c_unregister_device(state->i2c_edid);
 err_entity:
@@ -1978,8 +1966,7 @@ static int adv7511_remove(struct i2c_client *client)
 	adv7511_init_setup(sd);
 	cancel_delayed_work_sync(&state->edid_handler);
 	i2c_unregister_device(state->i2c_edid);
-	if (state->i2c_cec)
-		i2c_unregister_device(state->i2c_cec);
+	i2c_unregister_device(state->i2c_cec);
 	i2c_unregister_device(state->i2c_pktmem);
 	destroy_workqueue(state->work_queue);
 	v4l2_device_unregister_subdev(sd);
@@ -1991,14 +1978,14 @@ static int adv7511_remove(struct i2c_client *client)
 /* ----------------------------------------------------------------------- */
 
 static const struct i2c_device_id adv7511_id[] = {
-	{ "adv7511", 0 },
+	{ "adv7511-v4l2", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, adv7511_id);
 
 static struct i2c_driver adv7511_driver = {
 	.driver = {
-		.name = "adv7511",
+		.name = "adv7511-v4l2",
 	},
 	.probe = adv7511_probe,
 	.remove = adv7511_remove,

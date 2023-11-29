@@ -25,24 +25,30 @@
  *          Alex Deucher
  *          Jerome Glisse
  */
+
 #include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <drm/drmP.h>
-#include <drm/radeon_drm.h>
-#include "radeon_reg.h"
-#include "radeon.h"
-#include "radeon_asic.h"
-#include "r100d.h"
-#include "rs100d.h"
-#include "rv200d.h"
-#include "rv250d.h"
-#include "atom.h"
-
 #include <linux/firmware.h>
 #include <linux/module.h>
 
+#include <drm/drm_debugfs.h>
+#include <drm/drm_device.h>
+#include <drm/drm_file.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_pci.h>
+#include <drm/drm_vblank.h>
+#include <drm/radeon_drm.h>
+
+#include "atom.h"
 #include "r100_reg_safe.h"
+#include "r100d.h"
+#include "radeon.h"
+#include "radeon_asic.h"
+#include "radeon_reg.h"
 #include "rn50_reg_safe.h"
+#include "rs100d.h"
+#include "rv200d.h"
+#include "rv250d.h"
 
 /* Firmware Names */
 #define FIRMWARE_R100		"radeon/R100_cp.bin"
@@ -885,7 +891,7 @@ struct radeon_fence *r100_copy_blit(struct radeon_device *rdev,
 				    uint64_t src_offset,
 				    uint64_t dst_offset,
 				    unsigned num_gpu_pages,
-				    struct reservation_object *resv)
+				    struct dma_resv *resv)
 {
 	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	struct radeon_fence *fence;
@@ -1456,7 +1462,7 @@ int r100_cs_packet_parse_vline(struct radeon_cs_parser *p)
 	header = radeon_get_ib_value(p, h_idx);
 	crtc_id = radeon_get_ib_value(p, h_idx + 5);
 	reg = R100_CP_PACKET0_GET_REG(header);
-	crtc = drm_crtc_find(p->rdev->ddev, crtc_id);
+	crtc = drm_crtc_find(p->rdev->ddev, p->filp, crtc_id);
 	if (!crtc) {
 		DRM_ERROR("cannot find crtc %d\n", crtc_id);
 		return -ENOENT;
@@ -2470,7 +2476,7 @@ static int r100_rbbm_fifo_wait_for_entry(struct radeon_device *rdev, unsigned n)
 		if (tmp >= n) {
 			return 0;
 		}
-		DRM_UDELAY(1);
+		udelay(1);
 	}
 	return -1;
 }
@@ -2488,7 +2494,7 @@ int r100_gui_wait_for_idle(struct radeon_device *rdev)
 		if (!(tmp & RADEON_RBBM_ACTIVE)) {
 			return 0;
 		}
-		DRM_UDELAY(1);
+		udelay(1);
 	}
 	return -1;
 }
@@ -2504,7 +2510,7 @@ int r100_mc_wait_for_idle(struct radeon_device *rdev)
 		if (tmp & RADEON_MC_IDLE) {
 			return 0;
 		}
-		DRM_UDELAY(1);
+		udelay(1);
 	}
 	return -1;
 }
@@ -3669,7 +3675,7 @@ int r100_ring_test(struct radeon_device *rdev, struct radeon_ring *ring)
 		if (tmp == 0xDEADBEEF) {
 			break;
 		}
-		DRM_UDELAY(1);
+		udelay(1);
 	}
 	if (i < rdev->usec_timeout) {
 		DRM_INFO("ring test succeeded in %d usecs\n", i);
@@ -3746,7 +3752,7 @@ int r100_ib_test(struct radeon_device *rdev, struct radeon_ring *ring)
 		if (tmp == 0xDEADBEEF) {
 			break;
 		}
-		DRM_UDELAY(1);
+		udelay(1);
 	}
 	if (i < rdev->usec_timeout) {
 		DRM_INFO("ib test succeeded in %u usecs\n", i);

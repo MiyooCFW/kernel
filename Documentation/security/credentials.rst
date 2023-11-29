@@ -196,7 +196,7 @@ The Linux kernel supports the following types of credentials:
      When a process accesses a key, if not already present, it will normally be
      cached on one of these keyrings for future accesses to find.
 
-     For more information on using keys, see Documentation/security/keys.txt.
+     For more information on using keys, see ``Documentation/security/keys/*``.
 
  5. LSM
 
@@ -291,7 +291,7 @@ for example), it must be considered immutable, barring two exceptions:
 
  1. The reference count may be altered.
 
- 2. Whilst the keyring subscriptions of a set of credentials may not be
+ 2. While the keyring subscriptions of a set of credentials may not be
     changed, the keyrings subscribed to may have their contents altered.
 
 To catch accidental credential alteration at compile time, struct task_struct
@@ -358,7 +358,7 @@ Once a reference has been obtained, it must be released with ``put_cred()``,
 Accessing Another Task's Credentials
 ------------------------------------
 
-Whilst a task may access its own credentials without the need for locking, the
+While a task may access its own credentials without the need for locking, the
 same is not true of a task wanting to access another task's credentials.  It
 must use the RCU read lock and ``rcu_dereference()``.
 
@@ -382,7 +382,7 @@ This should be used inside the RCU read lock, as in the following example::
 	}
 
 Should it be necessary to hold another task's credentials for a long period of
-time, and possibly to sleep whilst doing so, then the caller should get a
+time, and possibly to sleep while doing so, then the caller should get a
 reference on them using::
 
 	const struct cred *get_task_cred(struct task_struct *task);
@@ -442,7 +442,7 @@ duplicate of the current process's credentials, returning with the mutex still
 held if successful.  It returns NULL if not successful (out of memory).
 
 The mutex prevents ``ptrace()`` from altering the ptrace state of a process
-whilst security checks on credentials construction and changing is taking place
+while security checks on credentials construction and changing is taking place
 as the ptrace state may alter the outcome, particularly in the case of
 ``execve()``.
 
@@ -451,6 +451,13 @@ checks and hooks done.  Both the current and the proposed sets of credentials
 are available for this purpose as current_cred() will return the current set
 still at this point.
 
+When replacing the group list, the new list must be sorted before it
+is added to the credential, as a binary search is used to test for
+membership.  In practice, this means :c:func:`groups_sort` should be
+called before :c:func:`set_groups` or :c:func:`set_current_groups`.
+:c:func:`groups_sort)` must not be called on a ``struct group_list`` which
+is shared as it may permute elements as part of the sorting process
+even if the array is already sorted.
 
 When the credential set is ready, it should be committed to the current process
 by calling::

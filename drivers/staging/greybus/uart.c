@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * UART driver for the Greybus "generic" UART module.
  *
  * Copyright 2014 Google Inc.
  * Copyright 2014 Linaro Ltd.
- *
- * Released under the GPLv2 only.
  *
  * Heavily based on drivers/usb/class/cdc-acm.c and
  * drivers/usb/serial/usb-serial.c.
@@ -29,8 +28,8 @@
 #include <linux/kfifo.h>
 #include <linux/workqueue.h>
 #include <linux/completion.h>
+#include <linux/greybus.h>
 
-#include "greybus.h"
 #include "gbphy.h"
 
 #define GB_NUM_MINORS	16	/* 16 is more than enough */
@@ -617,40 +616,36 @@ static void gb_tty_unthrottle(struct tty_struct *tty)
 	}
 }
 
-static int get_serial_info(struct gb_tty *gb_tty,
-			   struct serial_struct __user *info)
+static int get_serial_info(struct tty_struct *tty,
+			   struct serial_struct *ss)
 {
-	struct serial_struct tmp;
+	struct gb_tty *gb_tty = tty->driver_data;
 
-	memset(&tmp, 0, sizeof(tmp));
-	tmp.type = PORT_16550A;
-	tmp.line = gb_tty->minor;
-	tmp.xmit_fifo_size = 16;
-	tmp.baud_base = 9600;
-	tmp.close_delay = gb_tty->port.close_delay / 10;
-	tmp.closing_wait =
+	ss->type = PORT_16550A;
+	ss->line = gb_tty->minor;
+	ss->xmit_fifo_size = 16;
+	ss->baud_base = 9600;
+	ss->close_delay = jiffies_to_msecs(gb_tty->port.close_delay) / 10;
+	ss->closing_wait =
 		gb_tty->port.closing_wait == ASYNC_CLOSING_WAIT_NONE ?
-		ASYNC_CLOSING_WAIT_NONE : gb_tty->port.closing_wait / 10;
+		ASYNC_CLOSING_WAIT_NONE :
+		jiffies_to_msecs(gb_tty->port.closing_wait) / 10;
 
-	if (copy_to_user(info, &tmp, sizeof(tmp)))
-		return -EFAULT;
 	return 0;
 }
 
-static int set_serial_info(struct gb_tty *gb_tty,
-			   struct serial_struct __user *newinfo)
+static int set_serial_info(struct tty_struct *tty,
+			   struct serial_struct *ss)
 {
-	struct serial_struct new_serial;
+	struct gb_tty *gb_tty = tty->driver_data;
 	unsigned int closing_wait;
 	unsigned int close_delay;
 	int retval = 0;
 
-	if (copy_from_user(&new_serial, newinfo, sizeof(new_serial)))
-		return -EFAULT;
-
-	close_delay = new_serial.close_delay * 10;
-	closing_wait = new_serial.closing_wait == ASYNC_CLOSING_WAIT_NONE ?
-			ASYNC_CLOSING_WAIT_NONE : new_serial.closing_wait * 10;
+	close_delay = msecs_to_jiffies(ss->close_delay * 10);
+	closing_wait = ss->closing_wait == ASYNC_CLOSING_WAIT_NONE ?
+			ASYNC_CLOSING_WAIT_NONE :
+			msecs_to_jiffies(ss->closing_wait * 10);
 
 	mutex_lock(&gb_tty->port.mutex);
 	if (!capable(CAP_SYS_ADMIN)) {
@@ -727,12 +722,6 @@ static int gb_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
 	struct gb_tty *gb_tty = tty->driver_data;
 
 	switch (cmd) {
-	case TIOCGSERIAL:
-		return get_serial_info(gb_tty,
-				       (struct serial_struct __user *)arg);
-	case TIOCSSERIAL:
-		return set_serial_info(gb_tty,
-				       (struct serial_struct __user *)arg);
 	case TIOCMIWAIT:
 		return wait_serial_change(gb_tty, arg);
 	}
@@ -828,6 +817,8 @@ static const struct tty_operations gb_ops = {
 	.tiocmget =		gb_tty_tiocmget,
 	.tiocmset =		gb_tty_tiocmset,
 	.get_icount =		gb_tty_get_icount,
+	.set_serial =		set_serial_info,
+	.get_serial =		get_serial_info,
 };
 
 static const struct tty_port_operations gb_port_ops = {

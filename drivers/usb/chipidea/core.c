@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * core.c - ChipIdea USB IP core family device controller
  *
  * Copyright (C) 2008 Chipidea - MIPS Technologies, Inc. All rights reserved.
  *
  * Author: David Lopo
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 /*
@@ -56,6 +53,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
 #include <linux/usb/otg.h>
@@ -525,8 +523,9 @@ int hw_device_reset(struct ci_hdrc *ci)
 	hw_write(ci, OP_USBMODE, USBMODE_SLOM, USBMODE_SLOM);
 
 	if (hw_read(ci, OP_USBMODE, USBMODE_CM) != USBMODE_CM_DC) {
-		pr_err("cannot enter in %s device mode", ci_role(ci)->name);
-		pr_err("lpm = %i", ci->hw_bank.lpm);
+		dev_err(ci->dev, "cannot enter in %s device mode\n",
+			ci_role(ci)->name);
+		dev_err(ci->dev, "lpm = %i\n", ci->hw_bank.lpm);
 		return -ENODEV;
 	}
 
@@ -609,6 +608,71 @@ static int ci_cable_notifier(struct notifier_block *nb, unsigned long event,
 	ci_irq(ci);
 	return NOTIFY_DONE;
 }
+
+static enum usb_role ci_usb_role_switch_get(struct device *dev)
+{
+	struct ci_hdrc *ci = dev_get_drvdata(dev);
+	enum usb_role role;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ci->lock, flags);
+	role = ci_role_to_usb_role(ci);
+	spin_unlock_irqrestore(&ci->lock, flags);
+
+	return role;
+}
+
+static int ci_usb_role_switch_set(struct device *dev, enum usb_role role)
+{
+	struct ci_hdrc *ci = dev_get_drvdata(dev);
+	struct ci_hdrc_cable *cable = NULL;
+	enum usb_role current_role = ci_role_to_usb_role(ci);
+	unsigned long flags;
+
+	if (current_role == role)
+		return 0;
+
+	pm_runtime_get_sync(ci->dev);
+	/* Stop current role */
+	spin_lock_irqsave(&ci->lock, flags);
+	if (current_role == USB_ROLE_DEVICE)
+		cable = &ci->platdata->vbus_extcon;
+	else if (current_role == USB_ROLE_HOST)
+		cable = &ci->platdata->id_extcon;
+
+	if (cable) {
+		cable->changed = true;
+		cable->connected = false;
+		ci_irq(ci);
+		spin_unlock_irqrestore(&ci->lock, flags);
+		if (ci->wq && role != USB_ROLE_NONE)
+			flush_workqueue(ci->wq);
+		spin_lock_irqsave(&ci->lock, flags);
+	}
+
+	cable = NULL;
+
+	/* Start target role */
+	if (role == USB_ROLE_DEVICE)
+		cable = &ci->platdata->vbus_extcon;
+	else if (role == USB_ROLE_HOST)
+		cable = &ci->platdata->id_extcon;
+
+	if (cable) {
+		cable->changed = true;
+		cable->connected = true;
+		ci_irq(ci);
+	}
+	spin_unlock_irqrestore(&ci->lock, flags);
+	pm_runtime_put_sync(ci->dev);
+
+	return 0;
+}
+
+static struct usb_role_switch_desc ci_role_switch = {
+	.set = ci_usb_role_switch_set,
+	.get = ci_usb_role_switch_get,
+};
 
 static int ci_get_platdata(struct device *dev,
 		struct ci_hdrc_platform_data *platdata)
@@ -735,6 +799,27 @@ static int ci_get_platdata(struct device *dev,
 		else
 			cable->connected = false;
 	}
+
+	if (device_property_read_bool(dev, "usb-role-switch"))
+		ci_role_switch.fwnode = dev->fwnode;
+
+	platdata->pctl = devm_pinctrl_get(dev);
+	if (!IS_ERR(platdata->pctl)) {
+		struct pinctrl_state *p;
+
+		p = pinctrl_lookup_state(platdata->pctl, "default");
+		if (!IS_ERR(p))
+			platdata->pins_default = p;
+
+		p = pinctrl_lookup_state(platdata->pctl, "host");
+		if (!IS_ERR(p))
+			platdata->pins_host = p;
+
+		p = pinctrl_lookup_state(platdata->pctl, "device");
+		if (!IS_ERR(p))
+			platdata->pins_device = p;
+	}
+
 	return 0;
 }
 
@@ -847,7 +932,7 @@ static void ci_get_otg_capable(struct ci_hdrc *ci)
 	}
 }
 
-static ssize_t ci_role_show(struct device *dev, struct device_attribute *attr,
+static ssize_t role_show(struct device *dev, struct device_attribute *attr,
 			  char *buf)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -858,7 +943,7 @@ static ssize_t ci_role_show(struct device *dev, struct device_attribute *attr,
 	return 0;
 }
 
-static ssize_t ci_role_store(struct device *dev,
+static ssize_t role_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t n)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -897,16 +982,13 @@ static ssize_t ci_role_store(struct device *dev,
 
 	return (ret == 0) ? n : ret;
 }
-static DEVICE_ATTR(role, 0644, ci_role_show, ci_role_store);
+static DEVICE_ATTR_RW(role);
 
 static struct attribute *ci_attrs[] = {
 	&dev_attr_role.attr,
 	NULL,
 };
-
-static const struct attribute_group ci_attr_group = {
-	.attrs = ci_attrs,
-};
+ATTRIBUTE_GROUPS(ci);
 
 static int ci_hdrc_probe(struct platform_device *pdev)
 {
@@ -956,32 +1038,47 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	} else if (ci->platdata->usb_phy) {
 		ci->usb_phy = ci->platdata->usb_phy;
 	} else {
-		ci->usb_phy = devm_usb_get_phy_by_phandle(dev->parent, "phys",
-							  0);
+		/* Look for a generic PHY first */
 		ci->phy = devm_phy_get(dev->parent, "usb-phy");
 
-		/* Fallback to grabbing any registered USB2 PHY */
-		if (IS_ERR(ci->usb_phy) &&
-		    PTR_ERR(ci->usb_phy) != -EPROBE_DEFER)
+		if (PTR_ERR(ci->phy) == -EPROBE_DEFER) {
+			ret = -EPROBE_DEFER;
+			goto ulpi_exit;
+		} else if (IS_ERR(ci->phy)) {
+			ci->phy = NULL;
+		}
+
+		/* Look for a legacy USB PHY from device-tree next */
+		if (!ci->phy) {
+			ci->usb_phy = devm_usb_get_phy_by_phandle(dev->parent,
+								  "phys", 0);
+
+			if (PTR_ERR(ci->usb_phy) == -EPROBE_DEFER) {
+				ret = -EPROBE_DEFER;
+				goto ulpi_exit;
+			} else if (IS_ERR(ci->usb_phy)) {
+				ci->usb_phy = NULL;
+			}
+		}
+
+		/* Look for any registered legacy USB PHY as last resort */
+		if (!ci->phy && !ci->usb_phy) {
 			ci->usb_phy = devm_usb_get_phy(dev->parent,
 						       USB_PHY_TYPE_USB2);
 
-		/* if both generic PHY and USB PHY layers aren't enabled */
-		if (PTR_ERR(ci->phy) == -ENOSYS &&
-				PTR_ERR(ci->usb_phy) == -ENXIO) {
+			if (PTR_ERR(ci->usb_phy) == -EPROBE_DEFER) {
+				ret = -EPROBE_DEFER;
+				goto ulpi_exit;
+			} else if (IS_ERR(ci->usb_phy)) {
+				ci->usb_phy = NULL;
+			}
+		}
+
+		/* No USB PHY was found in the end */
+		if (!ci->phy && !ci->usb_phy) {
 			ret = -ENXIO;
 			goto ulpi_exit;
 		}
-
-		if (IS_ERR(ci->phy) && IS_ERR(ci->usb_phy)) {
-			ret = -EPROBE_DEFER;
-			goto ulpi_exit;
-		}
-
-		if (IS_ERR(ci->phy))
-			ci->phy = NULL;
-		else if (IS_ERR(ci->usb_phy))
-			ci->usb_phy = NULL;
 	}
 
 	ret = ci_usb_phy_init(ci);
@@ -994,7 +1091,6 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 
 	ci->irq = platform_get_irq(pdev, 0);
 	if (ci->irq < 0) {
-		dev_err(dev, "missing IRQ\n");
 		ret = ci->irq;
 		goto deinit_phy;
 	}
@@ -1034,6 +1130,15 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		if (ret) {
 			dev_err(dev, "init otg fails, ret = %d\n", ret);
 			goto deinit_gadget;
+		}
+	}
+
+	if (ci_role_switch.fwnode) {
+		ci->role_switch = usb_role_switch_register(dev,
+					&ci_role_switch);
+		if (IS_ERR(ci->role_switch)) {
+			ret = PTR_ERR(ci->role_switch);
+			goto deinit_otg;
 		}
 	}
 
@@ -1090,19 +1195,14 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		ci_hdrc_otg_fsm_start(ci);
 
 	device_set_wakeup_capable(&pdev->dev, true);
-	ret = dbg_create_files(ci);
-	if (ret)
-		goto stop;
-
-	ret = sysfs_create_group(&dev->kobj, &ci_attr_group);
-	if (ret)
-		goto remove_debug;
+	dbg_create_files(ci);
 
 	return 0;
 
-remove_debug:
-	dbg_remove_files(ci);
 stop:
+	if (ci->role_switch)
+		usb_role_switch_unregister(ci->role_switch);
+deinit_otg:
 	if (ci->is_otg && ci->roles[CI_ROLE_GADGET])
 		ci_hdrc_otg_destroy(ci);
 deinit_gadget:
@@ -1121,6 +1221,9 @@ static int ci_hdrc_remove(struct platform_device *pdev)
 {
 	struct ci_hdrc *ci = platform_get_drvdata(pdev);
 
+	if (ci->role_switch)
+		usb_role_switch_unregister(ci->role_switch);
+
 	if (ci->supports_runtime_pm) {
 		pm_runtime_get_sync(&pdev->dev);
 		pm_runtime_disable(&pdev->dev);
@@ -1128,7 +1231,6 @@ static int ci_hdrc_remove(struct platform_device *pdev)
 	}
 
 	dbg_remove_files(ci);
-	sysfs_remove_group(&ci->dev->kobj, &ci_attr_group);
 	ci_role_destroy(ci);
 	ci_hdrc_enter_lpm(ci, true);
 	ci_usb_phy_exit(ci);
@@ -1331,6 +1433,7 @@ static struct platform_driver ci_hdrc_driver = {
 	.driver	= {
 		.name	= "ci_hdrc",
 		.pm	= &ci_pm_ops,
+		.dev_groups = ci_groups,
 	},
 };
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2005-2014 Brocade Communications Systems, Inc.
  * Copyright (c) 2014- QLogic Corporation.
@@ -5,15 +6,6 @@
  * www.qlogic.com
  *
  * Linux driver for QLogic BR-series Fibre Channel Host Bus Adapter.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License (GPL) Version 2 as
- * published by the Free Software Foundation
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
  */
 
 #include "bfad_drv.h"
@@ -288,18 +280,6 @@ plkd_validate_logrec(struct bfa_plog_rec_s *pl_rec)
 	return 0;
 }
 
-static u64
-bfa_get_log_time(void)
-{
-	u64 system_time = 0;
-	struct timeval tv;
-	do_gettimeofday(&tv);
-
-	/* We are interested in seconds only. */
-	system_time = tv.tv_sec;
-	return system_time;
-}
-
 static void
 bfa_plog_add(struct bfa_plog_s *plog, struct bfa_plog_rec_s *pl_rec)
 {
@@ -320,7 +300,7 @@ bfa_plog_add(struct bfa_plog_s *plog, struct bfa_plog_rec_s *pl_rec)
 
 	memcpy(pl_recp, pl_rec, sizeof(struct bfa_plog_rec_s));
 
-	pl_recp->tv = bfa_get_log_time();
+	pl_recp->tv = ktime_get_real_seconds();
 	BFA_PL_LOG_REC_INCR(plog->tail);
 
 	if (plog->head == plog->tail)
@@ -3047,7 +3027,6 @@ bfa_fcport_attach(struct bfa_s *bfa, void *bfad, struct bfa_iocfc_cfg_s *cfg,
 	struct bfa_fcport_s *fcport = BFA_FCPORT_MOD(bfa);
 	struct bfa_port_cfg_s *port_cfg = &fcport->cfg;
 	struct bfa_fcport_ln_s *ln = &fcport->ln;
-	struct timeval tv;
 
 	fcport->bfa = bfa;
 	ln->fcport = fcport;
@@ -3060,8 +3039,7 @@ bfa_fcport_attach(struct bfa_s *bfa, void *bfad, struct bfa_iocfc_cfg_s *cfg,
 	/*
 	 * initialize time stamp for stats reset
 	 */
-	do_gettimeofday(&tv);
-	fcport->stats_reset_time = tv.tv_sec;
+	fcport->stats_reset_time = ktime_get_seconds();
 	fcport->stats_dma_ready = BFA_FALSE;
 
 	/*
@@ -3295,9 +3273,7 @@ __bfa_cb_fcport_stats_get(void *cbarg, bfa_boolean_t complete)
 	union bfa_fcport_stats_u *ret;
 
 	if (complete) {
-		struct timeval tv;
-		if (fcport->stats_status == BFA_STATUS_OK)
-			do_gettimeofday(&tv);
+		time64_t time = ktime_get_seconds();
 
 		list_for_each_safe(qe, qen, &fcport->stats_pending_q) {
 			bfa_q_deq(&fcport->stats_pending_q, &qe);
@@ -3312,7 +3288,7 @@ __bfa_cb_fcport_stats_get(void *cbarg, bfa_boolean_t complete)
 					bfa_fcport_fcoe_stats_swap(&ret->fcoe,
 							&fcport->stats->fcoe);
 					ret->fcoe.secs_reset =
-					tv.tv_sec - fcport->stats_reset_time;
+						time - fcport->stats_reset_time;
 				}
 			}
 			bfa_cb_queue_status(fcport->bfa, &cb->hcb_qe,
@@ -3373,13 +3349,10 @@ __bfa_cb_fcport_stats_clr(void *cbarg, bfa_boolean_t complete)
 	struct list_head *qe, *qen;
 
 	if (complete) {
-		struct timeval tv;
-
 		/*
 		 * re-initialize time stamp for stats reset
 		 */
-		do_gettimeofday(&tv);
-		fcport->stats_reset_time = tv.tv_sec;
+		fcport->stats_reset_time = ktime_get_seconds();
 		list_for_each_safe(qe, qen, &fcport->statsclr_pending_q) {
 			bfa_q_deq(&fcport->statsclr_pending_q, &qe);
 			cb = (struct bfa_cb_pending_q_s *)qe;
@@ -6148,13 +6121,13 @@ bfa_fcdiag_lb_is_running(struct bfa_s *bfa)
 /*
  *	D-port
  */
-#define bfa_dport_result_start(__dport, __mode) do {			\
-		(__dport)->result.start_time = bfa_get_log_time();	\
-		(__dport)->result.status = DPORT_TEST_ST_INPRG;		\
-		(__dport)->result.mode = (__mode);			\
-		(__dport)->result.rp_pwwn = (__dport)->rp_pwwn;		\
-		(__dport)->result.rp_nwwn = (__dport)->rp_nwwn;		\
-		(__dport)->result.lpcnt = (__dport)->lpcnt;		\
+#define bfa_dport_result_start(__dport, __mode) do {				\
+		(__dport)->result.start_time = ktime_get_real_seconds();	\
+		(__dport)->result.status = DPORT_TEST_ST_INPRG;			\
+		(__dport)->result.mode = (__mode);				\
+		(__dport)->result.rp_pwwn = (__dport)->rp_pwwn;			\
+		(__dport)->result.rp_nwwn = (__dport)->rp_nwwn;			\
+		(__dport)->result.lpcnt = (__dport)->lpcnt;			\
 } while (0)
 
 static bfa_boolean_t bfa_dport_send_req(struct bfa_dport_s *dport,
@@ -6588,7 +6561,7 @@ bfa_dport_scn(struct bfa_dport_s *dport, struct bfi_diag_dport_scn_s *msg)
 
 	switch (dport->i2hmsg.scn.state) {
 	case BFI_DPORT_SCN_TESTCOMP:
-		dport->result.end_time = bfa_get_log_time();
+		dport->result.end_time = ktime_get_real_seconds();
 		bfa_trc(dport->bfa, dport->result.end_time);
 
 		dport->result.status = msg->info.testcomp.status;
@@ -6635,7 +6608,7 @@ bfa_dport_scn(struct bfa_dport_s *dport, struct bfi_diag_dport_scn_s *msg)
 	case BFI_DPORT_SCN_SUBTESTSTART:
 		subtesttype = msg->info.teststart.type;
 		dport->result.subtest[subtesttype].start_time =
-			bfa_get_log_time();
+			ktime_get_real_seconds();
 		dport->result.subtest[subtesttype].status =
 			DPORT_TEST_ST_INPRG;
 

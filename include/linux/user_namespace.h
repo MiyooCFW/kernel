@@ -11,15 +11,24 @@
 #include <linux/sysctl.h>
 #include <linux/err.h>
 
-#define UID_GID_MAP_MAX_EXTENTS 5
+#define UID_GID_MAP_MAX_BASE_EXTENTS 5
+#define UID_GID_MAP_MAX_EXTENTS 340
 
-struct uid_gid_map {	/* 64 bytes -- 1 cache line */
+struct uid_gid_extent {
+	u32 first;
+	u32 lower_first;
+	u32 count;
+};
+
+struct uid_gid_map { /* 64 bytes -- 1 cache line */
 	u32 nr_extents;
-	struct uid_gid_extent {
-		u32 first;
-		u32 lower_first;
-		u32 count;
-	} extent[UID_GID_MAP_MAX_EXTENTS];
+	union {
+		struct uid_gid_extent extent[UID_GID_MAP_MAX_BASE_EXTENTS];
+		struct {
+			struct uid_gid_extent *forward;
+			struct uid_gid_extent *reverse;
+		};
+	};
 };
 
 #define USERNS_SETGROUPS_ALLOWED 1UL
@@ -55,10 +64,20 @@ struct user_namespace {
 	struct ns_common	ns;
 	unsigned long		flags;
 
+#ifdef CONFIG_KEYS
+	/* List of joinable keyrings in this namespace.  Modification access of
+	 * these pointers is controlled by keyring_sem.  Once
+	 * user_keyring_register is set, it won't be changed, so it can be
+	 * accessed directly with READ_ONCE().
+	 */
+	struct list_head	keyring_name_list;
+	struct key		*user_keyring_register;
+	struct rw_semaphore	keyring_sem;
+#endif
+
 	/* Register of per-UID persistent keyrings for this namespace */
 #ifdef CONFIG_PERSISTENT_KEYRINGS
 	struct key		*persistent_keyring_register;
-	struct rw_semaphore	persistent_keyring_register_sem;
 #endif
 	struct work_struct	work;
 #ifdef CONFIG_SYSCTL

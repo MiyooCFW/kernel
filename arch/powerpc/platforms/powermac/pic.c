@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Support for the interrupt controllers found on Power Macintosh,
  *  currently Apple's "Grand Central" interrupt controller in all
@@ -7,12 +8,6 @@
  *  Copyright (C) 1997 Paul Mackerras (paulus@samba.org)
  *  Copyright (C) 2005 Benjamin Herrenschmidt (benh@kernel.crashing.org)
  *                     IBM, Corp.
- *
- *  This program is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU General Public License
- *  as published by the Free Software Foundation; either version
- *  2 of the License, or (at your option) any later version.
- *
  */
 
 #include <linux/stddef.h>
@@ -417,7 +412,7 @@ int of_irq_parse_oldworld(struct device_node *device, int index,
 		if (ints != NULL)
 			break;
 		device = device->parent;
-		if (device && strcmp(device->type, "pci") != 0)
+		if (!of_node_is_type(device, "pci"))
 			break;
 	}
 	if (ints == NULL)
@@ -486,15 +481,16 @@ static int __init pmac_pic_probe_mpic(void)
 	struct device_node *np, *master = NULL, *slave = NULL;
 
 	/* We can have up to 2 MPICs cascaded */
-	for (np = NULL; (np = of_find_node_by_type(np, "open-pic"))
-		     != NULL;) {
+	for_each_node_by_type(np, "open-pic") {
 		if (master == NULL &&
 		    of_get_property(np, "interrupts", NULL) == NULL)
 			master = of_node_get(np);
 		else if (slave == NULL)
 			slave = of_node_get(np);
-		if (master && slave)
+		if (master && slave) {
+			of_node_put(np);
 			break;
+		}
 	}
 
 	/* Check for bogus setups */
@@ -552,13 +548,13 @@ void __init pmac_pic_init(void)
 
 		for_each_node_with_property(np, "interrupt-controller") {
 			/* Skip /chosen/interrupt-controller */
-			if (strcmp(np->name, "chosen") == 0)
+			if (of_node_name_eq(np, "chosen"))
 				continue;
 			/* It seems like at least one person wants
 			 * to use BootX on a machine with an AppleKiwi
 			 * controller which happens to pretend to be an
 			 * interrupt controller too. */
-			if (strcmp(np->name, "AppleKiwi") == 0)
+			if (of_node_name_eq(np, "AppleKiwi"))
 				continue;
 			/* I think we found one ! */
 			of_irq_dflt_pic = np;
@@ -604,6 +600,7 @@ static int pmacpic_find_viaint(void)
 	if (np == NULL)
 		goto not_found;
 	viaint = irq_of_parse_and_map(np, 0);
+	of_node_put(np);
 
 not_found:
 #endif /* CONFIG_ADB_PMU */

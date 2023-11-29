@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * scsi_sysfs.c
  *
@@ -20,6 +21,7 @@
 #include <scsi/scsi_dh.h>
 #include <scsi/scsi_transport.h>
 #include <scsi/scsi_driver.h>
+#include <scsi/scsi_devinfo.h>
 
 #include "scsi_priv.h"
 #include "scsi_logging.h"
@@ -366,7 +368,6 @@ store_shost_eh_deadline(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR(eh_deadline, S_IRUGO | S_IWUSR, show_shost_eh_deadline, store_shost_eh_deadline);
 
-shost_rd_attr(use_blk_mq, "%d\n");
 shost_rd_attr(unique_id, "%u\n");
 shost_rd_attr(cmd_per_lun, "%hd\n");
 shost_rd_attr(can_queue, "%hd\n");
@@ -381,9 +382,16 @@ static ssize_t
 show_host_busy(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(dev);
-	return snprintf(buf, 20, "%d\n", atomic_read(&shost->host_busy));
+	return snprintf(buf, 20, "%d\n", scsi_host_busy(shost));
 }
 static DEVICE_ATTR(host_busy, S_IRUGO, show_host_busy, NULL);
+
+static ssize_t
+show_use_blk_mq(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "1\n");
+}
+static DEVICE_ATTR(use_blk_mq, S_IRUGO, show_use_blk_mq, NULL);
 
 static struct attribute *scsi_sysfs_shost_attrs[] = {
 	&dev_attr_use_blk_mq.attr,
@@ -768,6 +776,7 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 	int i, ret;
 	struct scsi_device *sdev = to_scsi_device(dev);
 	enum scsi_device_state state = 0;
+	bool rescan_dev = false;
 
 	for (i = 0; i < ARRAY_SIZE(sdev_states); i++) {
 		const int len = strlen(sdev_states[i].name);
@@ -777,12 +786,44 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 			break;
 		}
 	}
-	if (!state)
+	switch (state) {
+	case SDEV_RUNNING:
+	case SDEV_OFFLINE:
+		break;
+	default:
 		return -EINVAL;
+	}
 
 	mutex_lock(&sdev->state_mutex);
-	ret = scsi_device_set_state(sdev, state);
+	switch (sdev->sdev_state) {
+	case SDEV_RUNNING:
+	case SDEV_OFFLINE:
+		break;
+	default:
+		mutex_unlock(&sdev->state_mutex);
+		return -EINVAL;
+	}
+	if (sdev->sdev_state == SDEV_RUNNING && state == SDEV_RUNNING) {
+		ret = 0;
+	} else {
+		ret = scsi_device_set_state(sdev, state);
+		if (ret == 0 && state == SDEV_RUNNING)
+			rescan_dev = true;
+	}
 	mutex_unlock(&sdev->state_mutex);
+
+	if (rescan_dev) {
+		/*
+		 * If the device state changes to SDEV_RUNNING, we need to
+		 * run the queue to avoid I/O hang, and rescan the device
+		 * to revalidate it. Running the queue first is necessary
+		 * because another thread may be waiting inside
+		 * blk_mq_freeze_queue_wait() and because that call may be
+		 * waiting for pending I/O to finish.
+		 */
+		blk_mq_run_hw_queues(sdev->request_queue, true);
+		scsi_rescan_device(dev);
+	}
 
 	return ret == 0 ? count : -EINVAL;
 }
@@ -1000,6 +1041,42 @@ sdev_show_wwid(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(wwid, S_IRUGO, sdev_show_wwid, NULL);
 
+#define BLIST_FLAG_NAME(name)					\
+	[const_ilog2((__force __u64)BLIST_##name)] = #name
+static const char *const sdev_bflags_name[] = {
+#include "scsi_devinfo_tbl.c"
+};
+#undef BLIST_FLAG_NAME
+
+static ssize_t
+sdev_show_blacklist(struct device *dev, struct device_attribute *attr,
+		    char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	int i;
+	ssize_t len = 0;
+
+	for (i = 0; i < sizeof(sdev->sdev_bflags) * BITS_PER_BYTE; i++) {
+		const char *name = NULL;
+
+		if (!(sdev->sdev_bflags & (__force blist_flags_t)BIT(i)))
+			continue;
+		if (i < ARRAY_SIZE(sdev_bflags_name) && sdev_bflags_name[i])
+			name = sdev_bflags_name[i];
+
+		if (name)
+			len += snprintf(buf + len, PAGE_SIZE - len,
+					"%s%s", len ? " " : "", name);
+		else
+			len += snprintf(buf + len, PAGE_SIZE - len,
+					"%sINVALID_BIT(%d)", len ? " " : "", i);
+	}
+	if (len)
+		len += snprintf(buf + len, PAGE_SIZE - len, "\n");
+	return len;
+}
+static DEVICE_ATTR(blacklist, S_IRUGO, sdev_show_blacklist, NULL);
+
 #ifdef CONFIG_SCSI_DH
 static ssize_t
 sdev_show_dh_state(struct device *dev, struct device_attribute *attr,
@@ -1185,6 +1262,7 @@ static struct attribute *scsi_sdev_attrs[] = {
 	&dev_attr_queue_depth.attr,
 	&dev_attr_queue_type.attr,
 	&dev_attr_wwid.attr,
+	&dev_attr_blacklist.attr,
 #ifdef CONFIG_SCSI_DH
 	&dev_attr_dh_state.attr,
 	&dev_attr_access_state.attr,
@@ -1268,19 +1346,12 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 
 	scsi_autopm_get_device(sdev);
 
-	error = scsi_dh_add_device(sdev);
-	if (error)
-		/*
-		 * device_handler is optional, so any error can be ignored
-		 */
-		sdev_printk(KERN_INFO, sdev,
-				"failed to add device handler: %d\n", error);
+	scsi_dh_add_device(sdev);
 
 	error = device_add(&sdev->sdev_gendev);
 	if (error) {
 		sdev_printk(KERN_INFO, sdev,
 				"failed to add device: %d\n", error);
-		scsi_dh_remove_device(sdev);
 		return error;
 	}
 
@@ -1289,15 +1360,13 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 	if (error) {
 		sdev_printk(KERN_INFO, sdev,
 				"failed to add class device: %d\n", error);
-		scsi_dh_remove_device(sdev);
 		device_del(&sdev->sdev_gendev);
 		return error;
 	}
 	transport_add_device(&sdev->sdev_gendev);
 	sdev->is_visible = 1;
 
-	error = bsg_register_queue(rq, &sdev->sdev_gendev, NULL, NULL);
-
+	error = bsg_scsi_register_queue(rq, &sdev->sdev_gendev);
 	if (error)
 		/* we're treating error on bsg register as non-fatal,
 		 * so pretend nothing went wrong */
@@ -1312,6 +1381,13 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 			if (error)
 				return error;
 		}
+	}
+
+	if (sdev->host->hostt->sdev_groups) {
+		error = sysfs_create_groups(&sdev->sdev_gendev.kobj,
+				sdev->host->hostt->sdev_groups);
+		if (error)
+			return error;
 	}
 
 	scsi_autopm_put_device(sdev);
@@ -1353,10 +1429,13 @@ void __scsi_remove_device(struct scsi_device *sdev)
 		if (res != 0)
 			return;
 
+		if (sdev->host->hostt->sdev_groups)
+			sysfs_remove_groups(&sdev->sdev_gendev.kobj,
+					sdev->host->hostt->sdev_groups);
+
 		bsg_unregister_queue(sdev->request_queue);
 		device_unregister(&sdev->sdev_dev);
 		transport_remove_device(dev);
-		scsi_dh_remove_device(sdev);
 		device_del(dev);
 	} else
 		put_device(&sdev->sdev_dev);

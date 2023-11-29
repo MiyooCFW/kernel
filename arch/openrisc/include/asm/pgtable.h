@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * OpenRISC Linux
  *
@@ -9,11 +10,6 @@
  * Copyright (C) 2003 Matjaz Breskvar <phoenix@bsemi.com>
  * Copyright (C) 2010-2011 Jonas Bonn <jonas@southpole.se>
  * et al.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 /* or32 pgtable.h - macros and functions to manipulate page tables
@@ -94,14 +90,14 @@ extern void paging_init(void);
  * 64 MB of vmalloc area is comparable to what's available on other arches.
  */
 
-#define VMALLOC_START	(PAGE_OFFSET-0x04000000)
+#define VMALLOC_START	(PAGE_OFFSET-0x04000000UL)
 #define VMALLOC_END	(PAGE_OFFSET)
 #define VMALLOC_VMADDR(x) ((unsigned long)(x))
 
 /* Define some higher level generic page attributes.
  *
  * If you change _PAGE_CI definition be sure to change it in
- * io.h for ioremap_nocache() too.
+ * io.h for ioremap() too.
  */
 
 /*
@@ -416,15 +412,19 @@ extern pgd_t swapper_pg_dir[PTRS_PER_PGD]; /* defined in head.S */
 
 struct vm_area_struct;
 
-/*
- * or32 doesn't have any external MMU info: the kernel page
- * tables contain all the necessary information.
- *
- * Actually I am not sure on what this could be used for.
- */
+static inline void update_tlb(struct vm_area_struct *vma,
+	unsigned long address, pte_t *pte)
+{
+}
+
+extern void update_cache(struct vm_area_struct *vma,
+	unsigned long address, pte_t *pte);
+
 static inline void update_mmu_cache(struct vm_area_struct *vma,
 	unsigned long address, pte_t *pte)
 {
+	update_tlb(vma, address, pte);
+	update_cache(vma, address, pte);
 }
 
 /* __PHX__ FIXME, SWAP, this probably doesn't work */
@@ -442,11 +442,6 @@ static inline void update_mmu_cache(struct vm_area_struct *vma,
 #define kern_addr_valid(addr)           (1)
 
 #include <asm-generic/pgtable.h>
-
-/*
- * No page table caches to initialise
- */
-#define pgtable_cache_init()		do { } while (0)
 
 typedef pte_t *pte_addr_t;
 

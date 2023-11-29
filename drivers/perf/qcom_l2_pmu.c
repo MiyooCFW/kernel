@@ -1,13 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2015-2017 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 #include <linux/acpi.h>
 #include <linux/bitops.h>
@@ -91,6 +83,21 @@
 #define L2CPUSRDR_EL1           sys_reg(3, 3, 15, 0, 7)
 
 #define reg_idx(reg, i)         (((i) * IA_L2_REG_OFFSET) + reg##_BASE)
+
+/*
+ * Events
+ */
+#define L2_EVENT_CYCLES                    0xfe
+#define L2_EVENT_DCACHE_OPS                0x400
+#define L2_EVENT_ICACHE_OPS                0x401
+#define L2_EVENT_TLBI                      0x402
+#define L2_EVENT_BARRIERS                  0x403
+#define L2_EVENT_TOTAL_READS               0x405
+#define L2_EVENT_TOTAL_WRITES              0x406
+#define L2_EVENT_TOTAL_REQUESTS            0x407
+#define L2_EVENT_LDREX                     0x420
+#define L2_EVENT_STREX                     0x421
+#define L2_EVENT_CLREX                     0x422
 
 static DEFINE_RAW_SPINLOCK(l2_access_lock);
 
@@ -494,14 +501,6 @@ static int l2_cache_event_init(struct perf_event *event)
 		return -EOPNOTSUPP;
 	}
 
-	/* We cannot filter accurately so we just don't allow it. */
-	if (event->attr.exclude_user || event->attr.exclude_kernel ||
-	    event->attr.exclude_hv || event->attr.exclude_idle) {
-		dev_dbg_ratelimited(&l2cache_pmu->pdev->dev,
-				    "Can't exclude execution levels\n");
-		return -EOPNOTSUPP;
-	}
-
 	if (((L2_EVT_GROUP(event->attr.config) > L2_EVT_GROUP_MAX) ||
 	     ((event->attr.config & ~L2_EVT_MASK) != 0)) &&
 	    (event->attr.config != L2CYCLE_CTR_RAW_CODE)) {
@@ -519,14 +518,14 @@ static int l2_cache_event_init(struct perf_event *event)
 		return -EINVAL;
 	}
 
-	list_for_each_entry(sibling, &event->group_leader->sibling_list,
-			    group_entry)
+	for_each_sibling_event(sibling, event->group_leader) {
 		if (sibling->pmu != event->pmu &&
 		    !is_software_event(sibling)) {
 			dev_dbg_ratelimited(&l2cache_pmu->pdev->dev,
 				 "Can't create mixed PMU group\n");
 			return -EINVAL;
 		}
+	}
 
 	cluster = get_cluster_pmu(l2cache_pmu, event->cpu);
 	if (!cluster) {
@@ -556,8 +555,7 @@ static int l2_cache_event_init(struct perf_event *event)
 		return -EINVAL;
 	}
 
-	list_for_each_entry(sibling, &event->group_leader->sibling_list,
-			    group_entry) {
+	for_each_sibling_event(sibling, event->group_leader) {
 		if ((sibling != event) &&
 		    !is_software_event(sibling) &&
 		    (L2_EVT_GROUP(sibling->attr.config) ==
@@ -700,9 +698,12 @@ static struct attribute_group l2_cache_pmu_cpumask_group = {
 /* CCG format for perf RAW codes. */
 PMU_FORMAT_ATTR(l2_code,   "config:4-11");
 PMU_FORMAT_ATTR(l2_group,  "config:0-3");
+PMU_FORMAT_ATTR(event,     "config:0-11");
+
 static struct attribute *l2_cache_pmu_formats[] = {
 	&format_attr_l2_code.attr,
 	&format_attr_l2_group.attr,
+	&format_attr_event.attr,
 	NULL,
 };
 
@@ -711,9 +712,45 @@ static struct attribute_group l2_cache_pmu_format_group = {
 	.attrs = l2_cache_pmu_formats,
 };
 
+static ssize_t l2cache_pmu_event_show(struct device *dev,
+				      struct device_attribute *attr, char *page)
+{
+	struct perf_pmu_events_attr *pmu_attr;
+
+	pmu_attr = container_of(attr, struct perf_pmu_events_attr, attr);
+	return sprintf(page, "event=0x%02llx\n", pmu_attr->id);
+}
+
+#define L2CACHE_EVENT_ATTR(_name, _id)					     \
+	(&((struct perf_pmu_events_attr[]) {				     \
+		{ .attr = __ATTR(_name, 0444, l2cache_pmu_event_show, NULL), \
+		  .id = _id, }						     \
+	})[0].attr.attr)
+
+static struct attribute *l2_cache_pmu_events[] = {
+	L2CACHE_EVENT_ATTR(cycles, L2_EVENT_CYCLES),
+	L2CACHE_EVENT_ATTR(dcache-ops, L2_EVENT_DCACHE_OPS),
+	L2CACHE_EVENT_ATTR(icache-ops, L2_EVENT_ICACHE_OPS),
+	L2CACHE_EVENT_ATTR(tlbi, L2_EVENT_TLBI),
+	L2CACHE_EVENT_ATTR(barriers, L2_EVENT_BARRIERS),
+	L2CACHE_EVENT_ATTR(total-reads, L2_EVENT_TOTAL_READS),
+	L2CACHE_EVENT_ATTR(total-writes, L2_EVENT_TOTAL_WRITES),
+	L2CACHE_EVENT_ATTR(total-requests, L2_EVENT_TOTAL_REQUESTS),
+	L2CACHE_EVENT_ATTR(ldrex, L2_EVENT_LDREX),
+	L2CACHE_EVENT_ATTR(strex, L2_EVENT_STREX),
+	L2CACHE_EVENT_ATTR(clrex, L2_EVENT_CLREX),
+	NULL
+};
+
+static struct attribute_group l2_cache_pmu_events_group = {
+	.name = "events",
+	.attrs = l2_cache_pmu_events,
+};
+
 static const struct attribute_group *l2_cache_pmu_attr_grps[] = {
 	&l2_cache_pmu_format_group,
 	&l2_cache_pmu_cpumask_group,
+	&l2_cache_pmu_events_group,
 	NULL,
 };
 
@@ -872,12 +909,8 @@ static int l2_cache_pmu_probe_cluster(struct device *dev, void *data)
 	cluster->cluster_id = fw_cluster_id;
 
 	irq = platform_get_irq(sdev, 0);
-	if (irq < 0) {
-		dev_err(&pdev->dev,
-			"Failed to get valid irq for cluster %ld\n",
-			fw_cluster_id);
+	if (irq < 0)
 		return irq;
-	}
 	irq_set_status_flags(irq, IRQ_NOAUTOEN);
 	cluster->irq = irq;
 
@@ -929,6 +962,7 @@ static int l2_cache_pmu_probe(struct platform_device *pdev)
 		.stop		= l2_cache_event_stop,
 		.read		= l2_cache_event_read,
 		.attr_groups	= l2_cache_pmu_attr_grps,
+		.capabilities	= PERF_PMU_CAP_NO_EXCLUDE,
 	};
 
 	l2cache_pmu->num_counters = get_num_counters();
@@ -994,6 +1028,7 @@ static struct platform_driver l2_cache_pmu_driver = {
 	.driver = {
 		.name = "qcom-l2cache-pmu",
 		.acpi_match_table = ACPI_PTR(l2_cache_pmu_acpi_match),
+		.suppress_bind_attrs = true,
 	},
 	.probe = l2_cache_pmu_probe,
 	.remove = l2_cache_pmu_remove,

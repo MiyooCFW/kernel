@@ -262,14 +262,12 @@ void hci_send_to_sock(struct hci_dev *hdev, struct sk_buff *skb)
 }
 
 /* Send frame to sockets with specific channel */
-void hci_send_to_channel(unsigned short channel, struct sk_buff *skb,
-			 int flag, struct sock *skip_sk)
+static void __hci_send_to_channel(unsigned short channel, struct sk_buff *skb,
+				  int flag, struct sock *skip_sk)
 {
 	struct sock *sk;
 
 	BT_DBG("channel %u len %d", channel, skb->len);
-
-	read_lock(&hci_sk_list.lock);
 
 	sk_for_each(sk, &hci_sk_list.head) {
 		struct sk_buff *nskb;
@@ -296,6 +294,13 @@ void hci_send_to_channel(unsigned short channel, struct sk_buff *skb,
 			kfree_skb(nskb);
 	}
 
+}
+
+void hci_send_to_channel(unsigned short channel, struct sk_buff *skb,
+			 int flag, struct sock *skip_sk)
+{
+	read_lock(&hci_sk_list.lock);
+	__hci_send_to_channel(channel, skb, flag, skip_sk);
 	read_unlock(&hci_sk_list.lock);
 }
 
@@ -399,8 +404,8 @@ void hci_send_monitor_ctrl_event(struct hci_dev *hdev, u16 event,
 		hdr->index = index;
 		hdr->len = cpu_to_le16(skb->len - HCI_MON_HDR_SIZE);
 
-		hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-				    HCI_SOCK_TRUSTED, NULL);
+		__hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+				      HCI_SOCK_TRUSTED, NULL);
 		kfree_skb(skb);
 	}
 
@@ -1386,7 +1391,7 @@ done:
 }
 
 static int hci_sock_getname(struct socket *sock, struct sockaddr *addr,
-			    int *addr_len, int peer)
+			    int peer)
 {
 	struct sockaddr_hci *haddr = (struct sockaddr_hci *)addr;
 	struct sock *sk = sock->sk;
@@ -1406,10 +1411,10 @@ static int hci_sock_getname(struct socket *sock, struct sockaddr *addr,
 		goto done;
 	}
 
-	*addr_len = sizeof(*haddr);
 	haddr->hci_family = AF_BLUETOOTH;
 	haddr->hci_dev    = hdev->id;
 	haddr->hci_channel= hci_pi(sk)->channel;
+	err = sizeof(*haddr);
 
 done:
 	release_sock(sk);
@@ -1429,9 +1434,9 @@ static void hci_sock_cmsg(struct sock *sk, struct msghdr *msg,
 
 	if (mask & HCI_CMSG_TSTAMP) {
 #ifdef CONFIG_COMPAT
-		struct compat_timeval ctv;
+		struct old_timeval32 ctv;
 #endif
-		struct timeval tv;
+		struct __kernel_old_timeval tv;
 		void *data;
 		int len;
 

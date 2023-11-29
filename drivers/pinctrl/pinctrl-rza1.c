@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Combined GPIO and pin controller support for Renesas RZ/A1 (r7s72100) SoC
  *
  * Copyright (C) 2017 Jacopo Mondi
- *
- * This file is licensed under the terms of the GNU General Public
- * License version 2. This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  */
 
 /*
@@ -303,6 +300,134 @@ static const struct rza1_pinmux_conf rza1h_pmx_conf = {
 };
 
 /* ----------------------------------------------------------------------------
+ * RZ/A1L (r7s72102) pinmux flags
+ */
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p1[] = {
+	{ .pin = 0, .func = 1 },
+	{ .pin = 1, .func = 1 },
+	{ .pin = 2, .func = 1 },
+	{ .pin = 3, .func = 1 },
+	{ .pin = 4, .func = 1 },
+	{ .pin = 5, .func = 1 },
+	{ .pin = 6, .func = 1 },
+	{ .pin = 7, .func = 1 },
+};
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p3[] = {
+	{ .pin = 0, .func = 2 },
+	{ .pin = 1, .func = 2 },
+	{ .pin = 2, .func = 2 },
+	{ .pin = 4, .func = 2 },
+	{ .pin = 5, .func = 2 },
+	{ .pin = 10, .func = 2 },
+	{ .pin = 11, .func = 2 },
+	{ .pin = 12, .func = 2 },
+	{ .pin = 13, .func = 2 },
+};
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p4[] = {
+	{ .pin = 1, .func = 4 },
+	{ .pin = 2, .func = 2 },
+	{ .pin = 3, .func = 2 },
+	{ .pin = 6, .func = 2 },
+	{ .pin = 7, .func = 2 },
+};
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p5[] = {
+	{ .pin = 0, .func = 1 },
+	{ .pin = 1, .func = 1 },
+	{ .pin = 2, .func = 1 },
+	{ .pin = 3, .func = 1 },
+	{ .pin = 4, .func = 1 },
+	{ .pin = 5, .func = 1 },
+	{ .pin = 6, .func = 1 },
+	{ .pin = 7, .func = 1 },
+	{ .pin = 8, .func = 1 },
+	{ .pin = 9, .func = 1 },
+	{ .pin = 10, .func = 1 },
+	{ .pin = 11, .func = 1 },
+	{ .pin = 12, .func = 1 },
+	{ .pin = 13, .func = 1 },
+	{ .pin = 14, .func = 1 },
+	{ .pin = 15, .func = 1 },
+	{ .pin = 0, .func = 2 },
+	{ .pin = 1, .func = 2 },
+	{ .pin = 2, .func = 2 },
+	{ .pin = 3, .func = 2 },
+};
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p6[] = {
+	{ .pin = 0, .func = 1 },
+	{ .pin = 1, .func = 1 },
+	{ .pin = 2, .func = 1 },
+	{ .pin = 3, .func = 1 },
+	{ .pin = 4, .func = 1 },
+	{ .pin = 5, .func = 1 },
+	{ .pin = 6, .func = 1 },
+	{ .pin = 7, .func = 1 },
+	{ .pin = 8, .func = 1 },
+	{ .pin = 9, .func = 1 },
+	{ .pin = 10, .func = 1 },
+	{ .pin = 11, .func = 1 },
+	{ .pin = 12, .func = 1 },
+	{ .pin = 13, .func = 1 },
+	{ .pin = 14, .func = 1 },
+	{ .pin = 15, .func = 1 },
+};
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p7[] = {
+	{ .pin = 2, .func = 2 },
+	{ .pin = 3, .func = 2 },
+	{ .pin = 5, .func = 2 },
+	{ .pin = 6, .func = 2 },
+	{ .pin = 7, .func = 2 },
+	{ .pin = 2, .func = 3 },
+	{ .pin = 3, .func = 3 },
+	{ .pin = 5, .func = 3 },
+	{ .pin = 6, .func = 3 },
+	{ .pin = 7, .func = 3 },
+};
+
+static const struct rza1_bidir_pin rza1l_bidir_pins_p9[] = {
+	{ .pin = 1, .func = 2 },
+	{ .pin = 0, .func = 3 },
+	{ .pin = 1, .func = 3 },
+	{ .pin = 3, .func = 3 },
+	{ .pin = 4, .func = 3 },
+	{ .pin = 5, .func = 3 },
+};
+
+static const struct rza1_swio_pin rza1l_swio_pins[] = {
+	{ .port = 2, .pin = 8, .func = 2, .input = 0 },
+	{ .port = 5, .pin = 6, .func = 3, .input = 0 },
+	{ .port = 6, .pin = 6, .func = 3, .input = 0 },
+	{ .port = 6, .pin = 10, .func = 3, .input = 0 },
+	{ .port = 7, .pin = 10, .func = 2, .input = 0 },
+	{ .port = 8, .pin = 2, .func = 3, .input = 0 },
+};
+
+static const struct rza1_bidir_entry rza1l_bidir_entries[RZA1_NPORTS] = {
+	[1] = { ARRAY_SIZE(rza1l_bidir_pins_p1), rza1l_bidir_pins_p1 },
+	[3] = { ARRAY_SIZE(rza1l_bidir_pins_p3), rza1l_bidir_pins_p3 },
+	[4] = { ARRAY_SIZE(rza1l_bidir_pins_p4), rza1l_bidir_pins_p4 },
+	[5] = { ARRAY_SIZE(rza1l_bidir_pins_p4), rza1l_bidir_pins_p5 },
+	[6] = { ARRAY_SIZE(rza1l_bidir_pins_p6), rza1l_bidir_pins_p6 },
+	[7] = { ARRAY_SIZE(rza1l_bidir_pins_p7), rza1l_bidir_pins_p7 },
+	[9] = { ARRAY_SIZE(rza1l_bidir_pins_p9), rza1l_bidir_pins_p9 },
+};
+
+static const struct rza1_swio_entry rza1l_swio_entries[] = {
+	[0] = { ARRAY_SIZE(rza1l_swio_pins), rza1l_swio_pins },
+};
+
+/* RZ/A1L (r7s72102x) pinmux flags table */
+static const struct rza1_pinmux_conf rza1l_pmx_conf = {
+	.bidir_entries	= rza1l_bidir_entries,
+	.swio_entries	= rza1l_swio_entries,
+};
+
+/* ----------------------------------------------------------------------------
  * RZ/A1 types
  */
 /**
@@ -495,14 +620,7 @@ static void rza1_pin_reset(struct rza1_port *port, unsigned int pin)
 static inline int rza1_pin_get_direction(struct rza1_port *port,
 					 unsigned int pin)
 {
-	unsigned long irqflags;
-	int input;
-
-	spin_lock_irqsave(&port->lock, irqflags);
-	input = rza1_get_bit(port, RZA1_PM_REG, pin);
-	spin_unlock_irqrestore(&port->lock, irqflags);
-
-	return !!input;
+	return !!rza1_get_bit(port, RZA1_PM_REG, pin);
 }
 
 /**
@@ -546,14 +664,7 @@ static inline void rza1_pin_set(struct rza1_port *port, unsigned int pin,
 
 static inline int rza1_pin_get(struct rza1_port *port, unsigned int pin)
 {
-	unsigned long irqflags;
-	int val;
-
-	spin_lock_irqsave(&port->lock, irqflags);
-	val = rza1_get_bit(port, RZA1_PPR_REG, pin);
-	spin_unlock_irqrestore(&port->lock, irqflags);
-
-	return val;
+	return rza1_get_bit(port, RZA1_PPR_REG, pin);
 }
 
 /**
@@ -755,8 +866,10 @@ static int rza1_dt_node_pin_count(struct device_node *np)
 	npins = 0;
 	for_each_child_of_node(np, child) {
 		of_pins = of_find_property(child, "pinmux", NULL);
-		if (!of_pins)
+		if (!of_pins) {
+			of_node_put(child);
 			return -EINVAL;
+		}
 
 		npins += of_pins->length / sizeof(u32);
 	}
@@ -802,8 +915,8 @@ static int rza1_parse_pinmux_node(struct rza1_pinctrl *rza1_pctl,
 					      &npin_configs);
 	if (ret) {
 		dev_err(rza1_pctl->dev,
-			"Unable to parse pin configuration options for %s\n",
-			np->name);
+			"Unable to parse pin configuration options for %pOFn\n",
+			np);
 		return ret;
 	}
 
@@ -914,8 +1027,10 @@ static int rza1_dt_node_to_map(struct pinctrl_dev *pctldev,
 		for_each_child_of_node(np, child) {
 			ret = rza1_parse_pinmux_node(rza1_pctl, child, mux_conf,
 						     grpin);
-			if (ret < 0)
+			if (ret < 0) {
+				of_node_put(child);
 				return ret;
+			}
 
 			grpin += ret;
 			mux_conf += ret;
@@ -1098,8 +1213,11 @@ static int rza1_parse_gpiochip(struct rza1_pinctrl *rza1_pctl,
 
 	*chip		= rza1_gpiochip_template;
 	chip->base	= -1;
-	chip->label	= devm_kasprintf(rza1_pctl->dev, GFP_KERNEL, "%s",
-					 np->name);
+	chip->label	= devm_kasprintf(rza1_pctl->dev, GFP_KERNEL, "%pOFn",
+					 np);
+	if (!chip->label)
+		return -ENOMEM;
+
 	chip->ngpio	= of_args.args[2];
 	chip->of_node	= np;
 	chip->parent	= rza1_pctl->dev;
@@ -1158,8 +1276,10 @@ static int rza1_gpio_register(struct rza1_pinctrl *rza1_pctl)
 
 		ret = rza1_parse_gpiochip(rza1_pctl, child, &gpio_chips[i],
 					  &gpio_ranges[i]);
-		if (ret)
-			goto gpiochip_remove;
+		if (ret) {
+			of_node_put(child);
+			return ret;
+		}
 
 		++i;
 	}
@@ -1167,12 +1287,6 @@ static int rza1_gpio_register(struct rza1_pinctrl *rza1_pctl)
 	dev_info(rza1_pctl->dev, "Registered %u gpio controllers\n", i);
 
 	return 0;
-
-gpiochip_remove:
-	for (; i > 0; i--)
-		devm_gpiochip_remove(rza1_pctl->dev, &gpio_chips[i - 1]);
-
-	return ret;
 }
 
 /**
@@ -1207,6 +1321,8 @@ static int rza1_pinctrl_register(struct rza1_pinctrl *rza1_pctl)
 		pins[i].number = i;
 		pins[i].name = devm_kasprintf(rza1_pctl->dev, GFP_KERNEL,
 					      "P%u-%u", port, pin);
+		if (!pins[i].name)
+			return -ENOMEM;
 
 		if (i % RZA1_PINS_PER_PORT == 0) {
 			/*
@@ -1249,7 +1365,6 @@ static int rza1_pinctrl_register(struct rza1_pinctrl *rza1_pctl)
 static int rza1_pinctrl_probe(struct platform_device *pdev)
 {
 	struct rza1_pinctrl *rza1_pctl;
-	struct resource *res;
 	int ret;
 
 	rza1_pctl = devm_kzalloc(&pdev->dev, sizeof(*rza1_pctl), GFP_KERNEL);
@@ -1258,8 +1373,7 @@ static int rza1_pinctrl_probe(struct platform_device *pdev)
 
 	rza1_pctl->dev = &pdev->dev;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	rza1_pctl->base = devm_ioremap_resource(&pdev->dev, res);
+	rza1_pctl->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(rza1_pctl->base))
 		return PTR_ERR(rza1_pctl->base);
 
@@ -1285,8 +1399,14 @@ static int rza1_pinctrl_probe(struct platform_device *pdev)
 
 static const struct of_device_id rza1_pinctrl_of_match[] = {
 	{
+		/* RZ/A1H, RZ/A1M */
 		.compatible	= "renesas,r7s72100-ports",
 		.data		= &rza1h_pmx_conf,
+	},
+	{
+		/* RZ/A1L */
+		.compatible	= "renesas,r7s72102-ports",
+		.data		= &rza1l_pmx_conf,
 	},
 	{ }
 };

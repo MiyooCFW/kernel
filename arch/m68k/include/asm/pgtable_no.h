@@ -46,11 +46,6 @@ extern void *empty_zero_page;
 #define ZERO_PAGE(vaddr)	(virt_to_page(empty_zero_page))
 
 /*
- * No page table caches to initialise.
- */
-#define pgtable_cache_init()	do { } while (0)
-
-/*
  * All 32bit addresses are effectively valid for vmalloc...
  * Sort of meaningless for non-VM targets.
  */
@@ -60,7 +55,5 @@ extern void *empty_zero_page;
 #define	KMAP_END	0xffffffff
 
 #include <asm-generic/pgtable.h>
-
-#define check_pgt_cache()	do { } while (0)
 
 #endif /* _M68KNOMMU_PGTABLE_H */

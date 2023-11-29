@@ -144,7 +144,7 @@ static inline bool mmc_op_multi(u32 opcode)
 #define R1_WP_ERASE_SKIP	(1 << 15)	/* sx, c */
 #define R1_CARD_ECC_DISABLED	(1 << 14)	/* sx, a */
 #define R1_ERASE_RESET		(1 << 13)	/* sr, c */
-#define R1_STATUS(x)            (x & 0xFFFFE000)
+#define R1_STATUS(x)            (x & 0xFFF9A000)
 #define R1_CURRENT_STATE(x)	((x & 0x00001E00) >> 9)	/* sx, b (4 bits) */
 #define R1_READY_FOR_DATA	(1 << 8)	/* sx, a */
 #define R1_SWITCH_ERROR		(1 << 7)	/* sx, c */
@@ -434,7 +434,7 @@ static inline bool mmc_op_multi(u32 opcode)
 #define MMC_SECURE_TRIM1_ARG		0x80000001
 #define MMC_SECURE_TRIM2_ARG		0x80008000
 #define MMC_SECURE_ARGS			0x80000000
-#define MMC_TRIM_ARGS			0x00008001
+#define MMC_TRIM_OR_DISCARD_ARGS	0x00008003
 
 #define mmc_driver_type_mask(n)		(1 << (n))
 

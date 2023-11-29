@@ -516,11 +516,11 @@ static int sco_sock_bind(struct socket *sock, struct sockaddr *addr,
 	struct sock *sk = sock->sk;
 	int err = 0;
 
-	BT_DBG("sk %p %pMR", sk, &sa->sco_bdaddr);
-
 	if (!addr || addr_len < sizeof(struct sockaddr_sco) ||
 	    addr->sa_family != AF_BLUETOOTH)
 		return -EINVAL;
+
+	BT_DBG("sk %p %pMR", sk, &sa->sco_bdaddr);
 
 	lock_sock(sk);
 
@@ -687,7 +687,7 @@ done:
 }
 
 static int sco_sock_getname(struct socket *sock, struct sockaddr *addr,
-			    int *len, int peer)
+			    int peer)
 {
 	struct sockaddr_sco *sa = (struct sockaddr_sco *) addr;
 	struct sock *sk = sock->sk;
@@ -695,14 +695,13 @@ static int sco_sock_getname(struct socket *sock, struct sockaddr *addr,
 	BT_DBG("sock %p, sk %p", sock, sk);
 
 	addr->sa_family = AF_BLUETOOTH;
-	*len = sizeof(struct sockaddr_sco);
 
 	if (peer)
 		bacpy(&sa->sco_bdaddr, &sco_pi(sk)->dst);
 	else
 		bacpy(&sa->sco_bdaddr, &sco_pi(sk)->src);
 
-	return 0;
+	return sizeof(struct sockaddr_sco);
 }
 
 static int sco_sock_sendmsg(struct socket *sock, struct msghdr *msg,
@@ -1193,17 +1192,7 @@ static int sco_debugfs_show(struct seq_file *f, void *p)
 	return 0;
 }
 
-static int sco_debugfs_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, sco_debugfs_show, inode->i_private);
-}
-
-static const struct file_operations sco_debugfs_fops = {
-	.open		= sco_debugfs_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
+DEFINE_SHOW_ATTRIBUTE(sco_debugfs);
 
 static struct dentry *sco_debugfs;
 
@@ -1220,6 +1209,7 @@ static const struct proto_ops sco_sock_ops = {
 	.recvmsg	= sco_sock_recvmsg,
 	.poll		= bt_sock_poll,
 	.ioctl		= bt_sock_ioctl,
+	.gettstamp	= sock_gettstamp,
 	.mmap		= sock_no_mmap,
 	.socketpair	= sock_no_socketpair,
 	.shutdown	= sco_sock_shutdown,

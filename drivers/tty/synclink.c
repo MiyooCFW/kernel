@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-1.0+
 /*
  * $Id: synclink.c,v 4.38 2005/11/07 16:30:34 paulkf Exp $
  *
@@ -12,8 +13,6 @@
  * Derived from serial.c written by Theodore Ts'o and Linus Torvalds
  *
  * Original release 01/11/99
- *
- * This code is released under the GNU General Public License (GPL)
  *
  * This driver is primarily intended for use in synchronous
  * HDLC mode. Asynchronous mode is also provided.
@@ -701,7 +700,7 @@ static void usc_enable_async_clock( struct mgsl_struct *info, u32 DataRate );
 
 static void usc_loopback_frame( struct mgsl_struct *info );
 
-static void mgsl_tx_timeout(unsigned long context);
+static void mgsl_tx_timeout(struct timer_list *t);
 
 
 static void usc_loopmode_cancel_transmit( struct mgsl_struct * info );
@@ -1769,7 +1768,7 @@ static int startup(struct mgsl_struct * info)
 	
 	memset(&info->icount, 0, sizeof(info->icount));
 
-	setup_timer(&info->tx_timer, mgsl_tx_timeout, (unsigned long)info);
+	timer_setup(&info->tx_timer, mgsl_tx_timeout, 0);
 	
 	/* Allocate and claim adapter resources */
 	retval = mgsl_claim_resources(info);
@@ -2960,8 +2959,7 @@ static int mgsl_ioctl(struct tty_struct *tty,
 	if (mgsl_paranoia_check(info, tty->name, "mgsl_ioctl"))
 		return -ENODEV;
 
-	if ((cmd != TIOCGSERIAL) && (cmd != TIOCSSERIAL) &&
-	    (cmd != TIOCMIWAIT)) {
+	if (cmd != TIOCMIWAIT) {
 		if (tty_io_error(tty))
 		    return -EIO;
 	}
@@ -3535,19 +3533,6 @@ static int mgsl_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static int mgsl_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, mgsl_proc_show, NULL);
-}
-
-static const struct file_operations mgsl_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= mgsl_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
 /* mgsl_allocate_dma_buffers()
  * 
  * 	Allocate and format DMA buffers (ISA adapter)
@@ -4098,8 +4083,7 @@ static int mgsl_claim_resources(struct mgsl_struct *info)
 		if (request_dma(info->dma_level,info->device_name) < 0){
 			printk( "%s(%d):Can't request DMA channel on device %s DMA=%d\n",
 				__FILE__,__LINE__,info->device_name, info->dma_level );
-			mgsl_release_resources( info );
-			return -ENODEV;
+			goto errout;
 		}
 		info->dma_requested = true;
 
@@ -4300,7 +4284,7 @@ static const struct tty_operations mgsl_ops = {
 	.tiocmget = tiocmget,
 	.tiocmset = tiocmset,
 	.get_icount = msgl_get_icount,
-	.proc_fops = &mgsl_proc_fops,
+	.proc_show = mgsl_proc_show,
 };
 
 /*
@@ -4339,41 +4323,6 @@ static int mgsl_init_tty(void)
 		driver_name, driver_version,
 		serial_driver->major);
 	return 0;
-}
-
-/* enumerate user specified ISA adapters
- */
-static void mgsl_enum_isa_devices(void)
-{
-	struct mgsl_struct *info;
-	int i;
-		
-	/* Check for user specified ISA devices */
-	
-	for (i=0 ;(i < MAX_ISA_DEVICES) && io[i] && irq[i]; i++){
-		if ( debug_level >= DEBUG_LEVEL_INFO )
-			printk("ISA device specified io=%04X,irq=%d,dma=%d\n",
-				io[i], irq[i], dma[i] );
-		
-		info = mgsl_allocate_device();
-		if ( !info ) {
-			/* error allocating device instance data */
-			if ( debug_level >= DEBUG_LEVEL_ERROR )
-				printk( "can't allocate device instance data.\n");
-			continue;
-		}
-		
-		/* Copy user configuration info to device instance data */
-		info->io_base = (unsigned int)io[i];
-		info->irq_level = (unsigned int)irq[i];
-		info->irq_level = irq_canonicalize(info->irq_level);
-		info->dma_level = (unsigned int)dma[i];
-		info->bus_type = MGSL_BUS_TYPE_ISA;
-		info->io_addr_size = 16;
-		info->irq_flags = 0;
-		
-		mgsl_add_device( info );
-	}
 }
 
 static void synclink_cleanup(void)
@@ -4419,7 +4368,6 @@ static int __init synclink_init(void)
 
  	printk("%s %s\n", driver_name, driver_version);
 
-	mgsl_enum_isa_devices();
 	if ((rc = pci_register_driver(&synclink_pci_driver)) < 0)
 		printk("%s:failed to register PCI driver, error=%d\n",__FILE__,rc);
 	else
@@ -5040,12 +4988,6 @@ static void usc_set_sdlc_mode( struct mgsl_struct *info )
 	usc_DmaCmd( info, DmaCmd_ResetAllChannels );	/* disable both DMA channels */
 	info->mbre_bit = BIT8;
 	outw( BIT8, info->io_base );			/* set Master Bus Enable (DCAR) */
-
-	if (info->bus_type == MGSL_BUS_TYPE_ISA) {
-		/* Enable DMAEN (Port 7, Bit 14) */
-		/* This connects the DMA request signal to the ISA bus */
-		usc_OutReg(info, PCR, (u16)((usc_InReg(info, PCR) | BIT15) & ~BIT14));
-	}
 
 	/* DMA Control Register (DCR)
 	 *
@@ -6023,12 +5965,6 @@ static void usc_set_async_mode( struct mgsl_struct *info )
 
 	usc_EnableMasterIrqBit( info );
 
-	if (info->bus_type == MGSL_BUS_TYPE_ISA) {
-		/* Enable INTEN (Port 6, Bit12) */
-		/* This connects the IRQ request signal to the ISA bus */
-		usc_OutReg(info, PCR, (u16)((usc_InReg(info, PCR) | BIT13) & ~BIT12));
-	}
-
 	if (info->params.loopback) {
 		info->loopback_bits = 0x300;
 		outw(0x0300, info->io_base + CCAR);
@@ -6122,12 +6058,6 @@ static void usc_set_sync_mode( struct mgsl_struct *info )
 {
 	usc_loopback_frame( info );
 	usc_set_sdlc_mode( info );
-
-	if (info->bus_type == MGSL_BUS_TYPE_ISA) {
-		/* Enable INTEN (Port 6, Bit12) */
-		/* This connects the IRQ request signal to the ISA bus */
-		usc_OutReg(info, PCR, (u16)((usc_InReg(info, PCR) | BIT13) & ~BIT12));
-	}
 
 	usc_enable_aux_clock(info, info->params.clock_speed);
 
@@ -7519,9 +7449,9 @@ static void mgsl_trace_block(struct mgsl_struct *info,const char* data, int coun
  * Arguments:	context		pointer to device instance data
  * Return Value:	None
  */
-static void mgsl_tx_timeout(unsigned long context)
+static void mgsl_tx_timeout(struct timer_list *t)
 {
-	struct mgsl_struct *info = (struct mgsl_struct*)context;
+	struct mgsl_struct *info = from_timer(info, t, tx_timer);
 	unsigned long flags;
 	
 	if ( debug_level >= DEBUG_LEVEL_INFO )

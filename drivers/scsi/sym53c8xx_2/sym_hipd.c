@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Device driver for the SYMBIOS/LSILOGIC 53C8XX and 53C1010 family 
  * of PCI-SCSI IO processors.
@@ -22,20 +23,6 @@
  * Copyright (C) 1997 Richard Waltham <dormouse@farsrobt.demon.co.uk>
  *
  *-----------------------------------------------------------------------------
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include <linux/slab.h>
@@ -3072,6 +3059,7 @@ static void sym_sir_bad_scsi_status(struct sym_hcb *np, int num, struct sym_ccb 
 			sym_print_addr(cp->cmd, "%s\n",
 			        s_status == S_BUSY ? "BUSY" : "QUEUE FULL\n");
 		}
+		/* fall through */
 	default:	/* S_INT, S_INT_COND_MET, S_CONFLICT */
 		sym_complete_error (np, cp);
 		break;
@@ -3855,7 +3843,7 @@ out_reject:
 
 int sym_compute_residual(struct sym_hcb *np, struct sym_ccb *cp)
 {
-	int dp_sg, dp_sgmin, resid = 0;
+	int dp_sg, resid = 0;
 	int dp_ofs = 0;
 
 	/*
@@ -3902,7 +3890,6 @@ int sym_compute_residual(struct sym_hcb *np, struct sym_ccb *cp)
 	 *  We are now full comfortable in the computation 
 	 *  of the data residual (2's complement).
 	 */
-	dp_sgmin = SYM_CONF_MAX_SG - cp->segments;
 	resid = -cp->ext_ofs;
 	for (dp_sg = cp->ext_sg; dp_sg < SYM_CONF_MAX_SG; ++dp_sg) {
 		u_int tmp = scr_to_cpu(cp->phys.data[dp_sg].size);
@@ -4633,6 +4620,7 @@ static void sym_int_sir(struct sym_hcb *np)
 	 *  Negotiation failed.
 	 *  Target does not want answer message.
 	 */
+	/* fall through */
 	case SIR_NEGO_PROTO:
 		sym_nego_default(np, tp, cp);
 		goto out;

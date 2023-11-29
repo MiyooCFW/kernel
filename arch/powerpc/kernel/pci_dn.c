@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * pci_dn.c
  *
  * Copyright (C) 2001 Todd Inglett, IBM Corporation
  *
  * PCI manipulation via device_nodes.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *    
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- * 
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 #include <linux/kernel.h>
 #include <linux/pci.h>
@@ -156,10 +143,8 @@ static struct pci_dn *add_one_dev_pci_data(struct pci_dn *parent,
 	pdn->parent = parent;
 	pdn->busno = busno;
 	pdn->devfn = devfn;
-#ifdef CONFIG_PPC_POWERNV
 	pdn->vf_index = vf_index;
 	pdn->pe_number = IODA_INVALID_PE;
-#endif
 	INIT_LIST_HEAD(&pdn->child_list);
 	INIT_LIST_HEAD(&pdn->list);
 	list_add_tail(&pdn->list, &parent->child_list);
@@ -226,9 +211,7 @@ void remove_dev_pci_data(struct pci_dev *pdev)
 	 */
 	if (pdev->is_virtfn) {
 		pdn = pci_get_pdn(pdev);
-#ifdef CONFIG_PPC_POWERNV
 		pdn->pe_number = IODA_INVALID_PE;
-#endif
 		return;
 	}
 
@@ -307,9 +290,7 @@ struct pci_dn *pci_add_device_node_info(struct pci_controller *hose,
 		return NULL;
 	dn->data = pdn;
 	pdn->phb = hose;
-#ifdef CONFIG_PPC_POWERNV
 	pdn->pe_number = IODA_INVALID_PE;
-#endif
 	regs = of_get_property(dn, "reg", NULL);
 	if (regs) {
 		u32 addr = of_read_number(regs, 1);
@@ -356,6 +337,7 @@ void pci_remove_device_node_info(struct device_node *dn)
 {
 	struct pci_dn *pdn = dn ? PCI_DN(dn) : NULL;
 	struct device_node *parent;
+	struct pci_dev *pdev;
 #ifdef CONFIG_EEH
 	struct eeh_dev *edev = pdn_to_eeh_dev(pdn);
 
@@ -369,12 +351,28 @@ void pci_remove_device_node_info(struct device_node *dn)
 	WARN_ON(!list_empty(&pdn->child_list));
 	list_del(&pdn->list);
 
+	/* Drop the parent pci_dn's ref to our backing dt node */
 	parent = of_get_parent(dn);
 	if (parent)
 		of_node_put(parent);
 
-	dn->data = NULL;
-	kfree(pdn);
+	/*
+	 * At this point we *might* still have a pci_dev that was
+	 * instantiated from this pci_dn. So defer free()ing it until
+	 * the pci_dev's release function is called.
+	 */
+	pdev = pci_get_domain_bus_and_slot(pdn->phb->global_number,
+			pdn->busno, pdn->devfn);
+	if (pdev) {
+		/* NB: pdev has a ref to dn */
+		pci_dbg(pdev, "marked pdn (from %pOF) as dead\n", dn);
+		pdn->flags |= PCI_DN_FLAG_DEAD;
+	} else {
+		dn->data = NULL;
+		kfree(pdn);
+	}
+
+	pci_dev_put(pdev);
 }
 EXPORT_SYMBOL_GPL(pci_remove_device_node_info);
 

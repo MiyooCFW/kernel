@@ -1,27 +1,5 @@
-/******************************************************************************
- *
- * Copyright(c) 2009-2014  Realtek Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * The full GNU General Public License is included in this distribution in the
- * file called LICENSE.
- *
- * Contact Information:
- * wlanfae <wlanfae@realtek.com>
- * Realtek Corporation, No. 2, Innovation Road II, Hsinchu Science Park,
- * Hsinchu 300, Taiwan.
- *
- * Larry Finger <Larry.Finger@lwfinger.net>
- *
- *****************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2009-2014  Realtek Corporation.*/
 
 #include "../wifi.h"
 #include "../efuse.h"
@@ -43,6 +21,7 @@
 #include "../pwrseqcmd.h"
 #include "pwrseq.h"
 #include "../btcoexist/rtl_btc.h"
+#include <linux/kernel.h>
 
 #define LLT_CONFIG	5
 
@@ -60,6 +39,7 @@ static void _rtl8723be_return_beacon_queue_skb(struct ieee80211_hw *hw)
 
 		pci_unmap_single(rtlpci->pdev,
 				 rtlpriv->cfg->ops->get_desc(
+				 hw,
 				 (u8 *)entry, true, HW_DESC_TXBUFF_ADDR),
 				 skb->len, PCI_DMA_TODEVICE);
 		kfree_skb(skb);
@@ -317,12 +297,12 @@ void rtl8723be_get_hw_reg(struct ieee80211_hw *hw, u8 variable, u8 *val)
 		*((enum rf_pwrstate *)(val)) = ppsc->rfpwr_state;
 		break;
 	case HW_VAR_FWLPS_RF_ON:{
-		enum rf_pwrstate rfState;
+		enum rf_pwrstate rfstate;
 		u32 val_rcr;
 
 		rtlpriv->cfg->ops->get_hw_reg(hw, HW_VAR_RF_STATE,
-					      (u8 *)(&rfState));
-		if (rfState == ERFOFF) {
+					      (u8 *)(&rfstate));
+		if (rfstate == ERFOFF) {
 			*((bool *)(val)) = true;
 		} else {
 			val_rcr = rtl_read_dword(rtlpriv, REG_RCR);
@@ -762,10 +742,10 @@ static bool _rtl8723be_llt_table_init(struct ieee80211_hw *hw)
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	unsigned short i;
 	u8 txpktbuf_bndy;
-	u8 maxPage;
+	u8 maxpage;
 	bool status;
 
-	maxPage = 255;
+	maxpage = 255;
 	txpktbuf_bndy = 245;
 
 	rtl_write_dword(rtlpriv, REG_TRXFF_BNDY,
@@ -790,13 +770,13 @@ static bool _rtl8723be_llt_table_init(struct ieee80211_hw *hw)
 	if (!status)
 		return status;
 
-	for (i = txpktbuf_bndy; i < maxPage; i++) {
+	for (i = txpktbuf_bndy; i < maxpage; i++) {
 		status = _rtl8723be_llt_write(hw, i, (i + 1));
 		if (!status)
 			return status;
 	}
 
-	status = _rtl8723be_llt_write(hw, maxPage, txpktbuf_bndy);
+	status = _rtl8723be_llt_write(hw, maxpage, txpktbuf_bndy);
 	if (!status)
 		return status;
 
@@ -1685,17 +1665,17 @@ void rtl8723be_card_disable(struct ieee80211_hw *hw)
 }
 
 void rtl8723be_interrupt_recognized(struct ieee80211_hw *hw,
-				    u32 *p_inta, u32 *p_intb)
+				    struct rtl_int *intvec)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
 
-	*p_inta = rtl_read_dword(rtlpriv, ISR) & rtlpci->irq_mask[0];
-	rtl_write_dword(rtlpriv, ISR, *p_inta);
+	intvec->inta = rtl_read_dword(rtlpriv, ISR) & rtlpci->irq_mask[0];
+	rtl_write_dword(rtlpriv, ISR, intvec->inta);
 
-	*p_intb = rtl_read_dword(rtlpriv, REG_HISRE) &
-					rtlpci->irq_mask[1];
-	rtl_write_dword(rtlpriv, REG_HISRE, *p_intb);
+	intvec->intb = rtl_read_dword(rtlpriv, REG_HISRE) &
+				      rtlpci->irq_mask[1];
+	rtl_write_dword(rtlpriv, REG_HISRE, intvec->intb);
 }
 
 void rtl8723be_set_beacon_related_registers(struct ieee80211_hw *hw)
@@ -2129,28 +2109,28 @@ static void _rtl8723be_read_adapter_info(struct ieee80211_hw *hw,
 
 	if (rtlhal->oem_id == RT_CID_DEFAULT) {
 		/* Does this one have a Toshiba SMID from group 1? */
-		for (i = 0; i < sizeof(toshiba_smid1) / sizeof(u16); i++) {
+		for (i = 0; i < ARRAY_SIZE(toshiba_smid1); i++) {
 			if (rtlefuse->eeprom_smid == toshiba_smid1[i]) {
 				is_toshiba_smid1 = true;
 				break;
 			}
 		}
 		/* Does this one have a Toshiba SMID from group 2? */
-		for (i = 0; i < sizeof(toshiba_smid2) / sizeof(u16); i++) {
+		for (i = 0; i < ARRAY_SIZE(toshiba_smid2); i++) {
 			if (rtlefuse->eeprom_smid == toshiba_smid2[i]) {
 				is_toshiba_smid2 = true;
 				break;
 			}
 		}
 		/* Does this one have a Samsung SMID? */
-		for (i = 0; i < sizeof(samsung_smid) / sizeof(u16); i++) {
+		for (i = 0; i < ARRAY_SIZE(samsung_smid); i++) {
 			if (rtlefuse->eeprom_smid == samsung_smid[i]) {
 				is_samsung_smid = true;
 				break;
 			}
 		}
 		/* Does this one have a Lenovo SMID? */
-		for (i = 0; i < sizeof(lenovo_smid) / sizeof(u16); i++) {
+		for (i = 0; i < ARRAY_SIZE(lenovo_smid); i++) {
 			if (rtlefuse->eeprom_smid == lenovo_smid[i]) {
 				is_lenovo_smid = true;
 				break;
@@ -2328,7 +2308,7 @@ static u8 _rtl8723be_mrate_idx_to_arfr_id(struct ieee80211_hw *hw,
 
 static void rtl8723be_update_hal_rate_mask(struct ieee80211_hw *hw,
 					   struct ieee80211_sta *sta,
-					   u8 rssi_level)
+					   u8 rssi_level, bool update_bw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
@@ -2444,7 +2424,7 @@ static void rtl8723be_update_hal_rate_mask(struct ieee80211_hw *hw,
 	rate_mask[0] = macid;
 	rate_mask[1] = _rtl8723be_mrate_idx_to_arfr_id(hw, ratr_index) |
 						      (shortgi ? 0x80 : 0x00);
-	rate_mask[2] = curtxbw_40mhz;
+	rate_mask[2] = curtxbw_40mhz | ((!update_bw) << 3);
 
 	rate_mask[3] = (u8)(ratr_bitmap & 0x000000ff);
 	rate_mask[4] = (u8)((ratr_bitmap & 0x0000ff00) >> 8);
@@ -2464,11 +2444,11 @@ static void rtl8723be_update_hal_rate_mask(struct ieee80211_hw *hw,
 
 void rtl8723be_update_hal_rate_tbl(struct ieee80211_hw *hw,
 				   struct ieee80211_sta *sta,
-				   u8 rssi_level)
+				   u8 rssi_level, bool update_bw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	if (rtlpriv->dm.useramask)
-		rtl8723be_update_hal_rate_mask(hw, sta, rssi_level);
+		rtl8723be_update_hal_rate_mask(hw, sta, rssi_level, update_bw);
 }
 
 void rtl8723be_update_channel_access_setting(struct ieee80211_hw *hw)
@@ -2490,7 +2470,7 @@ bool rtl8723be_gpio_radio_on_off_checking(struct ieee80211_hw *hw, u8 *valid)
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
-	enum rf_pwrstate e_rfpowerstate_toset, cur_rfstate;
+	enum rf_pwrstate e_rfpowerstate_toset;
 	u8 u1tmp;
 	bool b_actuallyset = false;
 
@@ -2508,8 +2488,6 @@ bool rtl8723be_gpio_radio_on_off_checking(struct ieee80211_hw *hw, u8 *valid)
 		ppsc->rfchange_inprogress = true;
 		spin_unlock(&rtlpriv->locks.rf_ps_lock);
 	}
-
-	cur_rfstate = ppsc->rfpwr_state;
 
 	rtl_write_byte(rtlpriv, REG_GPIO_IO_SEL_2,
 		       rtl_read_byte(rtlpriv, REG_GPIO_IO_SEL_2) & ~(BIT(1)));

@@ -1,18 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* SocketCAN driver for Microchip CAN BUS Analyzer Tool
  *
  * Copyright (C) 2017 Mobica Limited
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published
- * by the Free Software Foundation; version 2 of the License.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.
  *
  * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
@@ -888,7 +877,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 		goto cleanup_unregister_candev;
 	}
 
-	dev_info(&intf->dev, "Microchip CAN BUS analizer connected\n");
+	dev_info(&intf->dev, "Microchip CAN BUS Analyzer connected\n");
 
 	return 0;
 

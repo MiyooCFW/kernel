@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * driver for the SAA7146 based AV110 cards (like the Fujitsu-Siemens DVB)
  * av7110.c: initialization and demux stuff
@@ -7,21 +8,6 @@
  *
  * originally based on code by:
  * Copyright (C) 1998,1999 Christian Theiss <mistert@rz.fh-augsburg.de>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * To obtain the license, point your browser to
- * http://www.gnu.org/copyleft/gpl.html
- *
  *
  * the project's page is at https://linuxtv.org
  */
@@ -53,7 +39,7 @@
 
 #include <linux/dvb/frontend.h>
 
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 
 #include "ttpci-eeprom.h"
 #include "av7110.h"
@@ -232,7 +218,7 @@ static void recover_arm(struct av7110 *av7110)
 	restart_feeds(av7110);
 
 #if IS_ENABLED(CONFIG_DVB_AV7110_IR)
-	av7110_check_ir_config(av7110, true);
+	av7110_set_ir_config(av7110);
 #endif
 }
 
@@ -263,10 +249,6 @@ static int arm_thread(void *data)
 
 		if (!av7110->arm_ready)
 			continue;
-
-#if IS_ENABLED(CONFIG_DVB_AV7110_IR)
-		av7110_check_ir_config(av7110, false);
-#endif
 
 		if (mutex_lock_interruptible(&av7110->dcomlock))
 			break;
@@ -324,14 +306,15 @@ static int DvbDmxFilterCallback(u8 *buffer1, size_t buffer1_len,
 		}
 		return dvbdmxfilter->feed->cb.sec(buffer1, buffer1_len,
 						  buffer2, buffer2_len,
-						  &dvbdmxfilter->filter);
+						  &dvbdmxfilter->filter, NULL);
 	case DMX_TYPE_TS:
 		if (!(dvbdmxfilter->feed->ts_type & TS_PACKET))
 			return 0;
 		if (dvbdmxfilter->feed->ts_type & TS_PAYLOAD_ONLY)
 			return dvbdmxfilter->feed->cb.ts(buffer1, buffer1_len,
 							 buffer2, buffer2_len,
-							 &dvbdmxfilter->feed->feed.ts);
+							 &dvbdmxfilter->feed->feed.ts,
+							 NULL);
 		else
 			av7110_p2t_write(buffer1, buffer1_len,
 					 dvbdmxfilter->feed->pid,
@@ -347,9 +330,9 @@ static int DvbDmxFilterCallback(u8 *buffer1, size_t buffer1_len,
 static inline void print_time(char *s)
 {
 #ifdef DEBUG_TIMING
-	struct timeval tv;
-	do_gettimeofday(&tv);
-	printk("%s: %d.%d\n", s, (int)tv.tv_sec, (int)tv.tv_usec);
+	struct timespec64 ts;
+	ktime_get_real_ts64(&ts);
+	printk("%s: %lld.%09ld\n", s, (s64)ts.tv_sec, ts.tv_nsec);
 #endif
 }
 
@@ -673,9 +656,11 @@ static void gpioirq(unsigned long cookie)
 		return;
 
 	case DATA_IRCOMMAND:
-		if (av7110->ir.ir_handler)
-			av7110->ir.ir_handler(av7110,
-				swahw32(irdebi(av7110, DEBINOSWAP, Reserved, 0, 4)));
+#if IS_ENABLED(CONFIG_DVB_AV7110_IR)
+		av7110_ir_handler(av7110,
+				  swahw32(irdebi(av7110, DEBINOSWAP, Reserved,
+						 0, 4)));
+#endif
 		iwdebi(av7110, DEBINOSWAP, RX_BUFF, 0, 2);
 		break;
 
@@ -1225,7 +1210,7 @@ static int budget_start_feed(struct dvb_demux_feed *feed)
 	dprintk(2, "av7110: %p\n", budget);
 
 	spin_lock(&budget->feedlock1);
-	feed->pusi_seen = 0; /* have a clean section start */
+	feed->pusi_seen = false; /* have a clean section start */
 	status = start_ts_capture(budget);
 	spin_unlock(&budget->feedlock1);
 	return status;
@@ -2313,7 +2298,7 @@ static int frontend_init(struct av7110 *av7110)
  * (n in defined in the RPS_THRESH1 counter threshold)
  * I think HS is raised high on the beginning of the n-th line
  * and remains high until this n-th line that triggered
- * it is completely received. When the receiption of n-th line
+ * it is completely received. When the reception of n-th line
  * ends, HS is lowered.
  *
  * To transmit data over DMA, 7146 needs changing state at
@@ -2347,7 +2332,7 @@ static int frontend_init(struct av7110 *av7110)
  * hardware debug note: a working budget card (including budget patch)
  * with vpeirq() interrupt setup in mode "0x90" (every 64K) will
  * generate 3 interrupts per 25-Hz DMA frame of 2*188*512 bytes
- * and that means 3*25=75 Hz of interrupt freqency, as seen by
+ * and that means 3*25=75 Hz of interrupt frequency, as seen by
  * watch cat /proc/interrupts
  *
  * If this frequency is 3x lower (and data received in the DMA
@@ -2356,7 +2341,7 @@ static int frontend_init(struct av7110 *av7110)
  * this means VSYNC line is not connected in the hardware.
  * (check soldering pcb and pins)
  * The same behaviour of missing VSYNC can be duplicated on budget
- * cards, by seting DD1_INIT trigger mode 7 in 3rd nibble.
+ * cards, by setting DD1_INIT trigger mode 7 in 3rd nibble.
  */
 static int av7110_attach(struct saa7146_dev* dev,
 			 struct saa7146_pci_extension_data *pci_ext)
@@ -2482,7 +2467,8 @@ static int av7110_attach(struct saa7146_dev* dev,
 	   get recognized before the main driver is fully loaded */
 	saa7146_write(dev, GPIO_CTRL, 0x500000);
 
-	strlcpy(av7110->i2c_adap.name, pci_ext->ext_priv, sizeof(av7110->i2c_adap.name));
+	strscpy(av7110->i2c_adap.name, pci_ext->ext_priv,
+		sizeof(av7110->i2c_adap.name));
 
 	saa7146_i2c_adapter_prepare(dev, &av7110->i2c_adap, SAA7146_I2C_BUS_BIT_RATE_120); /* 275 kHz */
 

@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Extensible Firmware Interface
  *
  * Based on Extensible Firmware Interface Specification version 2.4
  *
  * Copyright (C) 2013 - 2015 Linaro Ltd.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #define pr_fmt(fmt)	"efi: " fmt
@@ -193,7 +189,7 @@ static __init void reserve_regions(void)
 	 * uses its own memory map instead.
 	 */
 	memblock_dump_all();
-	memblock_remove(0, (phys_addr_t)ULLONG_MAX);
+	memblock_remove(0, PHYS_ADDR_MAX);
 
 	for_each_efi_memory_desc(md) {
 		paddr = md->phys_addr;

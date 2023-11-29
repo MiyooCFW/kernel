@@ -1,5 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-#include <asm-generic/vmlinux.lds.h>
+#include <asm/vmlinux.lds.h>
 #include <asm/page.h>
 
 OUTPUT_FORMAT(ELF_FORMAT)
@@ -77,6 +76,8 @@ SECTIONS
     SCHED_TEXT
     CPUIDLE_TEXT
     LOCK_TEXT
+    IRQENTRY_TEXT
+    SOFTIRQENTRY_TEXT
     *(.fixup)
     *(.stub .text.* .gnu.linkonce.t.*)
     /* .gnu.warning sections are handled specially by elf32.em.  */

@@ -1,24 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C)2003,2004 USAGI/WIDE Project
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * Authors	Mitsuru KANDA  <mk@linux-ipv6.org>
  *		YOSHIFUJI Hideaki <yoshfuji@linux-ipv6.org>
  *
  * Based on net/ipv4/xfrm4_tunnel.c
- *
  */
 #include <linux/module.h>
 #include <linux/xfrm.h>
@@ -341,6 +328,17 @@ static int __net_init xfrm6_tunnel_net_init(struct net *net)
 
 static void __net_exit xfrm6_tunnel_net_exit(struct net *net)
 {
+	struct xfrm6_tunnel_net *xfrm6_tn = xfrm6_tunnel_pernet(net);
+	unsigned int i;
+
+	xfrm_flush_gc();
+	xfrm_state_flush(net, 0, false, true);
+
+	for (i = 0; i < XFRM6_TUNNEL_SPI_BYADDR_HSIZE; i++)
+		WARN_ON_ONCE(!hlist_empty(&xfrm6_tn->spi_byaddr[i]));
+
+	for (i = 0; i < XFRM6_TUNNEL_SPI_BYSPI_HSIZE; i++)
+		WARN_ON_ONCE(!hlist_empty(&xfrm6_tn->spi_byspi[i]));
 }
 
 static struct pernet_operations xfrm6_tunnel_net_ops = {

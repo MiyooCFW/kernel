@@ -32,7 +32,7 @@
  * (you will need to reboot afterwards) */
 /* #define BNX2X_STOP_ON_ERROR */
 
-#define DRV_MODULE_VERSION      "1.712.30-0"
+#define DRV_MODULE_VERSION      "1.713.36-0"
 #define DRV_MODULE_RELDATE      "2014/02/10"
 #define BNX2X_BC_VER            0x040200
 
@@ -165,6 +165,12 @@ do {						\
 #define REG_RD(bp, offset)		readl(REG_ADDR(bp, offset))
 #define REG_RD8(bp, offset)		readb(REG_ADDR(bp, offset))
 #define REG_RD16(bp, offset)		readw(REG_ADDR(bp, offset))
+
+#define REG_WR_RELAXED(bp, offset, val)	\
+	writel_relaxed((u32)val, REG_ADDR(bp, offset))
+
+#define REG_WR16_RELAXED(bp, offset, val) \
+	writew_relaxed((u16)val, REG_ADDR(bp, offset))
 
 #define REG_WR(bp, offset, val)		writel((u32)val, REG_ADDR(bp, offset))
 #define REG_WR8(bp, offset, val)	writeb((u8)val, REG_ADDR(bp, offset))
@@ -758,10 +764,8 @@ struct bnx2x_fastpath {
 #if (BNX2X_DB_SHIFT < BNX2X_DB_MIN_SHIFT)
 #error "Min DB doorbell stride is 8"
 #endif
-#define DOORBELL(bp, cid, val) \
-	do { \
-		writel((u32)(val), bp->doorbells + (bp->db_size * (cid))); \
-	} while (0)
+#define DOORBELL_RELAXED(bp, cid, val) \
+	writel_relaxed((u32)(val), (bp)->doorbells + ((bp)->db_size * (cid)))
 
 /* TX CSUM helpers */
 #define SKB_CS_OFF(skb)		(offsetof(struct tcphdr, check) - \
@@ -2077,7 +2081,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 			    bool is_pf);
 
 #define BNX2X_ILT_ZALLOC(x, y, size)					\
-	x = dma_zalloc_coherent(&bp->pdev->dev, size, y, GFP_KERNEL)
+	x = dma_alloc_coherent(&bp->pdev->dev, size, y, GFP_KERNEL)
 
 #define BNX2X_ILT_FREE(x, y, size) \
 	do { \
@@ -2517,6 +2521,7 @@ void bnx2x_update_mfw_dump(struct bnx2x *bp);
 void bnx2x_init_ptp(struct bnx2x *bp);
 int bnx2x_configure_ptp_filters(struct bnx2x *bp);
 void bnx2x_set_rx_ts(struct bnx2x *bp, struct sk_buff *skb);
+void bnx2x_register_phc(struct bnx2x *bp);
 
 #define BNX2X_MAX_PHC_DRIFT 31000000
 #define BNX2X_PTP_TX_TIMEOUT

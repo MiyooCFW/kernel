@@ -8,10 +8,25 @@
  */
 
 #include <linux/sched.h>
+#include <linux/uaccess.h>
 
 struct task_struct;
 struct rusage;
 union thread_union;
+
+/* All the bits taken by the old clone syscall. */
+#define CLONE_LEGACY_FLAGS 0xffffffffULL
+
+struct kernel_clone_args {
+	u64 flags;
+	int __user *pidfd;
+	int __user *child_tid;
+	int __user *parent_tid;
+	int exit_signal;
+	unsigned long stack;
+	unsigned long stack_size;
+	unsigned long tls;
+};
 
 /*
  * This serializes "schedule()" and also protects
@@ -38,6 +53,7 @@ extern void sched_dead(struct task_struct *p);
 void __noreturn do_task_dead(void);
 void __noreturn make_task_dead(int signr);
 
+extern void mm_cache_init(void);
 extern void proc_caches_init(void);
 
 extern void fork_init(void);
@@ -74,7 +90,8 @@ extern void do_group_exit(int);
 extern void exit_files(struct task_struct *);
 extern void exit_itimers(struct signal_struct *);
 
-extern long _do_fork(unsigned long, unsigned long, unsigned long, int __user *, int __user *, unsigned long);
+extern long _do_fork(struct kernel_clone_args *kargs);
+extern bool legacy_clone_args_valid(const struct kernel_clone_args *kargs);
 extern long do_fork(unsigned long, unsigned long, unsigned long, int __user *, int __user *);
 struct task_struct *fork_idle(int);
 extern pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
@@ -89,22 +106,66 @@ extern void sched_exec(void);
 #define sched_exec()   {}
 #endif
 
-#define get_task_struct(tsk) do { atomic_inc(&(tsk)->usage); } while(0)
+static inline struct task_struct *get_task_struct(struct task_struct *t)
+{
+	refcount_inc(&t->usage);
+	return t;
+}
 
 extern void __put_task_struct(struct task_struct *t);
+extern void __put_task_struct_rcu_cb(struct rcu_head *rhp);
 
 static inline void put_task_struct(struct task_struct *t)
 {
-	if (atomic_dec_and_test(&t->usage))
+	if (!refcount_dec_and_test(&t->usage))
+		return;
+
+	/*
+	 * under PREEMPT_RT, we can't call put_task_struct
+	 * in atomic context because it will indirectly
+	 * acquire sleeping locks.
+	 *
+	 * call_rcu() will schedule delayed_put_task_struct_rcu()
+	 * to be called in process context.
+	 *
+	 * __put_task_struct() is called when
+	 * refcount_dec_and_test(&t->usage) succeeds.
+	 *
+	 * This means that it can't "conflict" with
+	 * put_task_struct_rcu_user() which abuses ->rcu the same
+	 * way; rcu_users has a reference so task->usage can't be
+	 * zero after rcu_users 1 -> 0 transition.
+	 *
+	 * delayed_free_task() also uses ->rcu, but it is only called
+	 * when it fails to fork a process. Therefore, there is no
+	 * way it can conflict with put_task_struct().
+	 */
+	if (IS_ENABLED(CONFIG_PREEMPT_RT) && !preemptible())
+		call_rcu(&t->rcu, __put_task_struct_rcu_cb);
+	else
 		__put_task_struct(t);
 }
 
-struct task_struct *task_rcu_dereference(struct task_struct **ptask);
+void put_task_struct_rcu_user(struct task_struct *task);
 
 #ifdef CONFIG_ARCH_WANTS_DYNAMIC_TASK_STRUCT
 extern int arch_task_struct_size __read_mostly;
 #else
 # define arch_task_struct_size (sizeof(struct task_struct))
+#endif
+
+#ifndef CONFIG_HAVE_ARCH_THREAD_STRUCT_WHITELIST
+/*
+ * If an architecture has not declared a thread_struct whitelist we
+ * must assume something there may need to be copied to userspace.
+ */
+static inline void arch_thread_struct_whitelist(unsigned long *offset,
+						unsigned long *size)
+{
+	*offset = 0;
+	/* Handle dynamically sized thread_struct. */
+	*size = arch_task_struct_size - offsetof(struct task_struct, thread);
+}
 #endif
 
 #ifdef CONFIG_VMAP_STACK

@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * File: card.c
  * Purpose: Provide functions to setup NIC operation mode
@@ -176,7 +166,7 @@ static void vnt_calculate_ofdm_rate(u16 rate, u8 bb_type,
 			*tx_rate = 0x8b;
 			*rsv_time = 30;
 		}
-			break;
+		break;
 	case RATE_9M:
 		if (bb_type == BB_TYPE_11A) {
 			*tx_rate = 0x9f;
@@ -382,11 +372,13 @@ void vnt_update_ifs(struct vnt_private *priv)
 			priv->difs -= 1;
 			break;
 		}
+		/* fall through */
 	case RF_AIROHA7230:
 	case RF_AL2230:
 	case RF_AL2230S:
 		if (priv->bb_type != BB_TYPE_11B)
 			break;
+		/* fall through */
 	case RF_RFMD2959:
 	case RF_VT3226:
 	case RF_VT3342A0:
@@ -682,7 +674,7 @@ void vnt_update_next_tbtt(struct vnt_private *priv, u64 tsf,
  */
 int vnt_radio_power_off(struct vnt_private *priv)
 {
-	int ret = true;
+	int ret = 0;
 
 	switch (priv->rf_type) {
 	case RF_AL2230:
@@ -691,17 +683,25 @@ int vnt_radio_power_off(struct vnt_private *priv)
 	case RF_VT3226:
 	case RF_VT3226D0:
 	case RF_VT3342A0:
-		vnt_mac_reg_bits_off(priv, MAC_REG_SOFTPWRCTL,
-				     (SOFTPWRCTL_SWPE2 | SOFTPWRCTL_SWPE3));
+		ret = vnt_mac_reg_bits_off(priv, MAC_REG_SOFTPWRCTL,
+					(SOFTPWRCTL_SWPE2 | SOFTPWRCTL_SWPE3));
 		break;
 	}
 
-	vnt_mac_reg_bits_off(priv, MAC_REG_HOSTCR, HOSTCR_RXON);
+	if (ret)
+		goto end;
 
-	vnt_set_deep_sleep(priv);
+	ret = vnt_mac_reg_bits_off(priv, MAC_REG_HOSTCR, HOSTCR_RXON);
+	if (ret)
+		goto end;
 
-	vnt_mac_reg_bits_on(priv, MAC_REG_GPIOCTL1, GPIO3_INTMD);
+	ret = vnt_set_deep_sleep(priv);
+	if (ret)
+		goto end;
 
+	ret = vnt_mac_reg_bits_on(priv, MAC_REG_GPIOCTL1, GPIO3_INTMD);
+
+end:
 	return ret;
 }
 
@@ -719,7 +719,7 @@ int vnt_radio_power_off(struct vnt_private *priv)
  */
 int vnt_radio_power_on(struct vnt_private *priv)
 {
-	int ret = true;
+	int ret = 0;
 
 	vnt_exit_deep_sleep(priv);
 

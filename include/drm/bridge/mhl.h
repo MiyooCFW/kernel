@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Defines for Mobile High-Definition Link (MHL) interface
  *
@@ -6,10 +7,6 @@
  *
  * Based on MHL driver for Android devices.
  * Copyright (C) 2013-2014 Silicon Image, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __MHL_H__
@@ -261,6 +258,10 @@ enum {
 #define MHL_RAPK_UNRECOGNIZED	0x01	/* Unknown RAP action code received */
 #define MHL_RAPK_UNSUPPORTED	0x02	/* Rcvd RAP action code not supported */
 #define MHL_RAPK_BUSY		0x03	/* Responder too busy to respond */
+
+/* Bit masks for RCP messages */
+#define MHL_RCP_KEY_RELEASED_MASK	0x80
+#define MHL_RCP_KEY_ID_MASK		0x7F
 
 /*
  * Error status codes for RCPE messages

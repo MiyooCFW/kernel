@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Simple heartbeat STM source driver
  * Copyright (c) 2016, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  *
  * Heartbeat STM source will send repetitive messages over STM devices to a
  * trace host.
@@ -86,7 +78,7 @@ static int stm_heartbeat_init(void)
 		}
 
 		stm_heartbeat[i].data.nr_chans	= 1;
-		stm_heartbeat[i].data.link		= stm_heartbeat_link;
+		stm_heartbeat[i].data.link	= stm_heartbeat_link;
 		stm_heartbeat[i].data.unlink	= stm_heartbeat_unlink;
 		hrtimer_init(&stm_heartbeat[i].hrtimer, CLOCK_MONOTONIC,
 			     HRTIMER_MODE_ABS);

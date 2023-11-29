@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Xen event channels
  *
@@ -28,7 +29,7 @@
 #include <linux/irq.h>
 #include <linux/moduleparam.h>
 #include <linux/string.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/slab.h>
 #include <linux/irqnr.h>
 #include <linux/pci.h>
@@ -205,8 +206,8 @@ static void set_info_for_irq(unsigned int irq, struct irq_info *info)
 
 static void delayed_free_irq(struct work_struct *work)
 {
-	struct irq_info *info = container_of(work, struct irq_info,
-					     work);
+	struct irq_info *info = container_of(to_rcu_work(work), struct irq_info,
+					     rwork);
 	unsigned int irq = info->irq;
 
 	/* Remove the info pointer only now, with no potential users left. */
@@ -217,13 +218,6 @@ static void delayed_free_irq(struct work_struct *work)
 	/* Legacy IRQ descriptors are managed by the arch. */
 	if (irq >= nr_legacy_irqs())
 		irq_free_desc(irq);
-}
-
-static void rcu_free_irq(struct rcu_head *rcu_head)
-{
-	struct irq_info *info = container_of(rcu_head, struct irq_info, rcu);
-
-	queue_work(system_wq, &info->work);
 }
 
 /* Constructors for packed IRQ information. */
@@ -631,7 +625,7 @@ static void xen_irq_init(unsigned irq)
 
 	info->type = IRQT_UNBOUND;
 	info->refcnt = -1;
-	INIT_WORK(&info->work, delayed_free_irq);
+	INIT_RCU_WORK(&info->rwork, delayed_free_irq);
 
 	set_info_for_irq(irq, info);
 
@@ -695,7 +689,7 @@ static void xen_free_irq(unsigned irq)
 
 	WARN_ON(info->refcnt > 0);
 
-	call_rcu(&info->rcu, rcu_free_irq);
+	queue_rcu_work(system_wq, &info->rwork);
 }
 
 static void xen_evtchn_close(unsigned int port)
@@ -2110,8 +2104,8 @@ void xen_callback_vector(void)
 void xen_callback_vector(void) {}
 #endif
 
-static bool fifo_events = true;
-module_param(fifo_events, bool, 0);
+bool xen_fifo_events = true;
+module_param_named(fifo_events, xen_fifo_events, bool, 0);
 
 static int xen_evtchn_cpu_prepare(unsigned int cpu)
 {
@@ -2140,10 +2134,12 @@ void __init xen_init_IRQ(void)
 	int ret = -EINVAL;
 	unsigned int evtchn;
 
-	if (fifo_events)
+	if (xen_fifo_events)
 		ret = xen_evtchn_fifo_init();
-	if (ret < 0)
+	if (ret < 0) {
 		xen_evtchn_2l_init();
+		xen_fifo_events = false;
+	}
 
 	xen_cpu_init_eoi(smp_processor_id());
 
@@ -2163,7 +2159,6 @@ void __init xen_init_IRQ(void)
 
 #ifdef CONFIG_X86
 	if (xen_pv_domain()) {
-		irq_ctx_init(smp_processor_id());
 		if (xen_initial_domain())
 			pci_xen_initial_domain();
 	}

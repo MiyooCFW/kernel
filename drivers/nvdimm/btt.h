@@ -1,15 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Block Translation Table library
  * Copyright (c) 2014-2015, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 
 #ifndef _LINUX_BTT_H
@@ -168,6 +160,7 @@ struct aligned_lock {
  * @list:		List head for list of arenas
  * @debugfs_dir:	Debugfs dentry
  * @flags:		Arena flags - may signify error states.
+ * @err_lock:		Mutex for synchronizing error clearing.
  * @log_index:		Indices of the valid log entries in a log_group
  *
  * arena_info is a per-arena handle. Once an arena is narrowed down for an
@@ -221,6 +214,7 @@ struct arena_info {
  * @init_lock:		Mutex used for the BTT initialization
  * @init_state:		Flag describing the initialization state for the BTT
  * @num_arenas:		Number of arenas in the BTT instance
+ * @phys_bb:		Pointer to the namespace's badblocks structure
  */
 struct btt {
 	struct gendisk *btt_disk;

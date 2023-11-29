@@ -1,17 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Behringer BCD2000 driver
  *
  *   Copyright (C) 2014 Mario Kicherer (dev@kicherer.org)
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -108,7 +99,7 @@ static void bcd2000_midi_handle_input(struct bcd2000 *bcd2k,
 	unsigned int payload_length, tocopy;
 	struct snd_rawmidi_substream *midi_receive_substream;
 
-	midi_receive_substream = ACCESS_ONCE(bcd2k->midi_receive_substream);
+	midi_receive_substream = READ_ONCE(bcd2k->midi_receive_substream);
 	if (!midi_receive_substream)
 		return;
 
@@ -139,7 +130,7 @@ static void bcd2000_midi_send(struct bcd2000 *bcd2k)
 
 	BUILD_BUG_ON(sizeof(device_cmd_prefix) >= BUFSIZE);
 
-	midi_out_substream = ACCESS_ONCE(bcd2k->midi_out_substream);
+	midi_out_substream = READ_ONCE(bcd2k->midi_out_substream);
 	if (!midi_out_substream)
 		return;
 

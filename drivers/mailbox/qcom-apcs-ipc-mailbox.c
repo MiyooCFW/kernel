@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017, Linaro Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -18,6 +10,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/regmap.h>
 #include <linux/mailbox_controller.h>
 
 #define QCOM_APCS_IPC_BITS	32
@@ -26,8 +19,17 @@ struct qcom_apcs_ipc {
 	struct mbox_controller mbox;
 	struct mbox_chan mbox_chans[QCOM_APCS_IPC_BITS];
 
-	void __iomem *reg;
+	struct regmap *regmap;
 	unsigned long offset;
+	struct platform_device *clk;
+};
+
+static const struct regmap_config apcs_regmap_config = {
+	.reg_bits = 32,
+	.reg_stride = 4,
+	.val_bits = 32,
+	.max_register = 0xFFC,
+	.fast_io = true,
 };
 
 static int qcom_apcs_ipc_send_data(struct mbox_chan *chan, void *data)
@@ -36,9 +38,7 @@ static int qcom_apcs_ipc_send_data(struct mbox_chan *chan, void *data)
 						  struct qcom_apcs_ipc, mbox);
 	unsigned long idx = (unsigned long)chan->con_priv;
 
-	writel(BIT(idx), apcs->reg);
-
-	return 0;
+	return regmap_write(apcs->regmap, apcs->offset, BIT(idx));
 }
 
 static const struct mbox_chan_ops qcom_apcs_ipc_ops = {
@@ -48,11 +48,17 @@ static const struct mbox_chan_ops qcom_apcs_ipc_ops = {
 static int qcom_apcs_ipc_probe(struct platform_device *pdev)
 {
 	struct qcom_apcs_ipc *apcs;
+	struct regmap *regmap;
 	struct resource *res;
 	unsigned long offset;
 	void __iomem *base;
 	unsigned long i;
 	int ret;
+	const struct of_device_id apcs_clk_match_table[] = {
+		{ .compatible = "qcom,msm8916-apcs-kpss-global", },
+		{ .compatible = "qcom,qcs404-apcs-apps-global", },
+		{}
+	};
 
 	apcs = devm_kzalloc(&pdev->dev, sizeof(*apcs), GFP_KERNEL);
 	if (!apcs)
@@ -63,9 +69,14 @@ static int qcom_apcs_ipc_probe(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
+	regmap = devm_regmap_init_mmio(&pdev->dev, base, &apcs_regmap_config);
+	if (IS_ERR(regmap))
+		return PTR_ERR(regmap);
+
 	offset = (unsigned long)of_device_get_match_data(&pdev->dev);
 
-	apcs->reg = base + offset;
+	apcs->regmap = regmap;
+	apcs->offset = offset;
 
 	/* Initialize channel identifiers */
 	for (i = 0; i < ARRAY_SIZE(apcs->mbox_chans); i++)
@@ -76,10 +87,19 @@ static int qcom_apcs_ipc_probe(struct platform_device *pdev)
 	apcs->mbox.chans = apcs->mbox_chans;
 	apcs->mbox.num_chans = ARRAY_SIZE(apcs->mbox_chans);
 
-	ret = mbox_controller_register(&apcs->mbox);
+	ret = devm_mbox_controller_register(&pdev->dev, &apcs->mbox);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to register APCS IPC controller\n");
 		return ret;
+	}
+
+	if (of_match_device(apcs_clk_match_table, &pdev->dev)) {
+		apcs->clk = platform_device_register_data(&pdev->dev,
+							  "qcom-apcs-msm8916-clk",
+							  PLATFORM_DEVID_NONE,
+							  NULL, 0);
+		if (IS_ERR(apcs->clk))
+			dev_err(&pdev->dev, "failed to register APCS clk\n");
 	}
 
 	platform_set_drvdata(pdev, apcs);
@@ -90,8 +110,9 @@ static int qcom_apcs_ipc_probe(struct platform_device *pdev)
 static int qcom_apcs_ipc_remove(struct platform_device *pdev)
 {
 	struct qcom_apcs_ipc *apcs = platform_get_drvdata(pdev);
+	struct platform_device *clk = apcs->clk;
 
-	mbox_controller_unregister(&apcs->mbox);
+	platform_device_unregister(clk);
 
 	return 0;
 }
@@ -100,6 +121,12 @@ static int qcom_apcs_ipc_remove(struct platform_device *pdev)
 static const struct of_device_id qcom_apcs_ipc_of_match[] = {
 	{ .compatible = "qcom,msm8916-apcs-kpss-global", .data = (void *)8 },
 	{ .compatible = "qcom,msm8996-apcs-hmss-global", .data = (void *)16 },
+	{ .compatible = "qcom,msm8998-apcs-hmss-global", .data = (void *)8 },
+	{ .compatible = "qcom,qcs404-apcs-apps-global", .data = (void *)8 },
+	{ .compatible = "qcom,sc7180-apss-shared", .data = (void *)12 },
+	{ .compatible = "qcom,sdm845-apss-shared", .data = (void *)12 },
+	{ .compatible = "qcom,sm8150-apss-shared", .data = (void *)12 },
+	{ .compatible = "qcom,ipq8074-apcs-apps-global", .data = (void *)8 },
 	{}
 };
 MODULE_DEVICE_TABLE(of, qcom_apcs_ipc_of_match);

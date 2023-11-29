@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * New driver for Marvell Yukon chipset and SysKonnect Gigabit
  * Ethernet adapters. Based on earlier sk98lin, e100 and
@@ -8,19 +9,6 @@
  * those should be done at higher levels.
  *
  * Copyright (C) 2004, 2005 Stephen Hemminger <shemminger@osdl.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -1497,9 +1485,9 @@ static int xm_check_link(struct net_device *dev)
  * get an interrupt when carrier is detected, need to poll for
  * link coming up.
  */
-static void xm_link_timer(unsigned long arg)
+static void xm_link_timer(struct timer_list *t)
 {
-	struct skge_port *skge = (struct skge_port *) arg;
+	struct skge_port *skge = from_timer(skge, t, link_timer);
 	struct net_device *dev = skge->netdev;
 	struct skge_hw *hw = skge->hw;
 	int port = skge->port;
@@ -2569,8 +2557,6 @@ static int skge_up(struct net_device *dev)
 		err = -EINVAL;
 		goto free_pci_mem;
 	}
-
-	memset(skge->mem, 0, skge->mem_size);
 
 	err = skge_ring_alloc(&skge->rx_ring, skge->mem, skge->dma);
 	if (err)
@@ -3734,19 +3720,7 @@ static int skge_debug_show(struct seq_file *seq, void *v)
 
 	return 0;
 }
-
-static int skge_debug_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, skge_debug_show, inode->i_private);
-}
-
-static const struct file_operations skge_debug_fops = {
-	.owner		= THIS_MODULE,
-	.open		= skge_debug_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
+DEFINE_SHOW_ATTRIBUTE(skge_debug);
 
 /*
  * Use network device events to create/remove/rename
@@ -3757,7 +3731,6 @@ static int skge_device_event(struct notifier_block *unused,
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct skge_port *skge;
-	struct dentry *d;
 
 	if (dev->netdev_ops->ndo_open != &skge_up || !skge_debug)
 		goto done;
@@ -3765,33 +3738,20 @@ static int skge_device_event(struct notifier_block *unused,
 	skge = netdev_priv(dev);
 	switch (event) {
 	case NETDEV_CHANGENAME:
-		if (skge->debugfs) {
-			d = debugfs_rename(skge_debug, skge->debugfs,
-					   skge_debug, dev->name);
-			if (d)
-				skge->debugfs = d;
-			else {
-				netdev_info(dev, "rename failed\n");
-				debugfs_remove(skge->debugfs);
-			}
-		}
+		if (skge->debugfs)
+			skge->debugfs = debugfs_rename(skge_debug,
+						       skge->debugfs,
+						       skge_debug, dev->name);
 		break;
 
 	case NETDEV_GOING_DOWN:
-		if (skge->debugfs) {
-			debugfs_remove(skge->debugfs);
-			skge->debugfs = NULL;
-		}
+		debugfs_remove(skge->debugfs);
+		skge->debugfs = NULL;
 		break;
 
 	case NETDEV_UP:
-		d = debugfs_create_file(dev->name, S_IRUGO,
-					skge_debug, dev,
-					&skge_debug_fops);
-		if (!d || IS_ERR(d))
-			netdev_info(dev, "debugfs create failed\n");
-		else
-			skge->debugfs = d;
+		skge->debugfs = debugfs_create_file(dev->name, 0444, skge_debug,
+						    dev, &skge_debug_fops);
 		break;
 	}
 
@@ -3806,15 +3766,8 @@ static struct notifier_block skge_notifier = {
 
 static __init void skge_debug_init(void)
 {
-	struct dentry *ent;
+	skge_debug = debugfs_create_dir("skge", NULL);
 
-	ent = debugfs_create_dir("skge", NULL);
-	if (!ent || IS_ERR(ent)) {
-		pr_info("debugfs create directory failed\n");
-		return;
-	}
-
-	skge_debug = ent;
 	register_netdevice_notifier(&skge_notifier);
 }
 
@@ -3899,7 +3852,7 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 
 	/* Only used for Genesis XMAC */
 	if (is_genesis(hw))
-	    setup_timer(&skge->link_timer, xm_link_timer, (unsigned long) skge);
+	    timer_setup(&skge->link_timer, xm_link_timer, 0);
 	else {
 		dev->hw_features = NETIF_F_IP_CSUM | NETIF_F_SG |
 		                   NETIF_F_RXCSUM;
@@ -4083,7 +4036,6 @@ static void skge_remove(struct pci_dev *pdev)
 	if (hw->ports > 1) {
 		skge_write32(hw, B0_IMSK, 0);
 		skge_read32(hw, B0_IMSK);
-		free_irq(pdev->irq, hw);
 	}
 	spin_unlock_irq(&hw->hw_lock);
 
@@ -4105,8 +4057,7 @@ static void skge_remove(struct pci_dev *pdev)
 #ifdef CONFIG_PM_SLEEP
 static int skge_suspend(struct device *dev)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
-	struct skge_hw *hw  = pci_get_drvdata(pdev);
+	struct skge_hw *hw  = dev_get_drvdata(dev);
 	int i;
 
 	if (!hw)
@@ -4130,8 +4081,7 @@ static int skge_suspend(struct device *dev)
 
 static int skge_resume(struct device *dev)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
-	struct skge_hw *hw  = pci_get_drvdata(pdev);
+	struct skge_hw *hw  = dev_get_drvdata(dev);
 	int i, err;
 
 	if (!hw)

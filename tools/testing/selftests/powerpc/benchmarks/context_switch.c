@@ -1,15 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Context switch microbenchmark.
  *
  * Copyright (C) 2015 Anton Blanchard <anton@au.ibm.com>, IBM
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #define _GNU_SOURCE
+#include <errno.h>
 #include <sched.h>
 #include <string.h>
 #include <stdio.h>
@@ -76,6 +73,7 @@ static void touch(void)
 
 static void start_thread_on(void *(*fn)(void *), void *arg, unsigned long cpu)
 {
+	int rc;
 	pthread_t tid;
 	cpu_set_t cpuset;
 	pthread_attr_t attr;
@@ -83,14 +81,23 @@ static void start_thread_on(void *(*fn)(void *), void *arg, unsigned long cpu)
 	CPU_ZERO(&cpuset);
 	CPU_SET(cpu, &cpuset);
 
-	pthread_attr_init(&attr);
+	rc = pthread_attr_init(&attr);
+	if (rc) {
+		errno = rc;
+		perror("pthread_attr_init");
+		exit(1);
+	}
 
-	if (pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset)) {
+	rc = pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset);
+	if (rc)	{
+		errno = rc;
 		perror("pthread_attr_setaffinity_np");
 		exit(1);
 	}
 
-	if (pthread_create(&tid, &attr, fn, arg)) {
+	rc = pthread_create(&tid, &attr, fn, arg);
+	if (rc) {
+		errno = rc;
 		perror("pthread_create");
 		exit(1);
 	}

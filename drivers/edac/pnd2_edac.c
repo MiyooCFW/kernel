@@ -1,16 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for Pondicherry2 memory controller.
  *
  * Copyright (c) 2016, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  *
  * [Derived from sb_edac.c]
  *
@@ -44,6 +36,8 @@
 #include "edac_mc.h"
 #include "edac_module.h"
 #include "pnd2_edac.h"
+
+#define EDAC_MOD_STR		"pnd2_edac"
 
 #define APL_NUM_CHANNELS	4
 #define DNV_NUM_CHANNELS	2
@@ -1161,7 +1155,7 @@ static void pnd2_mce_output_error(struct mem_ctl_info *mci, const struct mce *m,
 	u32 optypenum = GET_BITFIELD(m->status, 4, 6);
 	int rc;
 
-	tp_event = uc_err ? (ripv ? HW_EVENT_ERR_FATAL : HW_EVENT_ERR_UNCORRECTED) :
+	tp_event = uc_err ? (ripv ? HW_EVENT_ERR_UNCORRECTED : HW_EVENT_ERR_FATAL) :
 						 HW_EVENT_ERR_CORRECTED;
 
 	/*
@@ -1360,7 +1354,7 @@ static int pnd2_register_mci(struct mem_ctl_info **ppmci)
 	pvt = mci->pvt_info;
 	memset(pvt, 0, sizeof(*pvt));
 
-	mci->mod_name = "pnd2_edac.c";
+	mci->mod_name = EDAC_MOD_STR;
 	mci->dev_name = ops->name;
 	mci->ctl_name = "Pondicherry2";
 
@@ -1544,7 +1538,7 @@ static struct dunit_ops dnv_ops = {
 
 static const struct x86_cpu_id pnd2_cpuids[] = {
 	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_GOLDMONT, 0, (kernel_ulong_t)&apl_ops },
-	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_GOLDMONT_X, 0, (kernel_ulong_t)&dnv_ops },
+	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_GOLDMONT_D, 0, (kernel_ulong_t)&dnv_ops },
 	{ }
 };
 MODULE_DEVICE_TABLE(x86cpu, pnd2_cpuids);
@@ -1552,9 +1546,17 @@ MODULE_DEVICE_TABLE(x86cpu, pnd2_cpuids);
 static int __init pnd2_init(void)
 {
 	const struct x86_cpu_id *id;
+	const char *owner;
 	int rc;
 
 	edac_dbg(2, "\n");
+
+	owner = edac_get_owner();
+	if (owner && strncmp(owner, EDAC_MOD_STR, sizeof(EDAC_MOD_STR)))
+		return -EBUSY;
+
+	if (cpu_feature_enabled(X86_FEATURE_HYPERVISOR))
+		return -ENODEV;
 
 	id = x86_match_cpu(pnd2_cpuids);
 	if (!id)

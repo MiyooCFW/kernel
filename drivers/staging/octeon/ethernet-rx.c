@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * This file is based on code from OCTEON SDK by Cavium Networks.
  *
  * Copyright (c) 2003-2010 Cavium Networks
- *
- * This file is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, Version 2, as
- * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -26,22 +23,11 @@
 #include <net/xfrm.h>
 #endif /* CONFIG_XFRM */
 
-#include <asm/octeon/octeon.h>
-
+#include "octeon-ethernet.h"
 #include "ethernet-defines.h"
 #include "ethernet-mem.h"
 #include "ethernet-rx.h"
-#include "octeon-ethernet.h"
 #include "ethernet-util.h"
-
-#include <asm/octeon/cvmx-helper.h>
-#include <asm/octeon/cvmx-wqe.h>
-#include <asm/octeon/cvmx-fau.h>
-#include <asm/octeon/cvmx-pow.h>
-#include <asm/octeon/cvmx-pip.h>
-#include <asm/octeon/cvmx-scratch.h>
-
-#include <asm/octeon/cvmx-gmxx-defs.h>
 
 static atomic_t oct_rx_ready = ATOMIC_INIT(0);
 

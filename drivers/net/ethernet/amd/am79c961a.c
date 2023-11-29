@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/net/ethernet/amd/am79c961a.c
  *
  *  by Russell King <rmk@arm.linux.org.uk> 1995-2001.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Derived from various things including skeleton.c
  *
@@ -302,10 +299,10 @@ am79c961_init_for_open(struct net_device *dev)
 	write_rreg (dev->base_addr, CSR0, CSR0_IENA|CSR0_STRT);
 }
 
-static void am79c961_timer(unsigned long data)
+static void am79c961_timer(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *)data;
-	struct dev_priv *priv = netdev_priv(dev);
+	struct dev_priv *priv = from_timer(priv, t, timer);
+	struct net_device *dev = priv->dev;
 	unsigned int lnkstat, carrier;
 	unsigned long flags;
 
@@ -728,9 +725,8 @@ static int am79c961_probe(struct platform_device *pdev)
 	am79c961_banner();
 
 	spin_lock_init(&priv->chip_lock);
-	init_timer(&priv->timer);
-	priv->timer.data = (unsigned long)dev;
-	priv->timer.function = am79c961_timer;
+	priv->dev = dev;
+	timer_setup(&priv->timer, am79c961_timer, 0);
 
 	if (am79c961_hw_init(dev))
 		goto release;

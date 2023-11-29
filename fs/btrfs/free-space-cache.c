@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2008 Red Hat.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License v2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  */
 
 #include <linux/pagemap.h>
@@ -22,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/math64.h>
 #include <linux/ratelimit.h>
+#include <linux/error-injection.h>
 #include <linux/sched/mm.h>
 #include "ctree.h"
 #include "free-space-cache.h"
@@ -30,6 +18,9 @@
 #include "extent_io.h"
 #include "inode-map.h"
 #include "volumes.h"
+#include "space-info.h"
+#include "delalloc-space.h"
+#include "block-group.h"
 
 #define BITS_PER_BITMAP		(PAGE_SIZE * 8UL)
 #define MAX_CACHE_BYTES_PER_GIG	SZ_32K
@@ -87,14 +78,11 @@ static struct inode *__lookup_free_space_inode(struct btrfs_root *root,
 	 * sure NOFS is set to keep us from deadlocking.
 	 */
 	nofs_flag = memalloc_nofs_save();
-	inode = btrfs_iget(fs_info->sb, &location, root, NULL);
+	inode = btrfs_iget_path(fs_info->sb, &location, root, NULL, path);
+	btrfs_release_path(path);
 	memalloc_nofs_restore(nofs_flag);
 	if (IS_ERR(inode))
 		return inode;
-	if (is_bad_inode(inode)) {
-		iput(inode);
-		return ERR_PTR(-ENOENT);
-	}
 
 	mapping_set_gfp_mask(inode->i_mapping,
 			mapping_gfp_constraint(inode->i_mapping,
@@ -103,10 +91,11 @@ static struct inode *__lookup_free_space_inode(struct btrfs_root *root,
 	return inode;
 }
 
-struct inode *lookup_free_space_inode(struct btrfs_fs_info *fs_info,
-				      struct btrfs_block_group_cache
-				      *block_group, struct btrfs_path *path)
+struct inode *lookup_free_space_inode(
+		struct btrfs_block_group_cache *block_group,
+		struct btrfs_path *path)
 {
+	struct btrfs_fs_info *fs_info = block_group->fs_info;
 	struct inode *inode = NULL;
 	u32 flags = BTRFS_INODE_NODATASUM | BTRFS_INODE_NODATACOW;
 
@@ -200,20 +189,19 @@ static int __create_free_space_inode(struct btrfs_root *root,
 	return 0;
 }
 
-int create_free_space_inode(struct btrfs_fs_info *fs_info,
-			    struct btrfs_trans_handle *trans,
+int create_free_space_inode(struct btrfs_trans_handle *trans,
 			    struct btrfs_block_group_cache *block_group,
 			    struct btrfs_path *path)
 {
 	int ret;
 	u64 ino;
 
-	ret = btrfs_find_free_objectid(fs_info->tree_root, &ino);
+	ret = btrfs_find_free_objectid(trans->fs_info->tree_root, &ino);
 	if (ret < 0)
 		return ret;
 
-	return __create_free_space_inode(fs_info->tree_root, trans, path, ino,
-					 block_group->key.objectid);
+	return __create_free_space_inode(trans->fs_info->tree_root, trans, path,
+					 ino, block_group->key.objectid);
 }
 
 int btrfs_check_trunc_cache_free_space(struct btrfs_fs_info *fs_info,
@@ -223,8 +211,8 @@ int btrfs_check_trunc_cache_free_space(struct btrfs_fs_info *fs_info,
 	int ret;
 
 	/* 1 for slack space, 1 for updating the inode */
-	needed_bytes = btrfs_calc_trunc_metadata_size(fs_info, 1) +
-		btrfs_calc_trans_metadata_size(fs_info, 1);
+	needed_bytes = btrfs_calc_insert_metadata_size(fs_info, 1) +
+		btrfs_calc_metadata_size(fs_info, 1);
 
 	spin_lock(&rsv->lock);
 	if (rsv->reserved < needed_bytes)
@@ -273,10 +261,8 @@ int btrfs_truncate_free_space_cache(struct btrfs_trans_handle *trans,
 	truncate_pagecache(inode, 0);
 
 	/*
-	 * We don't need an orphan item because truncating the free space cache
-	 * will never be split across transactions.
-	 * We don't need to check for -EAGAIN because we're a free space
-	 * cache inode
+	 * We skip the throttling logic for free space cache inodes, so we don't
+	 * need to check for -EAGAIN.
 	 */
 	ret = btrfs_truncate_inode_items(trans, root, inode,
 					 0, BTRFS_EXTENT_DATA_KEY);
@@ -322,9 +308,9 @@ static int io_ctl_init(struct btrfs_io_ctl *io_ctl, struct inode *inode,
 	if (btrfs_ino(BTRFS_I(inode)) != BTRFS_FREE_INO_OBJECTID)
 		check_crcs = 1;
 
-	/* Make sure we can fit our crcs into the first page */
+	/* Make sure we can fit our crcs and generation into the first page */
 	if (write && check_crcs &&
-	    (num_pages * sizeof(u32)) >= PAGE_SIZE)
+	    (num_pages * sizeof(u32) + sizeof(u64)) > PAGE_SIZE)
 		return -ENOSPC;
 
 	memset(io_ctl, 0, sizeof(struct btrfs_io_ctl));
@@ -340,6 +326,7 @@ static int io_ctl_init(struct btrfs_io_ctl *io_ctl, struct inode *inode,
 
 	return 0;
 }
+ALLOW_ERROR_INJECTION(io_ctl_init, ERRNO);
 
 static void io_ctl_free(struct btrfs_io_ctl *io_ctl)
 {
@@ -487,9 +474,8 @@ static void io_ctl_set_crc(struct btrfs_io_ctl *io_ctl, int index)
 	if (index == 0)
 		offset = sizeof(u32) * io_ctl->num_pages;
 
-	crc = btrfs_csum_data(io_ctl->orig + offset, crc,
-			      PAGE_SIZE - offset);
-	btrfs_csum_final(crc, (u8 *)&crc);
+	crc = btrfs_crc32c(crc, io_ctl->orig + offset, PAGE_SIZE - offset);
+	btrfs_crc32c_final(crc, (u8 *)&crc);
 	io_ctl_unmap_page(io_ctl);
 	tmp = page_address(io_ctl->pages[0]);
 	tmp += index;
@@ -515,9 +501,8 @@ static int io_ctl_check_crc(struct btrfs_io_ctl *io_ctl, int index)
 	val = *tmp;
 
 	io_ctl_map_page(io_ctl, 0);
-	crc = btrfs_csum_data(io_ctl->orig + offset, crc,
-			      PAGE_SIZE - offset);
-	btrfs_csum_final(crc, (u8 *)&crc);
+	crc = btrfs_crc32c(crc, io_ctl->orig + offset, PAGE_SIZE - offset);
+	btrfs_crc32c_final(crc, (u8 *)&crc);
 	if (val != crc) {
 		btrfs_err_rl(io_ctl->fs_info,
 			"csum mismatch on free space cache");
@@ -574,7 +559,7 @@ static int io_ctl_add_bitmap(struct btrfs_io_ctl *io_ctl, void *bitmap)
 		io_ctl_map_page(io_ctl, 0);
 	}
 
-	memcpy(io_ctl->cur, bitmap, PAGE_SIZE);
+	copy_page(io_ctl->cur, bitmap);
 	io_ctl_set_crc(io_ctl, io_ctl->index - 1);
 	if (io_ctl->index < io_ctl->num_pages)
 		io_ctl_map_page(io_ctl, 0);
@@ -634,7 +619,7 @@ static int io_ctl_read_bitmap(struct btrfs_io_ctl *io_ctl,
 	if (ret)
 		return ret;
 
-	memcpy(entry->bitmap, io_ctl->cur, PAGE_SIZE);
+	copy_page(entry->bitmap, io_ctl->cur);
 	io_ctl_unmap_page(io_ctl);
 
 	return 0;
@@ -682,7 +667,7 @@ static int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 				   struct btrfs_free_space_ctl *ctl,
 				   struct btrfs_path *path, u64 offset)
 {
-	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
+	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_free_space_header *header;
 	struct extent_buffer *leaf;
 	struct btrfs_io_ctl io_ctl;
@@ -789,7 +774,8 @@ static int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 		} else {
 			ASSERT(num_bitmaps);
 			num_bitmaps--;
-			e->bitmap = kzalloc(PAGE_SIZE, GFP_NOFS);
+			e->bitmap = kmem_cache_zalloc(
+					btrfs_free_space_bitmap_cachep, GFP_NOFS);
 			if (!e->bitmap) {
 				ret = -ENOMEM;
 				kmem_cache_free(
@@ -798,15 +784,16 @@ static int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 			}
 			spin_lock(&ctl->tree_lock);
 			ret = link_free_space(ctl, e);
-			ctl->total_bitmaps++;
-			ctl->op->recalc_thresholds(ctl);
-			spin_unlock(&ctl->tree_lock);
 			if (ret) {
+				spin_unlock(&ctl->tree_lock);
 				btrfs_err(fs_info,
 					"Duplicate entries in free space cache, dumping");
 				kmem_cache_free(btrfs_free_space_cachep, e);
 				goto free_cache;
 			}
+			ctl->total_bitmaps++;
+			ctl->op->recalc_thresholds(ctl);
+			spin_unlock(&ctl->tree_lock);
 			list_add_tail(&e->list, &bitmaps);
 		}
 
@@ -838,9 +825,9 @@ free_cache:
 	goto out;
 }
 
-int load_free_space_cache(struct btrfs_fs_info *fs_info,
-			  struct btrfs_block_group_cache *block_group)
+int load_free_space_cache(struct btrfs_block_group_cache *block_group)
 {
+	struct btrfs_fs_info *fs_info = block_group->fs_info;
 	struct btrfs_free_space_ctl *ctl = block_group->free_space_ctl;
 	struct inode *inode;
 	struct btrfs_path *path;
@@ -865,7 +852,26 @@ int load_free_space_cache(struct btrfs_fs_info *fs_info,
 	path->search_commit_root = 1;
 	path->skip_locking = 1;
 
-	inode = lookup_free_space_inode(fs_info, block_group, path);
+	/*
+	 * We must pass a path with search_commit_root set to btrfs_iget in
+	 * order to avoid a deadlock when allocating extents for the tree root.
+	 *
+	 * When we are COWing an extent buffer from the tree root, when looking
+	 * for a free extent, at extent-tree.c:find_free_extent(), we can find
+	 * block group without its free space cache loaded. When we find one
+	 * we must load its space cache which requires reading its free space
+	 * cache's inode item from the root tree. If this inode item is located
+	 * in the same leaf that we started COWing before, then we end up in
+	 * deadlock on the extent buffer (trying to read lock it when we
+	 * previously write locked it).
+	 *
+	 * It's safe to read the inode item using the commit root because
+	 * block groups, once loaded, stay in memory forever (until they are
+	 * removed) as well as their space caches once loaded. New block groups
+	 * once created get their ->cached field set to BTRFS_CACHE_FINISHED so
+	 * we will never try to read their inode item while the fs is mounted.
+	 */
+	inode = lookup_free_space_inode(block_group, path);
 	if (IS_ERR(inode)) {
 		btrfs_free_path(path);
 		return 0;
@@ -1011,8 +1017,7 @@ update_cache_item(struct btrfs_trans_handle *trans,
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret < 0) {
 		clear_extent_bit(&BTRFS_I(inode)->io_tree, 0, inode->i_size - 1,
-				 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0, NULL,
-				 GFP_NOFS);
+				 EXTENT_DELALLOC, 0, 0, NULL);
 		goto fail;
 	}
 	leaf = path->nodes[0];
@@ -1024,9 +1029,8 @@ update_cache_item(struct btrfs_trans_handle *trans,
 		if (found_key.objectid != BTRFS_FREE_SPACE_OBJECTID ||
 		    found_key.offset != offset) {
 			clear_extent_bit(&BTRFS_I(inode)->io_tree, 0,
-					 inode->i_size - 1,
-					 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0,
-					 NULL, GFP_NOFS);
+					 inode->i_size - 1, EXTENT_DELALLOC, 0,
+					 0, NULL);
 			btrfs_release_path(path);
 			goto fail;
 		}
@@ -1047,8 +1051,7 @@ fail:
 	return -1;
 }
 
-static noinline_for_stack int
-write_pinned_extent_entries(struct btrfs_fs_info *fs_info,
+static noinline_for_stack int write_pinned_extent_entries(
 			    struct btrfs_block_group_cache *block_group,
 			    struct btrfs_io_ctl *io_ctl,
 			    int *entries)
@@ -1067,7 +1070,7 @@ write_pinned_extent_entries(struct btrfs_fs_info *fs_info,
 	 * We shouldn't have switched the pinned extents yet so this is the
 	 * right one
 	 */
-	unpin = fs_info->pinned_extents;
+	unpin = block_group->fs_info->pinned_extents;
 
 	start = block_group->key.objectid;
 
@@ -1123,8 +1126,7 @@ static int flush_dirty_cache(struct inode *inode)
 	ret = btrfs_wait_ordered_range(inode, 0, (u64)-1);
 	if (ret)
 		clear_extent_bit(&BTRFS_I(inode)->io_tree, 0, inode->i_size - 1,
-				 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0, NULL,
-				 GFP_NOFS);
+				 EXTENT_DELALLOC, 0, 0, NULL);
 
 	return ret;
 }
@@ -1145,8 +1147,7 @@ cleanup_write_cache_enospc(struct inode *inode,
 {
 	io_ctl_drop_pages(io_ctl);
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
-			     i_size_read(inode) - 1, cached_state,
-			     GFP_NOFS);
+			     i_size_read(inode) - 1, cached_state);
 }
 
 static int __btrfs_wait_cache_io(struct btrfs_root *root,
@@ -1157,12 +1158,9 @@ static int __btrfs_wait_cache_io(struct btrfs_root *root,
 {
 	int ret;
 	struct inode *inode = io_ctl->inode;
-	struct btrfs_fs_info *fs_info;
 
 	if (!inode)
 		return 0;
-
-	fs_info = btrfs_sb(inode->i_sb);
 
 	/* Flush the dirty pages in the cache file. */
 	ret = flush_dirty_cache(inode);
@@ -1178,7 +1176,7 @@ out:
 		BTRFS_I(inode)->generation = 0;
 		if (block_group) {
 #ifdef DEBUG
-			btrfs_err(fs_info,
+			btrfs_err(root->fs_info,
 				  "failed to write free space cache for block group %llu",
 				  block_group->key.objectid);
 #endif
@@ -1247,7 +1245,6 @@ static int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 				   struct btrfs_io_ctl *io_ctl,
 				   struct btrfs_trans_handle *trans)
 {
-	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct extent_state *cached_state = NULL;
 	LIST_HEAD(bitmap_list);
 	int entries = 0;
@@ -1305,8 +1302,7 @@ static int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	 * If this changes while we are working we'll get added back to
 	 * the dirty list and redo it.  No locking needed
 	 */
-	ret = write_pinned_extent_entries(fs_info, block_group,
-					  io_ctl, &entries);
+	ret = write_pinned_extent_entries(block_group, io_ctl, &entries);
 	if (ret)
 		goto out_nospc_locked;
 
@@ -1340,11 +1336,11 @@ static int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	io_ctl_free(io_ctl);
 
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
-			     i_size_read(inode) - 1, &cached_state, GFP_NOFS);
+			     i_size_read(inode) - 1, &cached_state);
 
 	/*
 	 * at this point the pages are under IO and we're happy,
-	 * The caller is responsible for waiting on them and updating the
+	 * The caller is responsible for waiting on them and updating
 	 * the cache and the inode
 	 */
 	io_ctl->entries = entries;
@@ -1383,11 +1379,11 @@ out_unlock:
 	goto out;
 }
 
-int btrfs_write_out_cache(struct btrfs_fs_info *fs_info,
-			  struct btrfs_trans_handle *trans,
+int btrfs_write_out_cache(struct btrfs_trans_handle *trans,
 			  struct btrfs_block_group_cache *block_group,
 			  struct btrfs_path *path)
 {
+	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_free_space_ctl *ctl = block_group->free_space_ctl;
 	struct inode *inode;
 	int ret = 0;
@@ -1399,7 +1395,7 @@ int btrfs_write_out_cache(struct btrfs_fs_info *fs_info,
 	}
 	spin_unlock(&block_group->lock);
 
-	inode = lookup_free_space_inode(fs_info, block_group, path);
+	inode = lookup_free_space_inode(block_group, path);
 	if (IS_ERR(inode))
 		return 0;
 
@@ -1897,7 +1893,7 @@ static void free_bitmap(struct btrfs_free_space_ctl *ctl,
 			struct btrfs_free_space *bitmap_info)
 {
 	unlink_free_space(ctl, bitmap_info);
-	kfree(bitmap_info->bitmap);
+	kmem_cache_free(btrfs_free_space_bitmap_cachep, bitmap_info->bitmap);
 	kmem_cache_free(btrfs_free_space_cachep, bitmap_info);
 	ctl->total_bitmaps--;
 	ctl->op->recalc_thresholds(ctl);
@@ -2151,7 +2147,8 @@ new_bitmap:
 		}
 
 		/* allocate the bitmap */
-		info->bitmap = kzalloc(PAGE_SIZE, GFP_NOFS);
+		info->bitmap = kmem_cache_zalloc(btrfs_free_space_bitmap_cachep,
+						 GFP_NOFS);
 		spin_lock(&ctl->tree_lock);
 		if (!info->bitmap) {
 			ret = -ENOMEM;
@@ -2163,7 +2160,8 @@ new_bitmap:
 out:
 	if (info) {
 		if (info->bitmap)
-			kfree(info->bitmap);
+			kmem_cache_free(btrfs_free_space_bitmap_cachep,
+					info->bitmap);
 		kmem_cache_free(btrfs_free_space_cachep, info);
 	}
 
@@ -2391,6 +2389,14 @@ out:
 	}
 
 	return ret;
+}
+
+int btrfs_add_free_space(struct btrfs_block_group_cache *block_group,
+			 u64 bytenr, u64 size)
+{
+	return __btrfs_add_free_space(block_group->fs_info,
+				      block_group->free_space_ctl,
+				      bytenr, size);
 }
 
 int btrfs_remove_free_space(struct btrfs_block_group_cache *block_group,
@@ -2819,7 +2825,8 @@ out:
 	if (entry->bytes == 0) {
 		ctl->free_extents--;
 		if (entry->bitmap) {
-			kfree(entry->bitmap);
+			kmem_cache_free(btrfs_free_space_bitmap_cachep,
+					entry->bitmap);
 			ctl->total_bitmaps--;
 			ctl->op->recalc_thresholds(ctl);
 		}
@@ -3054,11 +3061,11 @@ setup_cluster_bitmap(struct btrfs_block_group_cache *block_group,
  * returns zero and sets up cluster if things worked out, otherwise
  * it returns -enospc
  */
-int btrfs_find_space_cluster(struct btrfs_fs_info *fs_info,
-			     struct btrfs_block_group_cache *block_group,
+int btrfs_find_space_cluster(struct btrfs_block_group_cache *block_group,
 			     struct btrfs_free_cluster *cluster,
 			     u64 offset, u64 bytes, u64 empty_size)
 {
+	struct btrfs_fs_info *fs_info = block_group->fs_info;
 	struct btrfs_free_space_ctl *ctl = block_group->free_space_ctl;
 	struct btrfs_free_space *entry, *tmp;
 	LIST_HEAD(bitmaps);
@@ -3183,8 +3190,8 @@ static int do_trimming(struct btrfs_block_group_cache *block_group,
 			space_info->bytes_readonly += reserved_bytes;
 		block_group->reserved -= reserved_bytes;
 		space_info->bytes_reserved -= reserved_bytes;
-		spin_unlock(&space_info->lock);
 		spin_unlock(&block_group->lock);
+		spin_unlock(&space_info->lock);
 	}
 
 	return ret;
@@ -3375,15 +3382,11 @@ void btrfs_put_block_group_trimming(struct btrfs_block_group_cache *block_group)
 
 	if (cleanup) {
 		mutex_lock(&fs_info->chunk_mutex);
-		em_tree = &fs_info->mapping_tree.map_tree;
+		em_tree = &fs_info->mapping_tree;
 		write_lock(&em_tree->lock);
 		em = lookup_extent_mapping(em_tree, block_group->key.objectid,
 					   1);
 		BUG_ON(!em); /* logic error, can't happen */
-		/*
-		 * remove_extent_mapping() will delete us from the pinned_chunks
-		 * list, which is protected by the chunk mutex.
-		 */
 		remove_extent_mapping(em_tree, em);
 		write_unlock(&em_tree->lock);
 		mutex_unlock(&fs_info->chunk_mutex);
@@ -3580,7 +3583,7 @@ int btrfs_write_out_ino_cache(struct btrfs_root *root,
 	if (ret) {
 		if (release_metadata)
 			btrfs_delalloc_release_metadata(BTRFS_I(inode),
-					inode->i_size);
+					inode->i_size, true);
 #ifdef DEBUG
 		btrfs_err(fs_info,
 			  "failed to write free ino cache for root %llu",
@@ -3627,7 +3630,7 @@ again:
 	}
 
 	if (!map) {
-		map = kzalloc(PAGE_SIZE, GFP_NOFS);
+		map = kmem_cache_zalloc(btrfs_free_space_bitmap_cachep, GFP_NOFS);
 		if (!map) {
 			kmem_cache_free(btrfs_free_space_cachep, info);
 			return -ENOMEM;
@@ -3657,7 +3660,7 @@ again:
 	if (info)
 		kmem_cache_free(btrfs_free_space_cachep, info);
 	if (map)
-		kfree(map);
+		kmem_cache_free(btrfs_free_space_bitmap_cachep, map);
 	return 0;
 }
 

@@ -13,12 +13,13 @@
 #include <linux/threads.h>
 #include <linux/atomic.h>
 #include <linux/cpumask.h>
+#include <linux/rcupdate.h>
 
 struct workqueue_struct;
 
 struct work_struct;
 typedef void (*work_func_t)(struct work_struct *work);
-void delayed_work_timer_fn(unsigned long __data);
+void delayed_work_timer_fn(struct timer_list *t);
 
 /*
  * The first word is the work queue pointer and the flags rolled into
@@ -121,6 +122,14 @@ struct delayed_work {
 	int cpu;
 };
 
+struct rcu_work {
+	struct work_struct work;
+	struct rcu_head rcu;
+
+	/* target workqueue ->rcu uses to queue ->work */
+	struct workqueue_struct *wq;
+};
+
 /**
  * struct workqueue_attrs - A struct for workqueue attributes.
  *
@@ -152,6 +161,11 @@ static inline struct delayed_work *to_delayed_work(struct work_struct *work)
 	return container_of(work, struct delayed_work, work);
 }
 
+static inline struct rcu_work *to_rcu_work(struct work_struct *work)
+{
+	return container_of(work, struct rcu_work, work);
+}
+
 struct execute_work {
 	struct work_struct work;
 };
@@ -177,8 +191,7 @@ struct execute_work {
 
 #define __DELAYED_WORK_INITIALIZER(n, f, tflags) {			\
 	.work = __WORK_INITIALIZER((n).work, (f)),			\
-	.timer = __TIMER_INITIALIZER(delayed_work_timer_fn,		\
-				     0, (unsigned long)&(n),		\
+	.timer = __TIMER_INITIALIZER(delayed_work_timer_fn,\
 				     (tflags) | TIMER_IRQSAFE),		\
 	}
 
@@ -220,7 +233,7 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 									\
 		__init_work((_work), _onstack);				\
 		(_work)->data = (atomic_long_t) WORK_DATA_INIT();	\
-		lockdep_init_map(&(_work)->lockdep_map, #_work, &__key, 0); \
+		lockdep_init_map(&(_work)->lockdep_map, "(work_completion)"#_work, &__key, 0); \
 		INIT_LIST_HEAD(&(_work)->entry);			\
 		(_work)->func = (_func);				\
 	} while (0)
@@ -243,18 +256,17 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 #define __INIT_DELAYED_WORK(_work, _func, _tflags)			\
 	do {								\
 		INIT_WORK(&(_work)->work, (_func));			\
-		__setup_timer(&(_work)->timer, delayed_work_timer_fn,	\
-			      (unsigned long)(_work),			\
-			      (_tflags) | TIMER_IRQSAFE);		\
+		__init_timer(&(_work)->timer,				\
+			     delayed_work_timer_fn,			\
+			     (_tflags) | TIMER_IRQSAFE);		\
 	} while (0)
 
 #define __INIT_DELAYED_WORK_ONSTACK(_work, _func, _tflags)		\
 	do {								\
 		INIT_WORK_ONSTACK(&(_work)->work, (_func));		\
-		__setup_timer_on_stack(&(_work)->timer,			\
-				       delayed_work_timer_fn,		\
-				       (unsigned long)(_work),		\
-				       (_tflags) | TIMER_IRQSAFE);	\
+		__init_timer_on_stack(&(_work)->timer,			\
+				      delayed_work_timer_fn,		\
+				      (_tflags) | TIMER_IRQSAFE);	\
 	} while (0)
 
 #define INIT_DELAYED_WORK(_work, _func)					\
@@ -268,6 +280,12 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 
 #define INIT_DEFERRABLE_WORK_ONSTACK(_work, _func)			\
 	__INIT_DELAYED_WORK_ONSTACK(_work, _func, TIMER_DEFERRABLE)
+
+#define INIT_RCU_WORK(_work, _func)					\
+	INIT_WORK(&(_work)->work, (_func))
+
+#define INIT_RCU_WORK_ONSTACK(_work, _func)				\
+	INIT_WORK_ONSTACK(&(_work)->work, (_func))
 
 /**
  * work_pending - Find out whether a work item is currently pending
@@ -373,43 +391,23 @@ extern struct workqueue_struct *system_freezable_wq;
 extern struct workqueue_struct *system_power_efficient_wq;
 extern struct workqueue_struct *system_freezable_power_efficient_wq;
 
-extern struct workqueue_struct *
-__alloc_workqueue_key(const char *fmt, unsigned int flags, int max_active,
-	struct lock_class_key *key, const char *lock_name, ...) __printf(1, 6);
-
 /**
  * alloc_workqueue - allocate a workqueue
  * @fmt: printf format for the name of the workqueue
  * @flags: WQ_* flags
  * @max_active: max in-flight work items, 0 for default
- * @args...: args for @fmt
+ * remaining args: args for @fmt
  *
  * Allocate a workqueue with the specified parameters.  For detailed
  * information on WQ_* flags, please refer to
  * Documentation/core-api/workqueue.rst.
  *
- * The __lock_name macro dance is to guarantee that single lock_class_key
- * doesn't end up with different namesm, which isn't allowed by lockdep.
- *
  * RETURNS:
  * Pointer to the allocated workqueue on success, %NULL on failure.
  */
-#ifdef CONFIG_LOCKDEP
-#define alloc_workqueue(fmt, flags, max_active, args...)		\
-({									\
-	static struct lock_class_key __key;				\
-	const char *__lock_name;					\
-									\
-	__lock_name = #fmt#args;					\
-									\
-	__alloc_workqueue_key((fmt), (flags), (max_active),		\
-			      &__key, __lock_name, ##args);		\
-})
-#else
-#define alloc_workqueue(fmt, flags, max_active, args...)		\
-	__alloc_workqueue_key((fmt), (flags), (max_active),		\
-			      NULL, NULL, ##args)
-#endif
+struct workqueue_struct *alloc_workqueue(const char *fmt,
+					 unsigned int flags,
+					 int max_active, ...);
 
 /**
  * alloc_ordered_workqueue - allocate an ordered workqueue
@@ -438,7 +436,7 @@ __alloc_workqueue_key(const char *fmt, unsigned int flags, int max_active,
 
 extern void destroy_workqueue(struct workqueue_struct *wq);
 
-struct workqueue_attrs *alloc_workqueue_attrs(gfp_t gfp_mask);
+struct workqueue_attrs *alloc_workqueue_attrs(void);
 void free_workqueue_attrs(struct workqueue_attrs *attrs);
 int apply_workqueue_attrs(struct workqueue_struct *wq,
 			  const struct workqueue_attrs *attrs);
@@ -446,10 +444,13 @@ int workqueue_set_unbound_cpumask(cpumask_var_t cpumask);
 
 extern bool queue_work_on(int cpu, struct workqueue_struct *wq,
 			struct work_struct *work);
+extern bool queue_work_node(int node, struct workqueue_struct *wq,
+			    struct work_struct *work);
 extern bool queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
 			struct delayed_work *work, unsigned long delay);
 extern bool mod_delayed_work_on(int cpu, struct workqueue_struct *wq,
 			struct delayed_work *dwork, unsigned long delay);
+extern bool queue_rcu_work(struct workqueue_struct *wq, struct rcu_work *rwork);
 
 extern void flush_workqueue(struct workqueue_struct *wq);
 extern void drain_workqueue(struct workqueue_struct *wq);
@@ -459,12 +460,13 @@ extern int schedule_on_each_cpu(work_func_t func);
 int execute_in_process_context(work_func_t fn, struct execute_work *);
 
 extern bool flush_work(struct work_struct *work);
-extern bool cancel_work(struct work_struct *work);
 extern bool cancel_work_sync(struct work_struct *work);
 
 extern bool flush_delayed_work(struct delayed_work *dwork);
 extern bool cancel_delayed_work(struct delayed_work *dwork);
 extern bool cancel_delayed_work_sync(struct delayed_work *dwork);
+
+extern bool flush_rcu_work(struct rcu_work *rwork);
 
 extern void workqueue_set_max_active(struct workqueue_struct *wq,
 				     int max_active);
@@ -475,6 +477,7 @@ extern unsigned int work_busy(struct work_struct *work);
 extern __printf(1, 2) void set_worker_desc(const char *fmt, ...);
 extern void print_worker_info(const char *log_lvl, struct task_struct *task);
 extern void show_workqueue_state(void);
+extern void wq_worker_comm(char *buf, size_t size, struct task_struct *task);
 
 /**
  * queue_work - queue work on a workqueue

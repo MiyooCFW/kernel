@@ -30,10 +30,17 @@
  * software renderer and the X server for efficient buffer sharing.
  */
 
-#include <linux/module.h>
-#include <linux/ramfs.h>
-#include <linux/shmem_fs.h>
 #include <linux/dma-buf.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
+#include <linux/shmem_fs.h>
+#include <linux/vmalloc.h>
+
+#include <drm/drm_drv.h>
+#include <drm/drm_file.h>
+#include <drm/drm_ioctl.h>
+#include <drm/drm_prime.h>
+
 #include "vgem_drv.h"
 
 #define DRIVER_NAME	"vgem"
@@ -61,23 +68,22 @@ static void vgem_gem_free_object(struct drm_gem_object *obj)
 	kfree(vgem_obj);
 }
 
-static int vgem_gem_fault(struct vm_fault *vmf)
+static vm_fault_t vgem_gem_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 	struct drm_vgem_gem_object *obj = vma->vm_private_data;
 	/* We don't use vmf->pgoff since that has the fake offset */
 	unsigned long vaddr = vmf->address;
-	int ret;
+	vm_fault_t ret = VM_FAULT_SIGBUS;
 	loff_t num_pages;
 	pgoff_t page_offset;
 	page_offset = (vaddr - vma->vm_start) >> PAGE_SHIFT;
 
 	num_pages = DIV_ROUND_UP(obj->base.size, PAGE_SIZE);
 
-	if (page_offset > num_pages)
+	if (page_offset >= num_pages)
 		return VM_FAULT_SIGBUS;
 
-	ret = -ENOENT;
 	mutex_lock(&obj->pages_lock);
 	if (obj->pages) {
 		get_page(obj->pages[page_offset]);
@@ -218,14 +224,14 @@ static int vgem_gem_dumb_create(struct drm_file *file, struct drm_device *dev,
 
 	drm_gem_object_put_unlocked(gem_object);
 
-	DRM_DEBUG_DRIVER("Created object of size %llu\n", args->size);
+	DRM_DEBUG("Created object of size %llu\n", args->size);
 
 	return 0;
 }
 
 static struct drm_ioctl_desc vgem_ioctls[] = {
-	DRM_IOCTL_DEF_DRV(VGEM_FENCE_ATTACH, vgem_fence_attach_ioctl, DRM_AUTH|DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(VGEM_FENCE_SIGNAL, vgem_fence_signal_ioctl, DRM_AUTH|DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(VGEM_FENCE_ATTACH, vgem_fence_attach_ioctl, DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(VGEM_FENCE_SIGNAL, vgem_fence_signal_ioctl, DRM_RENDER_ALLOW),
 };
 
 static int vgem_mmap(struct file *filp, struct vm_area_struct *vma)
@@ -405,7 +411,7 @@ static void vgem_release(struct drm_device *dev)
 }
 
 static struct drm_driver vgem_driver = {
-	.driver_features		= DRIVER_GEM | DRIVER_PRIME,
+	.driver_features		= DRIVER_GEM | DRIVER_RENDER,
 	.release			= vgem_release,
 	.open				= vgem_open,
 	.postclose			= vgem_postclose,
@@ -422,7 +428,6 @@ static struct drm_driver vgem_driver = {
 	.gem_prime_pin = vgem_prime_pin,
 	.gem_prime_unpin = vgem_prime_unpin,
 	.gem_prime_import = vgem_prime_import,
-	.gem_prime_export = drm_gem_prime_export,
 	.gem_prime_import_sg_table = vgem_prime_import_sg_table,
 	.gem_prime_get_sg_table = vgem_prime_get_sg_table,
 	.gem_prime_vmap = vgem_prime_vmap,
@@ -477,7 +482,7 @@ out_free:
 static void __exit vgem_exit(void)
 {
 	drm_dev_unregister(&vgem_device->drm);
-	drm_dev_unref(&vgem_device->drm);
+	drm_dev_put(&vgem_device->drm);
 }
 
 module_init(vgem_init);

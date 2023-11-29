@@ -1,4 +1,4 @@
-.. -*- coding: utf-8; mode: rst -*-
+.. SPDX-License-Identifier: GPL-2.0
 
 .. include:: <isonum.txt>
 
@@ -41,4 +41,5 @@ For more details see the file COPYING in the source distribution of Linux.
 	technisat
 	ttusb-dec
 	udev
+	frontends
 	contributors

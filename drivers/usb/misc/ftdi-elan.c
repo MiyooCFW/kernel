@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * USB FTDI client driver for Elan Digital Systems's Uxxx adapters
  *
@@ -6,11 +7,6 @@
  *
  * Author and Maintainer - Tony Olech - Elan Digital Systems
  * tony.olech@elandigitalsystems.com
- *
- * This program is free software;you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation, version 2.
- *
  *
  * This driver was written by Tony Olech(tony.olech@elandigitalsystems.com)
  * based on various USB client drivers in the 2.6.15 linux kernel
@@ -920,7 +916,6 @@ static int ftdi_elan_respond_engine(struct usb_ftdi *ftdi)
 	int bytes_read = 0;
 	int retry_on_empty = 1;
 	int retry_on_timeout = 3;
-	int empty_packets = 0;
 read:{
 		int packet_bytes = 0;
 		int retval = usb_bulk_msg(ftdi->udev,
@@ -965,31 +960,6 @@ read:{
 			dev_err(&ftdi->udev->dev, "error = %d with packet_bytes = %d with total %d bytes%s\n",
 				retval, packet_bytes, bytes_read, diag);
 			return retval;
-		} else if (packet_bytes == 2) {
-			unsigned char s0 = ftdi->bulk_in_buffer[0];
-			unsigned char s1 = ftdi->bulk_in_buffer[1];
-			empty_packets += 1;
-			if (s0 == 0x31 && s1 == 0x60) {
-				if (retry_on_empty-- > 0) {
-					goto more;
-				} else
-					return 0;
-			} else if (s0 == 0x31 && s1 == 0x00) {
-				if (retry_on_empty-- > 0) {
-					goto more;
-				} else
-					return 0;
-			} else {
-				if (retry_on_empty-- > 0) {
-					goto more;
-				} else
-					return 0;
-			}
-		} else if (packet_bytes == 1) {
-			if (retry_on_empty-- > 0) {
-				goto more;
-			} else
-				return 0;
 		} else {
 			if (retry_on_empty-- > 0) {
 				goto more;
@@ -2054,13 +2024,6 @@ static int ftdi_elan_synchronize(struct usb_ftdi *ftdi)
 						goto read;
 					} else
 						goto reset;
-				} else if (s1 == 0x31 && s2 == 0x60) {
-					if (read_stop-- > 0) {
-						goto read;
-					} else {
-						dev_err(&ftdi->udev->dev, "retry limit reached\n");
-						continue;
-					}
 				} else {
 					if (read_stop-- > 0) {
 						goto read;

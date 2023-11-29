@@ -1,9 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2017 Broadcom
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __BCMGENET_H__
@@ -16,6 +13,8 @@
 #include <linux/mii.h>
 #include <linux/if_vlan.h>
 #include <linux/phy.h>
+#include <linux/dim.h>
+#include <linux/ethtool.h>
 
 /* total number of Buffer Descriptors, same for Rx/Tx */
 #define TOTAL_DESC				256
@@ -576,6 +575,14 @@ struct bcmgenet_tx_ring {
 	struct bcmgenet_priv *priv;
 };
 
+struct bcmgenet_net_dim {
+	u16		use_dim;
+	u16		event_ctr;
+	unsigned long	packets;
+	unsigned long	bytes;
+	struct dim	dim;
+};
+
 struct bcmgenet_rx_ring {
 	struct napi_struct napi;	/* Rx NAPI struct */
 	unsigned long	bytes;
@@ -590,6 +597,9 @@ struct bcmgenet_rx_ring {
 	unsigned int	cb_ptr;		/* Rx ring initial CB ptr */
 	unsigned int	end_ptr;	/* Rx ring end CB ptr */
 	unsigned int	old_discards;
+	struct bcmgenet_net_dim dim;
+	u32		rx_max_coalesced_frames;
+	u32		rx_coalesce_usecs;
 	void (*int_enable)(struct bcmgenet_rx_ring *);
 	void (*int_disable)(struct bcmgenet_rx_ring *);
 	struct bcmgenet_priv *priv;
@@ -621,7 +631,6 @@ struct bcmgenet_priv {
 
 	/* MDIO bus variables */
 	wait_queue_head_t wq;
-	struct phy_device *phydev;
 	bool internal_phy;
 	struct device_node *phy_dn;
 	struct device_node *mdio_dn;
@@ -666,6 +675,7 @@ struct bcmgenet_priv {
 	/* WOL */
 	struct clk *clk_wol;
 	u32 wolopts;
+	u8 sopass[SOPASS_MAX];
 
 	struct bcmgenet_mib_counters mib;
 
@@ -715,7 +725,6 @@ int bcmgenet_mii_init(struct net_device *dev);
 int bcmgenet_mii_config(struct net_device *dev, bool init);
 int bcmgenet_mii_probe(struct net_device *dev);
 void bcmgenet_mii_exit(struct net_device *dev);
-void bcmgenet_mii_reset(struct net_device *dev);
 void bcmgenet_phy_power_set(struct net_device *dev, bool enable);
 void bcmgenet_mii_setup(struct net_device *dev);
 

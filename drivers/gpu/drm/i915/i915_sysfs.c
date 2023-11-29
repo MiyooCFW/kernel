@@ -29,8 +29,11 @@
 #include <linux/module.h>
 #include <linux/stat.h>
 #include <linux/sysfs.h>
-#include "intel_drv.h"
+
 #include "i915_drv.h"
+#include "i915_sysfs.h"
+#include "intel_pm.h"
+#include "intel_sideband.h"
 
 static inline struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
 {
@@ -42,14 +45,30 @@ static inline struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
 static u32 calc_residency(struct drm_i915_private *dev_priv,
 			  i915_reg_t reg)
 {
-	return DIV_ROUND_CLOSEST_ULL(intel_rc6_residency_us(dev_priv, reg),
-				     1000);
+	intel_wakeref_t wakeref;
+	u64 res = 0;
+
+	with_intel_runtime_pm(&dev_priv->runtime_pm, wakeref)
+		res = intel_rc6_residency_us(dev_priv, reg);
+
+	return DIV_ROUND_CLOSEST_ULL(res, 1000);
 }
 
 static ssize_t
 show_rc6_mask(struct device *kdev, struct device_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%x\n", intel_enable_rc6());
+	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
+	unsigned int mask;
+
+	mask = 0;
+	if (HAS_RC6(dev_priv))
+		mask |= BIT(0);
+	if (HAS_RC6p(dev_priv))
+		mask |= BIT(1);
+	if (HAS_RC6pp(dev_priv))
+		mask |= BIT(2);
+
+	return snprintf(buf, PAGE_SIZE, "%x\n", mask);
 }
 
 static ssize_t
@@ -242,30 +261,24 @@ static ssize_t gt_act_freq_mhz_show(struct device *kdev,
 				    struct device_attribute *attr, char *buf)
 {
 	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
-	int ret;
+	intel_wakeref_t wakeref;
+	u32 freq;
 
-	intel_runtime_pm_get(dev_priv);
+	wakeref = intel_runtime_pm_get(&dev_priv->runtime_pm);
 
-	mutex_lock(&dev_priv->rps.hw_lock);
 	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv)) {
-		u32 freq;
+		vlv_punit_get(dev_priv);
 		freq = vlv_punit_read(dev_priv, PUNIT_REG_GPU_FREQ_STS);
-		ret = intel_gpu_freq(dev_priv, (freq >> 8) & 0xff);
+		vlv_punit_put(dev_priv);
+
+		freq = (freq >> 8) & 0xff;
 	} else {
-		u32 rpstat = I915_READ(GEN6_RPSTAT1);
-		if (INTEL_GEN(dev_priv) >= 9)
-			ret = (rpstat & GEN9_CAGF_MASK) >> GEN9_CAGF_SHIFT;
-		else if (IS_HASWELL(dev_priv) || IS_BROADWELL(dev_priv))
-			ret = (rpstat & HSW_CAGF_MASK) >> HSW_CAGF_SHIFT;
-		else
-			ret = (rpstat & GEN6_CAGF_MASK) >> GEN6_CAGF_SHIFT;
-		ret = intel_gpu_freq(dev_priv, ret);
+		freq = intel_get_cagf(dev_priv, I915_READ(GEN6_RPSTAT1));
 	}
-	mutex_unlock(&dev_priv->rps.hw_lock);
 
-	intel_runtime_pm_put(dev_priv);
+	intel_runtime_pm_put(&dev_priv->runtime_pm, wakeref);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", ret);
+	return snprintf(buf, PAGE_SIZE, "%d\n", intel_gpu_freq(dev_priv, freq));
 }
 
 static ssize_t gt_cur_freq_mhz_show(struct device *kdev,
@@ -275,7 +288,7 @@ static ssize_t gt_cur_freq_mhz_show(struct device *kdev,
 
 	return snprintf(buf, PAGE_SIZE, "%d\n",
 			intel_gpu_freq(dev_priv,
-				       dev_priv->rps.cur_freq));
+				       dev_priv->gt_pm.rps.cur_freq));
 }
 
 static ssize_t gt_boost_freq_mhz_show(struct device *kdev, struct device_attribute *attr, char *buf)
@@ -284,7 +297,7 @@ static ssize_t gt_boost_freq_mhz_show(struct device *kdev, struct device_attribu
 
 	return snprintf(buf, PAGE_SIZE, "%d\n",
 			intel_gpu_freq(dev_priv,
-				       dev_priv->rps.boost_freq));
+				       dev_priv->gt_pm.rps.boost_freq));
 }
 
 static ssize_t gt_boost_freq_mhz_store(struct device *kdev,
@@ -292,8 +305,10 @@ static ssize_t gt_boost_freq_mhz_store(struct device *kdev,
 				       const char *buf, size_t count)
 {
 	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
-	u32 val;
+	struct intel_rps *rps = &dev_priv->gt_pm.rps;
+	bool boost = false;
 	ssize_t ret;
+	u32 val;
 
 	ret = kstrtou32(buf, 0, &val);
 	if (ret)
@@ -301,12 +316,17 @@ static ssize_t gt_boost_freq_mhz_store(struct device *kdev,
 
 	/* Validate against (static) hardware limits */
 	val = intel_freq_opcode(dev_priv, val);
-	if (val < dev_priv->rps.min_freq || val > dev_priv->rps.max_freq)
+	if (val < rps->min_freq || val > rps->max_freq)
 		return -EINVAL;
 
-	mutex_lock(&dev_priv->rps.hw_lock);
-	dev_priv->rps.boost_freq = val;
-	mutex_unlock(&dev_priv->rps.hw_lock);
+	mutex_lock(&rps->lock);
+	if (val != rps->boost_freq) {
+		rps->boost_freq = val;
+		boost = atomic_read(&rps->num_waiters);
+	}
+	mutex_unlock(&rps->lock);
+	if (boost)
+		schedule_work(&rps->work);
 
 	return count;
 }
@@ -318,7 +338,7 @@ static ssize_t vlv_rpe_freq_mhz_show(struct device *kdev,
 
 	return snprintf(buf, PAGE_SIZE, "%d\n",
 			intel_gpu_freq(dev_priv,
-				       dev_priv->rps.efficient_freq));
+				       dev_priv->gt_pm.rps.efficient_freq));
 }
 
 static ssize_t gt_max_freq_mhz_show(struct device *kdev, struct device_attribute *attr, char *buf)
@@ -327,7 +347,7 @@ static ssize_t gt_max_freq_mhz_show(struct device *kdev, struct device_attribute
 
 	return snprintf(buf, PAGE_SIZE, "%d\n",
 			intel_gpu_freq(dev_priv,
-				       dev_priv->rps.max_freq_softlimit));
+				       dev_priv->gt_pm.rps.max_freq_softlimit));
 }
 
 static ssize_t gt_max_freq_mhz_store(struct device *kdev,
@@ -335,6 +355,8 @@ static ssize_t gt_max_freq_mhz_store(struct device *kdev,
 				     const char *buf, size_t count)
 {
 	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
+	struct intel_rps *rps = &dev_priv->gt_pm.rps;
+	intel_wakeref_t wakeref;
 	u32 val;
 	ssize_t ret;
 
@@ -342,38 +364,35 @@ static ssize_t gt_max_freq_mhz_store(struct device *kdev,
 	if (ret)
 		return ret;
 
-	intel_runtime_pm_get(dev_priv);
-
-	mutex_lock(&dev_priv->rps.hw_lock);
+	wakeref = intel_runtime_pm_get(&dev_priv->runtime_pm);
+	mutex_lock(&rps->lock);
 
 	val = intel_freq_opcode(dev_priv, val);
-
-	if (val < dev_priv->rps.min_freq ||
-	    val > dev_priv->rps.max_freq ||
-	    val < dev_priv->rps.min_freq_softlimit) {
-		mutex_unlock(&dev_priv->rps.hw_lock);
-		intel_runtime_pm_put(dev_priv);
-		return -EINVAL;
+	if (val < rps->min_freq ||
+	    val > rps->max_freq ||
+	    val < rps->min_freq_softlimit) {
+		ret = -EINVAL;
+		goto unlock;
 	}
 
-	if (val > dev_priv->rps.rp0_freq)
+	if (val > rps->rp0_freq)
 		DRM_DEBUG("User requested overclocking to %d\n",
 			  intel_gpu_freq(dev_priv, val));
 
-	dev_priv->rps.max_freq_softlimit = val;
+	rps->max_freq_softlimit = val;
 
-	val = clamp_t(int, dev_priv->rps.cur_freq,
-		      dev_priv->rps.min_freq_softlimit,
-		      dev_priv->rps.max_freq_softlimit);
+	val = clamp_t(int, rps->cur_freq,
+		      rps->min_freq_softlimit,
+		      rps->max_freq_softlimit);
 
 	/* We still need *_set_rps to process the new max_delay and
 	 * update the interrupt limits and PMINTRMSK even though
 	 * frequency request may be unchanged. */
 	ret = intel_set_rps(dev_priv, val);
 
-	mutex_unlock(&dev_priv->rps.hw_lock);
-
-	intel_runtime_pm_put(dev_priv);
+unlock:
+	mutex_unlock(&rps->lock);
+	intel_runtime_pm_put(&dev_priv->runtime_pm, wakeref);
 
 	return ret ?: count;
 }
@@ -384,7 +403,7 @@ static ssize_t gt_min_freq_mhz_show(struct device *kdev, struct device_attribute
 
 	return snprintf(buf, PAGE_SIZE, "%d\n",
 			intel_gpu_freq(dev_priv,
-				       dev_priv->rps.min_freq_softlimit));
+				       dev_priv->gt_pm.rps.min_freq_softlimit));
 }
 
 static ssize_t gt_min_freq_mhz_store(struct device *kdev,
@@ -392,6 +411,8 @@ static ssize_t gt_min_freq_mhz_store(struct device *kdev,
 				     const char *buf, size_t count)
 {
 	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
+	struct intel_rps *rps = &dev_priv->gt_pm.rps;
+	intel_wakeref_t wakeref;
 	u32 val;
 	ssize_t ret;
 
@@ -399,45 +420,42 @@ static ssize_t gt_min_freq_mhz_store(struct device *kdev,
 	if (ret)
 		return ret;
 
-	intel_runtime_pm_get(dev_priv);
-
-	mutex_lock(&dev_priv->rps.hw_lock);
+	wakeref = intel_runtime_pm_get(&dev_priv->runtime_pm);
+	mutex_lock(&rps->lock);
 
 	val = intel_freq_opcode(dev_priv, val);
-
-	if (val < dev_priv->rps.min_freq ||
-	    val > dev_priv->rps.max_freq ||
-	    val > dev_priv->rps.max_freq_softlimit) {
-		mutex_unlock(&dev_priv->rps.hw_lock);
-		intel_runtime_pm_put(dev_priv);
-		return -EINVAL;
+	if (val < rps->min_freq ||
+	    val > rps->max_freq ||
+	    val > rps->max_freq_softlimit) {
+		ret = -EINVAL;
+		goto unlock;
 	}
 
-	dev_priv->rps.min_freq_softlimit = val;
+	rps->min_freq_softlimit = val;
 
-	val = clamp_t(int, dev_priv->rps.cur_freq,
-		      dev_priv->rps.min_freq_softlimit,
-		      dev_priv->rps.max_freq_softlimit);
+	val = clamp_t(int, rps->cur_freq,
+		      rps->min_freq_softlimit,
+		      rps->max_freq_softlimit);
 
 	/* We still need *_set_rps to process the new min_delay and
 	 * update the interrupt limits and PMINTRMSK even though
 	 * frequency request may be unchanged. */
 	ret = intel_set_rps(dev_priv, val);
 
-	mutex_unlock(&dev_priv->rps.hw_lock);
-
-	intel_runtime_pm_put(dev_priv);
+unlock:
+	mutex_unlock(&rps->lock);
+	intel_runtime_pm_put(&dev_priv->runtime_pm, wakeref);
 
 	return ret ?: count;
 }
 
-static DEVICE_ATTR(gt_act_freq_mhz, S_IRUGO, gt_act_freq_mhz_show, NULL);
-static DEVICE_ATTR(gt_cur_freq_mhz, S_IRUGO, gt_cur_freq_mhz_show, NULL);
-static DEVICE_ATTR(gt_boost_freq_mhz, S_IRUGO | S_IWUSR, gt_boost_freq_mhz_show, gt_boost_freq_mhz_store);
-static DEVICE_ATTR(gt_max_freq_mhz, S_IRUGO | S_IWUSR, gt_max_freq_mhz_show, gt_max_freq_mhz_store);
-static DEVICE_ATTR(gt_min_freq_mhz, S_IRUGO | S_IWUSR, gt_min_freq_mhz_show, gt_min_freq_mhz_store);
+static DEVICE_ATTR_RO(gt_act_freq_mhz);
+static DEVICE_ATTR_RO(gt_cur_freq_mhz);
+static DEVICE_ATTR_RW(gt_boost_freq_mhz);
+static DEVICE_ATTR_RW(gt_max_freq_mhz);
+static DEVICE_ATTR_RW(gt_min_freq_mhz);
 
-static DEVICE_ATTR(vlv_rpe_freq_mhz, S_IRUGO, vlv_rpe_freq_mhz_show, NULL);
+static DEVICE_ATTR_RO(vlv_rpe_freq_mhz);
 
 static ssize_t gt_rp_mhz_show(struct device *kdev, struct device_attribute *attr, char *buf);
 static DEVICE_ATTR(gt_RP0_freq_mhz, S_IRUGO, gt_rp_mhz_show, NULL);
@@ -448,21 +466,22 @@ static DEVICE_ATTR(gt_RPn_freq_mhz, S_IRUGO, gt_rp_mhz_show, NULL);
 static ssize_t gt_rp_mhz_show(struct device *kdev, struct device_attribute *attr, char *buf)
 {
 	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
+	struct intel_rps *rps = &dev_priv->gt_pm.rps;
 	u32 val;
 
 	if (attr == &dev_attr_gt_RP0_freq_mhz)
-		val = intel_gpu_freq(dev_priv, dev_priv->rps.rp0_freq);
+		val = intel_gpu_freq(dev_priv, rps->rp0_freq);
 	else if (attr == &dev_attr_gt_RP1_freq_mhz)
-		val = intel_gpu_freq(dev_priv, dev_priv->rps.rp1_freq);
+		val = intel_gpu_freq(dev_priv, rps->rp1_freq);
 	else if (attr == &dev_attr_gt_RPn_freq_mhz)
-		val = intel_gpu_freq(dev_priv, dev_priv->rps.min_freq);
+		val = intel_gpu_freq(dev_priv, rps->min_freq);
 	else
 		BUG();
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", val);
 }
 
-static const struct attribute *gen6_attrs[] = {
+static const struct attribute * const gen6_attrs[] = {
 	&dev_attr_gt_act_freq_mhz.attr,
 	&dev_attr_gt_cur_freq_mhz.attr,
 	&dev_attr_gt_boost_freq_mhz.attr,
@@ -474,7 +493,7 @@ static const struct attribute *gen6_attrs[] = {
 	NULL,
 };
 
-static const struct attribute *vlv_attrs[] = {
+static const struct attribute * const vlv_attrs[] = {
 	&dev_attr_gt_act_freq_mhz.attr,
 	&dev_attr_gt_cur_freq_mhz.attr,
 	&dev_attr_gt_boost_freq_mhz.attr,
@@ -495,26 +514,23 @@ static ssize_t error_state_read(struct file *filp, struct kobject *kobj,
 {
 
 	struct device *kdev = kobj_to_dev(kobj);
-	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
-	struct drm_i915_error_state_buf error_str;
+	struct drm_i915_private *i915 = kdev_minor_to_i915(kdev);
 	struct i915_gpu_state *gpu;
 	ssize_t ret;
 
-	ret = i915_error_state_buf_init(&error_str, dev_priv, count, off);
-	if (ret)
-		return ret;
+	gpu = i915_first_error_state(i915);
+	if (IS_ERR(gpu)) {
+		ret = PTR_ERR(gpu);
+	} else if (gpu) {
+		ret = i915_gpu_state_copy_to_buffer(gpu, buf, off, count);
+		i915_gpu_state_put(gpu);
+	} else {
+		const char *str = "No error state collected\n";
+		size_t len = strlen(str);
 
-	gpu = i915_first_error_state(dev_priv);
-	ret = i915_error_state_to_str(&error_str, gpu);
-	if (ret)
-		goto out;
-
-	ret = count < error_str.bytes ? count : error_str.bytes;
-	memcpy(buf, error_str.buf, ret);
-
-out:
-	i915_gpu_state_put(gpu);
-	i915_error_state_buf_release(&error_str);
+		ret = min_t(size_t, count, len - off);
+		memcpy(buf, str + off, ret);
+	}
 
 	return ret;
 }

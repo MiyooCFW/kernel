@@ -22,6 +22,8 @@
 #define ACM_TTY_MAJOR		166
 #define ACM_TTY_MINORS		256
 
+#define ACM_MINOR_INVALID	ACM_TTY_MINORS
+
 /*
  * Requests.
  */
@@ -108,6 +110,7 @@ struct acm {
 	unsigned long flags;
 #		define EVENT_TTY_WAKEUP	0
 #		define EVENT_RX_STALL	1
+#		define ACM_THROTTLED	2
 #		define ACM_ERROR_DELAY	3
 	unsigned long urbs_in_error_delay;		/* these need to be restarted after a delay */
 	struct usb_cdc_line_coding line;		/* bits, stop, parity */
@@ -124,8 +127,6 @@ struct acm {
 	unsigned int ctrl_caps;				/* control capabilities from the class specific header */
 	unsigned int susp_count;			/* number of suspended interfaces */
 	unsigned int combined_interfaces:1;		/* control and data collapsed */
-	unsigned int throttled:1;			/* actually throttled */
-	unsigned int throttle_req:1;			/* throttle requested */
 	u8 bInterval;
 	struct usb_anchor delayed;			/* writes queued for a device about to be woken */
 	unsigned long quirks;

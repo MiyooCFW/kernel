@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ms5637.c - Support for Measurement-Specialties MS5637, MS5805
  *            MS5837 and MS8607 pressure & temperature sensor
  *
  * Copyright (c) 2015 Measurement-Specialties
- *
- * Licensed under the GPL-2.
  *
  * (7-bit I2C slave address 0x76)
  *
@@ -124,7 +123,6 @@ static const struct iio_info ms5637_info = {
 	.read_raw = ms5637_read_raw,
 	.write_raw = ms5637_write_raw,
 	.attrs = &ms5637_attribute_group,
-	.driver_module = THIS_MODULE,
 };
 
 static int ms5637_probe(struct i2c_client *client,

@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * mm/percpu-vm.c - vmalloc area based chunk allocation
  *
  * Copyright (C) 2010		SUSE Linux Products GmbH
  * Copyright (C) 2010		Tejun Heo <tj@kernel.org>
- *
- * This file is released under the GPLv2.
  *
  * Chunks are mapped into vmalloc areas and populated page by page.
  * This is the default chunk allocator.
@@ -37,7 +36,7 @@ static struct page **pcpu_get_pages(void)
 	lockdep_assert_held(&pcpu_alloc_mutex);
 
 	if (!pages)
-		pages = pcpu_mem_zalloc(pages_size, 0);
+		pages = pcpu_mem_zalloc(pages_size, GFP_KERNEL);
 	return pages;
 }
 
@@ -86,7 +85,7 @@ static int pcpu_alloc_pages(struct pcpu_chunk *chunk,
 	unsigned int cpu, tcpu;
 	int i;
 
-	gfp |= GFP_KERNEL | __GFP_HIGHMEM | __GFP_COLD;
+	gfp |= __GFP_HIGHMEM;
 
 	for_each_possible_cpu(cpu) {
 		for (i = page_start; i < page_end; i++) {

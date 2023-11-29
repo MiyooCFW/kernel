@@ -1,17 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * Copyright (C) IBM Corporation, 2010
  *
@@ -38,7 +26,7 @@ __wsum csum_and_copy_from_user(const void __user *src, void *dst,
 		goto out;
 	}
 
-	if (unlikely((len < 0) || !access_ok(VERIFY_READ, src, len))) {
+	if (unlikely((len < 0) || !access_ok(src, len))) {
 		*err_ptr = -EFAULT;
 		csum = (__force unsigned int)sum;
 		goto out;
@@ -81,7 +69,7 @@ __wsum csum_and_copy_to_user(const void *src, void __user *dst, int len,
 		goto out;
 	}
 
-	if (unlikely((len < 0) || !access_ok(VERIFY_WRITE, dst, len))) {
+	if (unlikely((len < 0) || !access_ok(dst, len))) {
 		*err_ptr = -EFAULT;
 		csum = -1; /* invalid checksum */
 		goto out;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/virtio.h>
 #include <linux/spinlock.h>
 #include <linux/virtio_config.h>
@@ -161,6 +162,7 @@ EXPORT_SYMBOL_GPL(virtio_config_enable);
 
 void virtio_add_status(struct virtio_device *dev, unsigned int status)
 {
+	might_sleep();
 	dev->config->set_status(dev, dev->config->get_status(dev) | status);
 }
 EXPORT_SYMBOL_GPL(virtio_add_status);
@@ -169,6 +171,8 @@ EXPORT_SYMBOL_GPL(virtio_add_status);
 static int virtio_features_ok(struct virtio_device *dev)
 {
 	unsigned status;
+
+	might_sleep();
 
 	if (!virtio_has_feature(dev, VIRTIO_F_VERSION_1))
 		return 0;
@@ -312,11 +316,21 @@ void unregister_virtio_driver(struct virtio_driver *driver)
 }
 EXPORT_SYMBOL_GPL(unregister_virtio_driver);
 
+/**
+ * register_virtio_device - register virtio device
+ * @dev        : virtio device to be registered
+ *
+ * On error, the caller must call put_device on &@dev->dev (and not kfree),
+ * as another code path may have obtained a reference to @dev.
+ *
+ * Returns: 0 on suceess, -error on failure
+ */
 int register_virtio_device(struct virtio_device *dev)
 {
 	int err;
 
 	dev->dev.bus = &virtio_bus;
+	device_initialize(&dev->dev);
 
 	/* Assign a unique device index and hence name. */
 	err = ida_simple_get(&virtio_index_ida, 0, 0, GFP_KERNEL);
@@ -338,10 +352,13 @@ int register_virtio_device(struct virtio_device *dev)
 	virtio_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE);
 
 	INIT_LIST_HEAD(&dev->vqs);
+	spin_lock_init(&dev->vqs_list_lock);
 
-	/* device_register() causes the bus infrastructure to look for a
-	 * matching driver. */
-	err = device_register(&dev->dev);
+	/*
+	 * device_add() causes the bus infrastructure to look for a matching
+	 * driver.
+	 */
+	err = device_add(&dev->dev);
 	if (err)
 		ida_simple_remove(&virtio_index_ida, dev->index);
 out:

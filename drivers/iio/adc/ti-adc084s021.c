@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /**
  * Copyright (C) 2017 Axis Communications AB
  *
  * Driver for Texas Instruments' ADC084S021 ADC chip.
  * Datasheets can be found here:
  * http://www.ti.com/lit/ds/symlink/adc084s021.pdf
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/err.h>
@@ -190,7 +187,6 @@ static int adc084s021_buffer_postdisable(struct iio_dev *indio_dev)
 
 static const struct iio_info adc084s021_info = {
 	.read_raw = adc084s021_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static const struct iio_buffer_setup_ops adc084s021_buffer_setup_ops = {

@@ -1070,7 +1070,7 @@ gk104_ram_calc_xits(struct gk104_ram *ram, struct nvkm_ram_data *next)
 			nvkm_error(subdev, "unable to calc plls\n");
 			return -EINVAL;
 		}
-		nvkm_debug(subdev, "sucessfully calced PLLs for clock %i kHz"
+		nvkm_debug(subdev, "successfully calced PLLs for clock %i kHz"
 				" (refclock: %i kHz)\n", next->freq, ret);
 	} else {
 		/* calculate refpll coefficients */
@@ -1704,8 +1704,6 @@ gk104_ram = {
 	.probe_fbpa_amount = gf100_ram_probe_fbpa_amount,
 	.dtor = gk104_ram_dtor,
 	.init = gk104_ram_init,
-	.get = gf100_ram_get,
-	.put = gf100_ram_put,
 	.calc = gk104_ram_calc,
 	.prog = gk104_ram_prog,
 	.tidy = gk104_ram_tidy,

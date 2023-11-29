@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * acpi_processor.c - ACPI processor enumeration support
  *
@@ -7,10 +8,6 @@
  * Copyright (C) 2004  Anil S Keshavamurthy <anil.s.keshavamurthy@intel.com>
  * Copyright (C) 2013, Intel Corporation
  *                     Rafael J. Wysocki <rafael.j.wysocki@intel.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
  */
 
 #include <linux/acpi.h>
@@ -82,6 +79,7 @@ static int acpi_processor_errata_piix4(struct pci_dev *dev)
 		 * PIIX4 models.
 		 */
 		errata.piix4.throttle = 1;
+		/* fall through*/
 
 	case 2:		/* PIIX4E */
 	case 3:		/* PIIX4M */

@@ -1,17 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * i2c-xiic.c
  * Copyright (c) 2002-2007 Xilinx Inc.
  * Copyright (c) 2009-2010 Intel Corporation
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * This code was implemented by Mocean Laboratories AB when porting linux
  * to the automotive development board Russellville. The copyright holder
@@ -33,7 +24,7 @@
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
-#include <linux/i2c-xiic.h>
+#include <linux/platform_data/i2c-xiic.h>
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/of.h>
@@ -142,12 +133,6 @@ struct xiic_i2c {
 (XIIC_INTR_TX_ERROR_MASK | XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK)
 
 #define XIIC_TX_RX_INTERRUPTS (XIIC_INTR_RX_FULL_MASK | XIIC_TX_INTERRUPTS)
-
-/* The following constants are used with the following macros to specify the
- * operation, a read or write operation.
- */
-#define XIIC_READ_OPERATION  1
-#define XIIC_WRITE_OPERATION 0
 
 /*
  * Tx Fifo upper bit masks.
@@ -368,6 +353,9 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 	struct xiic_i2c *i2c = dev_id;
 	u32 pend, isr, ier;
 	u32 clr = 0;
+	int xfer_more = 0;
+	int wakeup_req = 0;
+	int wakeup_code = 0;
 
 	/* Get the interrupt Status from the IPIF. There is no clearing of
 	 * interrupts in the IPIF. Interrupts must be cleared at the source.
@@ -404,10 +392,16 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 		 */
 		xiic_reinit(i2c);
 
-		if (i2c->rx_msg)
-			xiic_wakeup(i2c, STATE_ERROR);
-		if (i2c->tx_msg)
-			xiic_wakeup(i2c, STATE_ERROR);
+		if (i2c->rx_msg) {
+			wakeup_req = 1;
+			wakeup_code = STATE_ERROR;
+		}
+		if (i2c->tx_msg) {
+			wakeup_req = 1;
+			wakeup_code = STATE_ERROR;
+		}
+		/* don't try to handle other events */
+		goto out;
 	}
 	if (pend & XIIC_INTR_RX_FULL_MASK) {
 		/* Receive register/FIFO is full */
@@ -415,7 +409,7 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 		clr |= XIIC_INTR_RX_FULL_MASK;
 		if (!i2c->rx_msg) {
 			dev_dbg(i2c->adap.dev.parent,
-				"%s unexpexted RX IRQ\n", __func__);
+				"%s unexpected RX IRQ\n", __func__);
 			xiic_clear_rx_fifo(i2c);
 			goto out;
 		}
@@ -441,8 +435,7 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 				i2c->tx_msg++;
 				dev_dbg(i2c->adap.dev.parent,
 					"%s will start next...\n", __func__);
-
-				__xiic_start_xfer(i2c);
+				xfer_more = 1;
 			}
 		}
 	}
@@ -456,11 +449,13 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 		if (!i2c->tx_msg)
 			goto out;
 
-		if ((i2c->nmsgs == 1) && !i2c->rx_msg &&
-			xiic_tx_space(i2c) == 0)
-			xiic_wakeup(i2c, STATE_DONE);
+		wakeup_req = 1;
+
+		if (i2c->nmsgs == 1 && !i2c->rx_msg &&
+		    xiic_tx_space(i2c) == 0)
+			wakeup_code = STATE_DONE;
 		else
-			xiic_wakeup(i2c, STATE_ERROR);
+			wakeup_code = STATE_ERROR;
 	}
 	if (pend & (XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK)) {
 		/* Transmit register/FIFO is empty or ½ empty */
@@ -470,7 +465,7 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 
 		if (!i2c->tx_msg) {
 			dev_dbg(i2c->adap.dev.parent,
-				"%s unexpexted TX IRQ\n", __func__);
+				"%s unexpected TX IRQ\n", __func__);
 			goto out;
 		}
 
@@ -484,7 +479,7 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 			if (i2c->nmsgs > 1) {
 				i2c->nmsgs--;
 				i2c->tx_msg++;
-				__xiic_start_xfer(i2c);
+				xfer_more = 1;
 			} else {
 				xiic_irq_dis(i2c, XIIC_INTR_TX_HALF_MASK);
 
@@ -502,6 +497,13 @@ out:
 	dev_dbg(i2c->adap.dev.parent, "%s clr: 0x%x\n", __func__, clr);
 
 	xiic_setreg32(i2c, XIIC_IISR_OFFSET, clr);
+	if (xfer_more)
+		__xiic_start_xfer(i2c);
+	if (wakeup_req)
+		xiic_wakeup(i2c, wakeup_code);
+
+	WARN_ON(xfer_more && wakeup_req);
+
 	mutex_unlock(&i2c->lock);
 	return IRQ_HANDLED;
 }
@@ -558,8 +560,7 @@ static void xiic_start_recv(struct xiic_i2c *i2c)
 	if (!(msg->flags & I2C_M_NOSTART))
 		/* write the address */
 		xiic_setreg16(i2c, XIIC_DTR_REG_OFFSET,
-			(msg->addr << 1) | XIIC_READ_OPERATION |
-			XIIC_TX_DYN_START_MASK);
+			i2c_8bit_addr_from_msg(msg) | XIIC_TX_DYN_START_MASK);
 
 	xiic_irq_clr_en(i2c, XIIC_INTR_BNB_MASK);
 
@@ -589,7 +590,7 @@ static void xiic_start_send(struct xiic_i2c *i2c)
 
 	if (!(msg->flags & I2C_M_NOSTART)) {
 		/* write the address */
-		u16 data = ((msg->addr << 1) & 0xfe) | XIIC_WRITE_OPERATION |
+		u16 data = i2c_8bit_addr_from_msg(msg) |
 			XIIC_TX_DYN_START_MASK;
 		if ((i2c->nmsgs == 1) && msg->len == 0)
 			/* no data and last message -> add STOP */
@@ -861,7 +862,7 @@ static const struct of_device_id xiic_of_match[] = {
 MODULE_DEVICE_TABLE(of, xiic_of_match);
 #endif
 
-static int __maybe_unused cdns_i2c_runtime_suspend(struct device *dev)
+static int __maybe_unused xiic_i2c_runtime_suspend(struct device *dev)
 {
 	struct xiic_i2c *i2c = dev_get_drvdata(dev);
 
@@ -870,7 +871,7 @@ static int __maybe_unused cdns_i2c_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused cdns_i2c_runtime_resume(struct device *dev)
+static int __maybe_unused xiic_i2c_runtime_resume(struct device *dev)
 {
 	struct xiic_i2c *i2c = dev_get_drvdata(dev);
 	int ret;
@@ -885,8 +886,8 @@ static int __maybe_unused cdns_i2c_runtime_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops xiic_dev_pm_ops = {
-	SET_RUNTIME_PM_OPS(cdns_i2c_runtime_suspend,
-			   cdns_i2c_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(xiic_i2c_runtime_suspend,
+			   xiic_i2c_runtime_resume, NULL)
 };
 static struct platform_driver xiic_i2c_driver = {
 	.probe   = xiic_i2c_probe,

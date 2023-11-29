@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2006-2010 Red Hat, Inc.  All rights reserved.
- *
- * This copyrighted material is made available to anyone wishing to use,
- * modify, copy, or redistribute it subject to the terms and conditions
- * of the GNU General Public License v.2.
  */
 
 #include <linux/miscdevice.h>
@@ -888,7 +885,7 @@ static ssize_t device_read(struct file *file, char __user *buf, size_t count,
 	return rv;
 }
 
-static unsigned int device_poll(struct file *file, poll_table *wait)
+static __poll_t device_poll(struct file *file, poll_table *wait)
 {
 	struct dlm_user_proc *proc = file->private_data;
 
@@ -897,7 +894,7 @@ static unsigned int device_poll(struct file *file, poll_table *wait)
 	spin_lock(&proc->asts_spin);
 	if (!list_empty(&proc->asts)) {
 		spin_unlock(&proc->asts_spin);
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 	}
 	spin_unlock(&proc->asts_spin);
 	return 0;

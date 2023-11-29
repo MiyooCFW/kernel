@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Greybus Lights protocol driver.
  *
  * Copyright 2015 Google Inc.
  * Copyright 2015 Linaro Ltd.
- *
- * Released under the GPLv2 only.
  */
 
 #include <linux/kernel.h>
@@ -12,10 +11,8 @@
 #include <linux/led-class-flash.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/greybus.h>
 #include <media/v4l2-flash-led-class.h>
-
-#include "greybus.h"
-#include "greybus_protocols.h"
 
 #define NAMES_MAX	32
 
@@ -1000,11 +997,7 @@ static int gb_lights_channel_config(struct gb_light *light,
 
 	light->has_flash = true;
 
-	ret = gb_lights_channel_flash_config(channel);
-	if (ret < 0)
-		return ret;
-
-	return ret;
+	return gb_lights_channel_flash_config(channel);
 }
 
 static int gb_lights_light_config(struct gb_lights *glights, u8 id)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * processor_idle - idle state submodule to the ACPI processor driver
  *
@@ -8,20 +9,6 @@
  *  			- Added processor hotplug support
  *  Copyright (C) 2005  Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>
  *  			- Added support for C3 on SMP
- *
- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or (at
- *  your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  General Public License for more details.
- *
- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
 #define pr_fmt(fmt) "ACPI: " fmt
 
@@ -206,8 +193,11 @@ static void lapic_timer_state_broadcast(struct acpi_processor *pr,
 static void tsc_check_state(int state)
 {
 	switch (boot_cpu_data.x86_vendor) {
+	case X86_VENDOR_HYGON:
 	case X86_VENDOR_AMD:
 	case X86_VENDOR_INTEL:
+	case X86_VENDOR_CENTAUR:
+	case X86_VENDOR_ZHAOXIN:
 		/*
 		 * AMD Fam10h TSC will tick in all
 		 * C/P/S0/S1 states when this bit is set.
@@ -281,6 +271,13 @@ static int acpi_processor_get_power_info_fadt(struct acpi_processor *pr)
 			  pr->power.states[ACPI_STATE_C2].address,
 			  pr->power.states[ACPI_STATE_C3].address));
 
+	snprintf(pr->power.states[ACPI_STATE_C2].desc,
+			 ACPI_CX_DESC_LEN, "ACPI P_LVL2 IOPORT 0x%x",
+			 pr->power.states[ACPI_STATE_C2].address);
+	snprintf(pr->power.states[ACPI_STATE_C3].desc,
+			 ACPI_CX_DESC_LEN, "ACPI P_LVL3 IOPORT 0x%x",
+			 pr->power.states[ACPI_STATE_C3].address);
+
 	return 0;
 }
 
@@ -292,6 +289,9 @@ static int acpi_processor_get_power_info_default(struct acpi_processor *pr)
 		pr->power.states[ACPI_STATE_C1].type = ACPI_STATE_C1;
 		pr->power.states[ACPI_STATE_C1].valid = 1;
 		pr->power.states[ACPI_STATE_C1].entry_method = ACPI_CSTATE_HALT;
+
+		snprintf(pr->power.states[ACPI_STATE_C1].desc,
+			 ACPI_CX_DESC_LEN, "ACPI HLT");
 	}
 	/* the C0 state only exists as a filler in our array */
 	pr->power.states[ACPI_STATE_C0].valid = 1;
@@ -1201,6 +1201,11 @@ static int flatten_lpi_states(struct acpi_processor *pr,
 	return 0;
 }
 
+int __weak acpi_processor_ffh_lpi_probe(unsigned int cpu)
+{
+	return -EOPNOTSUPP;
+}
+
 static int acpi_processor_get_lpi_info(struct acpi_processor *pr)
 {
 	int ret, i;
@@ -1208,6 +1213,11 @@ static int acpi_processor_get_lpi_info(struct acpi_processor *pr)
 	acpi_handle handle = pr->handle, pr_ahandle;
 	struct acpi_device *d = NULL;
 	struct acpi_lpi_states_array info[2], *tmp, *prev, *curr;
+
+	/* make sure our architecture has support */
+	ret = acpi_processor_ffh_lpi_probe(pr->id);
+	if (ret == -EOPNOTSUPP)
+		return ret;
 
 	if (!osc_pc_lpi_support_confirmed)
 		return -EOPNOTSUPP;
@@ -1258,11 +1268,6 @@ static int acpi_processor_get_lpi_info(struct acpi_processor *pr)
 	pr->flags.power = 1;
 
 	return 0;
-}
-
-int __weak acpi_processor_ffh_lpi_probe(unsigned int cpu)
-{
-	return -ENODEV;
 }
 
 int __weak acpi_processor_ffh_lpi_enter(struct acpi_lpi_state *lpi)

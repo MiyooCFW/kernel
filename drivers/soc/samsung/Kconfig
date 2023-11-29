@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # SAMSUNG SoC drivers
 #
@@ -5,6 +6,12 @@ menuconfig SOC_SAMSUNG
 	bool "Samsung SoC driver support" if COMPILE_TEST
 
 if SOC_SAMSUNG
+
+config EXYNOS_CHIPID
+	bool "Exynos Chipid controller driver" if COMPILE_TEST
+	depends on ARCH_EXYNOS || COMPILE_TEST
+	select MFD_SYSCON
+	select SOC_BUS
 
 config EXYNOS_PMU
 	bool "Exynos PMU controller driver" if COMPILE_TEST

@@ -1,22 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	w1_therm.c
  *
  * Copyright (c) 2004 Evgeniy Polyakov <zbr@ioremap.net>
- *
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the therms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <asm/types.h>
@@ -268,17 +254,18 @@ static inline int w1_therm_eeprom(struct device *device)
 	int ret, max_trying = 10;
 	u8 *family_data = sl->family_data;
 
-	ret = mutex_lock_interruptible(&dev->bus_mutex);
-	if (ret != 0)
-		goto post_unlock;
-
 	if (!sl->family_data) {
 		ret = -ENODEV;
-		goto pre_unlock;
+		goto error;
 	}
 
 	/* prevent the slave from going away in sleep */
 	atomic_inc(THERM_REFCNT(family_data));
+
+	ret = mutex_lock_interruptible(&dev->bus_mutex);
+	if (ret != 0)
+		goto dec_refcnt;
+
 	memset(rom, 0, sizeof(rom));
 
 	while (max_trying--) {
@@ -306,17 +293,17 @@ static inline int w1_therm_eeprom(struct device *device)
 				sleep_rem = msleep_interruptible(tm);
 				if (sleep_rem != 0) {
 					ret = -EINTR;
-					goto post_unlock;
+					goto dec_refcnt;
 				}
 
 				ret = mutex_lock_interruptible(&dev->bus_mutex);
 				if (ret != 0)
-					goto post_unlock;
+					goto dec_refcnt;
 			} else if (!w1_strong_pullup) {
 				sleep_rem = msleep_interruptible(tm);
 				if (sleep_rem != 0) {
 					ret = -EINTR;
-					goto pre_unlock;
+					goto mt_unlock;
 				}
 			}
 
@@ -324,11 +311,11 @@ static inline int w1_therm_eeprom(struct device *device)
 		}
 	}
 
-pre_unlock:
+mt_unlock:
 	mutex_unlock(&dev->bus_mutex);
-
-post_unlock:
+dec_refcnt:
 	atomic_dec(THERM_REFCNT(family_data));
+error:
 	return ret;
 }
 
@@ -350,20 +337,22 @@ static inline int w1_DS18B20_precision(struct device *device, int val)
 
 	if (val > 12 || val < 9) {
 		pr_warn("Unsupported precision\n");
-		return -1;
+		ret = -EINVAL;
+		goto error;
 	}
-
-	ret = mutex_lock_interruptible(&dev->bus_mutex);
-	if (ret != 0)
-		goto post_unlock;
 
 	if (!sl->family_data) {
 		ret = -ENODEV;
-		goto pre_unlock;
+		goto error;
 	}
 
 	/* prevent the slave from going away in sleep */
 	atomic_inc(THERM_REFCNT(family_data));
+
+	ret = mutex_lock_interruptible(&dev->bus_mutex);
+	if (ret != 0)
+		goto dec_refcnt;
+
 	memset(rom, 0, sizeof(rom));
 
 	/* translate precision to bitmask (see datasheet page 9) */
@@ -411,11 +400,10 @@ static inline int w1_DS18B20_precision(struct device *device, int val)
 		}
 	}
 
-pre_unlock:
 	mutex_unlock(&dev->bus_mutex);
-
-post_unlock:
+dec_refcnt:
 	atomic_dec(THERM_REFCNT(family_data));
+error:
 	return ret;
 }
 
@@ -490,17 +478,18 @@ static ssize_t read_therm(struct device *device,
 	int ret, max_trying = 10;
 	u8 *family_data = sl->family_data;
 
-	ret = mutex_lock_interruptible(&dev->bus_mutex);
-	if (ret != 0)
-		goto error;
-
 	if (!family_data) {
 		ret = -ENODEV;
-		goto mt_unlock;
+		goto error;
 	}
 
 	/* prevent the slave from going away in sleep */
 	atomic_inc(THERM_REFCNT(family_data));
+
+	ret = mutex_lock_interruptible(&dev->bus_mutex);
+	if (ret != 0)
+		goto dec_refcnt;
+
 	memset(info->rom, 0, sizeof(info->rom));
 
 	while (max_trying--) {
@@ -542,7 +531,7 @@ static ssize_t read_therm(struct device *device,
 				sleep_rem = msleep_interruptible(tm);
 				if (sleep_rem != 0) {
 					ret = -EINTR;
-					goto dec_refcnt;
+					goto mt_unlock;
 				}
 			}
 
@@ -567,10 +556,10 @@ static ssize_t read_therm(struct device *device,
 			break;
 	}
 
-dec_refcnt:
-	atomic_dec(THERM_REFCNT(family_data));
 mt_unlock:
 	mutex_unlock(&dev->bus_mutex);
+dec_refcnt:
+	atomic_dec(THERM_REFCNT(family_data));
 error:
 	return ret;
 }

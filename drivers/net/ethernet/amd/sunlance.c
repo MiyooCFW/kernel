@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* $Id: sunlance.c,v 1.112 2002/01/15 06:48:55 davem Exp $
  * lance.c: Linux/Sparc/Lance driver
  *
@@ -1248,9 +1249,10 @@ static void lance_set_multicast(struct net_device *dev)
 	netif_wake_queue(dev);
 }
 
-static void lance_set_multicast_retry(unsigned long _opaque)
+static void lance_set_multicast_retry(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *) _opaque;
+	struct lance_private *lp = from_timer(lp, t, multicast_timer);
+	struct net_device *dev = lp->dev;
 
 	lance_set_multicast(dev);
 }
@@ -1461,9 +1463,7 @@ no_link_test:
 	 * can occur from interrupts (ex. IPv6).  So we
 	 * use a timer to try again later when necessary. -DaveM
 	 */
-	init_timer(&lp->multicast_timer);
-	lp->multicast_timer.data = (unsigned long) dev;
-	lp->multicast_timer.function = lance_set_multicast_retry;
+	timer_setup(&lp->multicast_timer, lance_set_multicast_retry, 0);
 
 	if (register_netdev(dev)) {
 		printk(KERN_ERR "SunLance: Cannot register device.\n");
@@ -1489,9 +1489,9 @@ static int sunlance_sbus_probe(struct platform_device *op)
 	struct device_node *parent_dp = parent->dev.of_node;
 	int err;
 
-	if (!strcmp(parent_dp->name, "ledma")) {
+	if (of_node_name_eq(parent_dp, "ledma")) {
 		err = sparc_lance_probe_one(op, parent, NULL);
-	} else if (!strcmp(parent_dp->name, "lebuffer")) {
+	} else if (of_node_name_eq(parent_dp, "lebuffer")) {
 		err = sparc_lance_probe_one(op, NULL, parent);
 	} else
 		err = sparc_lance_probe_one(op, NULL, NULL);

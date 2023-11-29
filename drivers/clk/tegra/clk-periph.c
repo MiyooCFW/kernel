@@ -1,17 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk-provider.h>
@@ -202,4 +191,12 @@ struct clk *tegra_clk_register_periph_nodiv(const char *name,
 	periph->gate.flags |= TEGRA_PERIPH_NO_DIV;
 	return _tegra_clk_register_periph(name, parent_names, num_parents,
 			periph, clk_base, offset, CLK_SET_RATE_PARENT);
+}
+
+struct clk *tegra_clk_register_periph_data(void __iomem *clk_base,
+					   struct tegra_periph_init_data *init)
+{
+	return _tegra_clk_register_periph(init->name, init->p.parent_names,
+					  init->num_parents, &init->periph,
+					  clk_base, init->offset, init->flags);
 }

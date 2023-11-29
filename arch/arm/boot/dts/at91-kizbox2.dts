@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91-kizbox2.dts - Device Tree file for Overkiz Kizbox 2 board
  *
  * Copyright (C) 2014 Gaël PORTAY <g.portay@overkiz.com>
- *
- * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include "sama5d31.dtsi"
@@ -94,6 +93,18 @@
 				};
 			};
 
+			tcb0: timer@f0010000 {
+				timer@0 {
+					compatible = "atmel,tcb-timer";
+					reg = <0>;
+				};
+
+				timer@1 {
+					compatible = "atmel,tcb-timer";
+					reg = <1>;
+				};
+			};
+
 			usart0: serial@f001c000 {
 				status = "okay";
 			};
@@ -133,11 +144,11 @@
 			};
 		};
 
-		usb1: ohci@00600000 {
+		usb1: ohci@600000 {
 			status = "okay";
 		};
 
-		usb2: ehci@00700000 {
+		usb2: ehci@700000 {
 			status = "okay";
 		};
 

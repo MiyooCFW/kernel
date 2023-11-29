@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* niu.c: Neptune ethernet driver.
  *
  * Copyright (C) 2007, 2008 David S. Miller (davem@davemloft.net)
@@ -1216,33 +1217,15 @@ static int link_status_1g_rgmii(struct niu *np, int *link_up_p)
 
 	spin_lock_irqsave(&np->lock, flags);
 
-	err = -EINVAL;
-
 	err = mii_read(np, np->phy_addr, MII_BMSR);
 	if (err < 0)
 		goto out;
 
 	bmsr = err;
 	if (bmsr & BMSR_LSTATUS) {
-		u16 adv, lpa;
-
-		err = mii_read(np, np->phy_addr, MII_ADVERTISE);
-		if (err < 0)
-			goto out;
-		adv = err;
-
-		err = mii_read(np, np->phy_addr, MII_LPA);
-		if (err < 0)
-			goto out;
-		lpa = err;
-
-		err = mii_read(np, np->phy_addr, MII_ESTATUS);
-		if (err < 0)
-			goto out;
 		link_up = 1;
 		current_speed = SPEED_1000;
 		current_duplex = DUPLEX_FULL;
-
 	}
 	lp->active_speed = current_speed;
 	lp->active_duplex = current_duplex;
@@ -2221,9 +2204,9 @@ static int niu_link_status(struct niu *np, int *link_up_p)
 	return err;
 }
 
-static void niu_timer(unsigned long __opaque)
+static void niu_timer(struct timer_list *t)
 {
-	struct niu *np = (struct niu *) __opaque;
+	struct niu *np = from_timer(np, t, timer);
 	unsigned long off;
 	int err, link_up;
 
@@ -6120,10 +6103,8 @@ static int niu_open(struct net_device *dev)
 
 	err = niu_init_hw(np);
 	if (!err) {
-		init_timer(&np->timer);
+		timer_setup(&np->timer, niu_timer, 0);
 		np->timer.expires = jiffies + HZ;
-		np->timer.data = (unsigned long) np;
-		np->timer.function = niu_timer;
 
 		err = niu_enable_interrupts(np, 1);
 		if (err)
@@ -6242,7 +6223,7 @@ static void niu_get_rx_stats(struct niu *np,
 
 	pkts = dropped = errors = bytes = 0;
 
-	rx_rings = ACCESS_ONCE(np->rx_rings);
+	rx_rings = READ_ONCE(np->rx_rings);
 	if (!rx_rings)
 		goto no_rings;
 
@@ -6273,7 +6254,7 @@ static void niu_get_tx_stats(struct niu *np,
 
 	pkts = errors = bytes = 0;
 
-	tx_rings = ACCESS_ONCE(np->tx_rings);
+	tx_rings = READ_ONCE(np->tx_rings);
 	if (!tx_rings)
 		goto no_rings;
 
@@ -6712,7 +6693,7 @@ static netdev_tx_t niu_start_xmit(struct sk_buff *skb,
 
 		len = skb_frag_size(frag);
 		mapping = np->ops->map_page(np->device, skb_frag_page(frag),
-					    frag->page_offset, len,
+					    skb_frag_off(frag), len,
 					    DMA_TO_DEVICE);
 
 		rp->tx_buffs[prod].skb = NULL;
@@ -6772,10 +6753,8 @@ static int niu_change_mtu(struct net_device *dev, int new_mtu)
 
 	err = niu_init_hw(np);
 	if (!err) {
-		init_timer(&np->timer);
+		timer_setup(&np->timer, niu_timer, 0);
 		np->timer.expires = jiffies + HZ;
-		np->timer.data = (unsigned long) np;
-		np->timer.function = niu_timer;
 
 		err = niu_enable_interrupts(np, 1);
 		if (err)
@@ -7481,6 +7460,7 @@ static int niu_add_ethtool_tcam_entry(struct niu *np,
 					class = CLASS_CODE_USER_PROG4;
 					break;
 				default:
+					class = CLASS_CODE_UNRECOG;
 					break;
 				}
 				ret = tcam_user_ip_class_set(np, class, 0,
@@ -9452,11 +9432,11 @@ static ssize_t show_num_ports(struct device *dev,
 }
 
 static struct device_attribute niu_parent_attributes[] = {
-	__ATTR(port_phy, S_IRUGO, show_port_phy, NULL),
-	__ATTR(plat_type, S_IRUGO, show_plat_type, NULL),
-	__ATTR(rxchan_per_port, S_IRUGO, show_rxchan_per_port, NULL),
-	__ATTR(txchan_per_port, S_IRUGO, show_txchan_per_port, NULL),
-	__ATTR(num_ports, S_IRUGO, show_num_ports, NULL),
+	__ATTR(port_phy, 0444, show_port_phy, NULL),
+	__ATTR(plat_type, 0444, show_plat_type, NULL),
+	__ATTR(rxchan_per_port, 0444, show_rxchan_per_port, NULL),
+	__ATTR(txchan_per_port, 0444, show_txchan_per_port, NULL),
+	__ATTR(num_ports, 0444, show_num_ports, NULL),
 	{}
 };
 

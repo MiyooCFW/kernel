@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	DDP:	An implementation of the AppleTalk DDP protocol for
  *		Ethernet 'ELAP'.
@@ -43,12 +44,6 @@
  *						shared skb support 8)
  *		Arnaldo C. de Melo	:	Move proc stuff to atalk_proc.c,
  *						use seq_file
- *
- *		This program is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
- *
  */
 
 #include <linux/capability.h>
@@ -158,9 +153,9 @@ found:
 	return s;
 }
 
-static void atalk_destroy_timer(unsigned long data)
+static void atalk_destroy_timer(struct timer_list *t)
 {
-	struct sock *sk = (struct sock *)data;
+	struct sock *sk = from_timer(sk, t, sk_timer);
 
 	if (sk_has_allocations(sk)) {
 		sk->sk_timer.expires = jiffies + SOCK_DESTROY_TIME;
@@ -175,8 +170,7 @@ static inline void atalk_destroy_socket(struct sock *sk)
 	skb_queue_purge(&sk->sk_receive_queue);
 
 	if (sk_has_allocations(sk)) {
-		setup_timer(&sk->sk_timer, atalk_destroy_timer,
-				(unsigned long)sk);
+		timer_setup(&sk->sk_timer, atalk_destroy_timer, 0);
 		sk->sk_timer.expires	= jiffies + SOCK_DESTROY_TIME;
 		add_timer(&sk->sk_timer);
 	} else
@@ -959,8 +953,8 @@ static unsigned long atalk_sum_skb(const struct sk_buff *skb, int offset,
 			if (copy > len)
 				copy = len;
 			vaddr = kmap_atomic(skb_frag_page(frag));
-			sum = atalk_sum_partial(vaddr + frag->page_offset +
-						  offset - start, copy, sum);
+			sum = atalk_sum_partial(vaddr + skb_frag_off(frag) +
+						offset - start, copy, sum);
 			kunmap_atomic(vaddr);
 
 			if (!(len -= copy))
@@ -1244,7 +1238,7 @@ out:
  * fields into the sockaddr.
  */
 static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
-			 int *uaddr_len, int peer)
+			 int peer)
 {
 	struct sockaddr_at sat;
 	struct sock *sk = sock->sk;
@@ -1257,7 +1251,6 @@ static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
 		if (atalk_autobind(sk) < 0)
 			goto out;
 
-	*uaddr_len = sizeof(struct sockaddr_at);
 	memset(&sat, 0, sizeof(sat));
 
 	if (peer) {
@@ -1274,9 +1267,9 @@ static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
 		sat.sat_port	    = at->src_port;
 	}
 
-	err = 0;
 	sat.sat_family = AF_APPLETALK;
 	memcpy(uaddr, &sat, sizeof(sat));
+	err = sizeof(struct sockaddr_at);
 
 out:
 	release_sock(sk);
@@ -1822,12 +1815,6 @@ static int atalk_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		rc = put_user(amount, (int __user *)argp);
 		break;
 	}
-	case SIOCGSTAMP:
-		rc = sock_get_timestamp(sk, argp);
-		break;
-	case SIOCGSTAMPNS:
-		rc = sock_get_timestampns(sk, argp);
-		break;
 	/* Routing */
 	case SIOCADDRT:
 	case SIOCDELRT:
@@ -1887,6 +1874,7 @@ static const struct proto_ops atalk_dgram_ops = {
 	.getname	= atalk_getname,
 	.poll		= datagram_poll,
 	.ioctl		= atalk_ioctl,
+	.gettstamp	= sock_gettstamp,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= atalk_compat_ioctl,
 #endif

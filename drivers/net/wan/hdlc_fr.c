@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Generic HDLC support routines for Linux
  * Frame Relay support
  *
  * Copyright (C) 1999 - 2006 Krzysztof Halasa <khc@pm.waw.pl>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License
- * as published by the Free Software Foundation.
  *
 
             Theory of PVC state
@@ -140,6 +137,7 @@ struct frad_state {
 	int dce_pvc_count;
 
 	struct timer_list timer;
+	struct net_device *dev;
 	unsigned long last_poll;
 	int reliable;
 	int dce_changed;
@@ -604,9 +602,10 @@ static void fr_set_link_state(int reliable, struct net_device *dev)
 }
 
 
-static void fr_timer(unsigned long arg)
+static void fr_timer(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *)arg;
+	struct frad_state *st = from_timer(st, t, timer);
+	struct net_device *dev = st->dev;
 	hdlc_device *hdlc = dev_to_hdlc(dev);
 	int i, cnt = 0, reliable;
 	u32 list;
@@ -651,8 +650,6 @@ static void fr_timer(unsigned long arg)
 			state(hdlc)->settings.t391 * HZ;
 	}
 
-	state(hdlc)->timer.function = fr_timer;
-	state(hdlc)->timer.data = arg;
 	add_timer(&state(hdlc)->timer);
 }
 
@@ -1010,11 +1007,10 @@ static void fr_start(struct net_device *dev)
 		state(hdlc)->n391cnt = 0;
 		state(hdlc)->txseq = state(hdlc)->rxseq = 0;
 
-		init_timer(&state(hdlc)->timer);
+		state(hdlc)->dev = dev;
+		timer_setup(&state(hdlc)->timer, fr_timer, 0);
 		/* First poll after 1 s */
 		state(hdlc)->timer.expires = jiffies + HZ;
-		state(hdlc)->timer.function = fr_timer;
-		state(hdlc)->timer.data = (unsigned long)dev;
 		add_timer(&state(hdlc)->timer);
 	} else
 		fr_set_link_state(1, dev);

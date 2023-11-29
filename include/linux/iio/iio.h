@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 
 /* The industrial I/O core
  *
  * Copyright (c) 2008 Jonathan Cameron
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
  */
 #ifndef _INDUSTRIAL_IO_H_
 #define _INDUSTRIAL_IO_H_
@@ -19,34 +16,6 @@
  * Provide means of adjusting timer accuracy.
  * Currently assumes nano seconds.
  */
-
-enum iio_chan_info_enum {
-	IIO_CHAN_INFO_RAW = 0,
-	IIO_CHAN_INFO_PROCESSED,
-	IIO_CHAN_INFO_SCALE,
-	IIO_CHAN_INFO_OFFSET,
-	IIO_CHAN_INFO_CALIBSCALE,
-	IIO_CHAN_INFO_CALIBBIAS,
-	IIO_CHAN_INFO_PEAK,
-	IIO_CHAN_INFO_PEAK_SCALE,
-	IIO_CHAN_INFO_QUADRATURE_CORRECTION_RAW,
-	IIO_CHAN_INFO_AVERAGE_RAW,
-	IIO_CHAN_INFO_LOW_PASS_FILTER_3DB_FREQUENCY,
-	IIO_CHAN_INFO_HIGH_PASS_FILTER_3DB_FREQUENCY,
-	IIO_CHAN_INFO_SAMP_FREQ,
-	IIO_CHAN_INFO_FREQUENCY,
-	IIO_CHAN_INFO_PHASE,
-	IIO_CHAN_INFO_HARDWAREGAIN,
-	IIO_CHAN_INFO_HYSTERESIS,
-	IIO_CHAN_INFO_INT_TIME,
-	IIO_CHAN_INFO_ENABLE,
-	IIO_CHAN_INFO_CALIBHEIGHT,
-	IIO_CHAN_INFO_CALIBWEIGHT,
-	IIO_CHAN_INFO_DEBOUNCE_COUNT,
-	IIO_CHAN_INFO_DEBOUNCE_TIME,
-	IIO_CHAN_INFO_CALIBEMISSIVITY,
-	IIO_CHAN_INFO_OVERSAMPLING_RATIO,
-};
 
 enum iio_shared_by {
 	IIO_SEPARATE,
@@ -158,8 +127,8 @@ struct iio_mount_matrix {
 
 ssize_t iio_show_mount_matrix(struct iio_dev *indio_dev, uintptr_t priv,
 			      const struct iio_chan_spec *chan, char *buf);
-int of_iio_read_mount_matrix(const struct device *dev, const char *propname,
-			     struct iio_mount_matrix *matrix);
+int iio_read_mount_matrix(struct device *dev, const char *propname,
+			  struct iio_mount_matrix *matrix);
 
 typedef const struct iio_mount_matrix *
 	(iio_get_mount_matrix_t)(const struct iio_dev *indio_dev,
@@ -211,18 +180,18 @@ struct iio_event_spec {
  * @address:		Driver specific identifier.
  * @scan_index:		Monotonic index to give ordering in scans when read
  *			from a buffer.
- * @scan_type:		sign:		's' or 'u' to specify signed or unsigned
- *			realbits:	Number of valid bits of data
- *			storagebits:	Realbits + padding
- *			shift:		Shift right by this before masking out
- *					realbits.
- *			repeat:		Number of times real/storage bits
- *					repeats. When the repeat element is
- *					more than 1, then the type element in
- *					sysfs will show a repeat value.
- *					Otherwise, the number of repetitions is
- *					omitted.
- *			endianness:	little or big endian
+ * @scan_type:		struct describing the scan type
+ * @scan_type.sign:		's' or 'u' to specify signed or unsigned
+ * @scan_type.realbits:		Number of valid bits of data
+ * @scan_type.storagebits:	Realbits + padding
+ * @scan_type.shift:		Shift right by this before masking out
+ *				realbits.
+ * @scan_type.repeat:		Number of times real/storage bits repeats.
+ *				When the repeat element is more than 1, then
+ *				the type element in sysfs will show a repeat
+ *				value. Otherwise, the number of repetitions
+ *				is omitted.
+ * @scan_type.endianness:	little or big endian
  * @info_mask_separate: What information is to be exported that is specific to
  *			this channel.
  * @info_mask_separate_available: What availability information is to be
@@ -365,12 +334,9 @@ unsigned int iio_get_time_res(const struct iio_dev *indio_dev);
 #define INDIO_MAX_RAW_ELEMENTS		4
 
 struct iio_trigger; /* forward declaration */
-struct iio_dev;
 
 /**
  * struct iio_info - constant information about device
- * @driver_module:	module structure used to ensure correct
- *			ownership of chrdevs etc
  * @event_attrs:	event control attributes
  * @attrs:		general purpose device attributes
  * @read_raw:		function to request a value from the device.
@@ -425,7 +391,6 @@ struct iio_dev;
  *			were flushed and there was an error.
  **/
 struct iio_info {
-	struct module			*driver_module;
 	const struct attribute_group	*event_attrs;
 	const struct attribute_group	*attrs;
 
@@ -518,6 +483,7 @@ struct iio_buffer_setup_ops {
 /**
  * struct iio_dev - industrial I/O device
  * @id:			[INTERN] used to identify device internally
+ * @driver_module:	[INTERN] used to make it harder to undercut users
  * @modes:		[DRIVER] operating modes supported by device
  * @currentmode:	[DRIVER] current operating mode
  * @dev:		[DRIVER] device structure, should be assigned a parent
@@ -558,6 +524,7 @@ struct iio_buffer_setup_ops {
  */
 struct iio_dev {
 	int				id;
+	struct module			*driver_module;
 
 	int				modes;
 	int				currentmode;
@@ -604,9 +571,34 @@ struct iio_dev {
 
 const struct iio_chan_spec
 *iio_find_channel_from_si(struct iio_dev *indio_dev, int si);
-int iio_device_register(struct iio_dev *indio_dev);
+/**
+ * iio_device_register() - register a device with the IIO subsystem
+ * @indio_dev:		Device structure filled by the device driver
+ **/
+#define iio_device_register(indio_dev) \
+	__iio_device_register((indio_dev), THIS_MODULE)
+int __iio_device_register(struct iio_dev *indio_dev, struct module *this_mod);
 void iio_device_unregister(struct iio_dev *indio_dev);
-int devm_iio_device_register(struct device *dev, struct iio_dev *indio_dev);
+/**
+ * devm_iio_device_register - Resource-managed iio_device_register()
+ * @dev:	Device to allocate iio_dev for
+ * @indio_dev:	Device structure filled by the device driver
+ *
+ * Managed iio_device_register.  The IIO device registered with this
+ * function is automatically unregistered on driver detach. This function
+ * calls iio_device_register() internally. Refer to that function for more
+ * information.
+ *
+ * If an iio_dev registered with this function needs to be unregistered
+ * separately, devm_iio_device_unregister() must be used.
+ *
+ * RETURNS:
+ * 0 on success, negative error number on failure.
+ */
+#define devm_iio_device_register(dev, indio_dev) \
+	__devm_iio_device_register((dev), (indio_dev), THIS_MODULE)
+int __devm_iio_device_register(struct device *dev, struct iio_dev *indio_dev,
+			       struct module *this_mod);
 void devm_iio_device_unregister(struct device *dev, struct iio_dev *indio_dev);
 int iio_push_event(struct iio_dev *indio_dev, u64 ev_code, s64 timestamp);
 int iio_device_claim_direct_mode(struct iio_dev *indio_dev);

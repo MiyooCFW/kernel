@@ -123,7 +123,7 @@ nvkm_device_tegra_probe_iommu(struct nvkm_device_tegra *tdev)
 
 	mutex_init(&tdev->iommu.mutex);
 
-	if (iommu_present(&platform_bus_type)) {
+	if (device_iommu_mapped(dev)) {
 		tdev->iommu.domain = iommu_domain_alloc(&platform_bus_type);
 		if (!tdev->iommu.domain)
 			goto error;
@@ -149,7 +149,7 @@ nvkm_device_tegra_probe_iommu(struct nvkm_device_tegra *tdev)
 		if (ret)
 			goto free_domain;
 
-		ret = nvkm_mm_init(&tdev->iommu.mm, 0,
+		ret = nvkm_mm_init(&tdev->iommu.mm, 0, 0,
 				   (1ULL << tdev->func->iommu_bit) >>
 				   tdev->iommu.pgshift, 1);
 		if (ret)
@@ -229,7 +229,7 @@ nvkm_device_tegra_fini(struct nvkm_device *device, bool suspend)
 	if (tdev->irq) {
 		free_irq(tdev->irq, tdev);
 		tdev->irq = 0;
-	};
+	}
 }
 
 static int
@@ -322,8 +322,6 @@ nvkm_device_tegra_new(const struct nvkm_device_tegra_func *func,
 
 	/**
 	 * The IOMMU bit defines the upper limit of the GPU-addressable space.
-	 * This will be refined in nouveau_ttm_init but we need to do it early
-	 * for instmem to behave properly
 	 */
 	ret = dma_set_mask(&pdev->dev, DMA_BIT_MASK(tdev->func->iommu_bit));
 	if (ret)

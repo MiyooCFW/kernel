@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * This file contains code to reset and initialize USB host controllers.
  * Some of it includes work-arounds for PCI hardware and BIOS quirks.
@@ -131,7 +132,7 @@ static struct amd_chipset_info {
 	struct amd_chipset_type sb_type;
 	int isoc_reqs;
 	int probe_count;
-	int probe_result;
+	bool need_pll_quirk;
 } amd_chipset;
 
 static DEFINE_SPINLOCK(amd_lock);
@@ -200,11 +201,11 @@ void sb800_prefetch(struct device *dev, int on)
 }
 EXPORT_SYMBOL_GPL(sb800_prefetch);
 
-int usb_amd_find_chipset_info(void)
+static void usb_amd_find_chipset_info(void)
 {
 	unsigned long flags;
 	struct amd_chipset_info info;
-	int need_pll_quirk = 0;
+	info.need_pll_quirk = 0;
 
 	spin_lock_irqsave(&amd_lock, flags);
 
@@ -212,7 +213,7 @@ int usb_amd_find_chipset_info(void)
 	if (amd_chipset.probe_count > 0) {
 		amd_chipset.probe_count++;
 		spin_unlock_irqrestore(&amd_lock, flags);
-		return amd_chipset.probe_result;
+		return;
 	}
 	memset(&info, 0, sizeof(info));
 	spin_unlock_irqrestore(&amd_lock, flags);
@@ -223,19 +224,19 @@ int usb_amd_find_chipset_info(void)
 
 	switch (info.sb_type.gen) {
 	case AMD_CHIPSET_SB700:
-		need_pll_quirk = info.sb_type.rev <= 0x3B;
+		info.need_pll_quirk = info.sb_type.rev <= 0x3B;
 		break;
 	case AMD_CHIPSET_SB800:
 	case AMD_CHIPSET_HUDSON2:
 	case AMD_CHIPSET_BOLTON:
-		need_pll_quirk = 1;
+		info.need_pll_quirk = 1;
 		break;
 	default:
-		need_pll_quirk = 0;
+		info.need_pll_quirk = 0;
 		break;
 	}
 
-	if (!need_pll_quirk) {
+	if (!info.need_pll_quirk) {
 		if (info.smbus_dev) {
 			pci_dev_put(info.smbus_dev);
 			info.smbus_dev = NULL;
@@ -258,7 +259,6 @@ int usb_amd_find_chipset_info(void)
 		}
 	}
 
-	need_pll_quirk = info.probe_result = 1;
 	printk(KERN_DEBUG "QUIRK: Enable AMD PLL fix\n");
 
 commit:
@@ -269,7 +269,6 @@ commit:
 
 		/* Mark that we where here */
 		amd_chipset.probe_count++;
-		need_pll_quirk = amd_chipset.probe_result;
 
 		spin_unlock_irqrestore(&amd_lock, flags);
 
@@ -282,10 +281,7 @@ commit:
 		amd_chipset = info;
 		spin_unlock_irqrestore(&amd_lock, flags);
 	}
-
-	return need_pll_quirk;
 }
-EXPORT_SYMBOL_GPL(usb_amd_find_chipset_info);
 
 int usb_hcd_amd_remote_wakeup_quirk(struct pci_dev *pdev)
 {
@@ -320,6 +316,13 @@ bool usb_amd_prefetch_quirk(void)
 	return amd_chipset.sb_type.gen == AMD_CHIPSET_SB800;
 }
 EXPORT_SYMBOL_GPL(usb_amd_prefetch_quirk);
+
+bool usb_amd_quirk_pll_check(void)
+{
+	usb_amd_find_chipset_info();
+	return amd_chipset.need_pll_quirk;
+}
+EXPORT_SYMBOL_GPL(usb_amd_quirk_pll_check);
 
 /*
  * The hardware normally enables the A-link power management feature, which
@@ -526,7 +529,7 @@ void usb_amd_dev_put(void)
 	amd_chipset.nb_type = 0;
 	memset(&amd_chipset.sb_type, 0, sizeof(amd_chipset.sb_type));
 	amd_chipset.isoc_reqs = 0;
-	amd_chipset.probe_result = 0;
+	amd_chipset.need_pll_quirk = 0;
 
 	spin_unlock_irqrestore(&amd_lock, flags);
 
@@ -789,15 +792,9 @@ static void quirk_usb_handoff_ohci(struct pci_dev *pdev)
 	/* disable interrupts */
 	writel((u32) ~0, base + OHCI_INTRDISABLE);
 
-	/* Reset the USB bus, if the controller isn't already in RESET */
-	if (control & OHCI_HCFS) {
-		/* Go into RESET, preserving RWC (and possibly IR) */
-		writel(control & OHCI_CTRL_MASK, base + OHCI_CONTROL);
-		readl(base + OHCI_CONTROL);
-
-		/* drive bus reset for at least 50 ms (7.1.7.5) */
-		msleep(50);
-	}
+	/* Go into the USB_RESET state, preserving RWC (and possibly IR) */
+	writel(control & OHCI_CTRL_MASK, base + OHCI_CONTROL);
+	readl(base + OHCI_CONTROL);
 
 	/* software reset of the controller, preserving HcFmInterval */
 	if (!no_fminterval)
@@ -957,7 +954,7 @@ static void quirk_usb_disable_ehci(struct pci_dev *pdev)
 			ehci_bios_handoff(pdev, op_reg_base, cap, offset);
 			break;
 		case 0: /* Illegal reserved cap, set cap=0 so we exit */
-			cap = 0; /* then fallthrough... */
+			cap = 0; /* fall through */
 		default:
 			dev_warn(&pdev->dev,
 				 "EHCI: unrecognized capability %02x\n",
@@ -1274,23 +1271,3 @@ static void quirk_usb_early_handoff(struct pci_dev *pdev)
 }
 DECLARE_PCI_FIXUP_CLASS_FINAL(PCI_ANY_ID, PCI_ANY_ID,
 			PCI_CLASS_SERIAL_USB, 8, quirk_usb_early_handoff);
-
-bool usb_xhci_needs_pci_reset(struct pci_dev *pdev)
-{
-	/*
-	 * Our dear uPD72020{1,2} friend only partially resets when
-	 * asked to via the XHCI interface, and may end up doing DMA
-	 * at the wrong addresses, as it keeps the top 32bit of some
-	 * addresses from its previous programming under obscure
-	 * circumstances.
-	 * Give it a good wack at probe time. Unfortunately, this
-	 * needs to happen before we've had a chance to discover any
-	 * quirk, or the system will be in a rather bad state.
-	 */
-	if (pdev->vendor == PCI_VENDOR_ID_RENESAS &&
-	    (pdev->device == 0x0014 || pdev->device == 0x0015))
-		return true;
-
-	return false;
-}
-EXPORT_SYMBOL_GPL(usb_xhci_needs_pci_reset);

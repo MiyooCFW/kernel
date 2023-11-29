@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2005,2006,2007,2008 IBM Corporation
  *
@@ -6,18 +7,16 @@
  * Reiner Sailer <sailer@us.ibm.com>
  * Mimi Zohar <zohar@us.ibm.com>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation, version 2 of the
- * License.
- *
  * File: ima_fs.c
  *	implemenents security file system for reporting
  *	current measurement list and IMA statistics
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/fcntl.h>
 #include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/seq_file.h>
 #include <linux/rculist.h>
 #include <linux/rcupdate.h>
@@ -32,7 +31,7 @@ bool ima_canonical_fmt;
 static int __init default_canonical_fmt_setup(char *str)
 {
 #ifdef __BIG_ENDIAN
-	ima_canonical_fmt = 1;
+	ima_canonical_fmt = true;
 #endif
 	return 1;
 }
@@ -176,7 +175,8 @@ int ima_measurements_show(struct seq_file *m, void *v)
 	/* 6th:  template specific data */
 	for (i = 0; i < e->template_desc->num_fields; i++) {
 		enum ima_show_type show = IMA_SHOW_BINARY;
-		struct ima_template_field *field = e->template_desc->fields[i];
+		const struct ima_template_field *field =
+			e->template_desc->fields[i];
 
 		if (is_ima_template && strcmp(field->field_id, "d") == 0)
 			show = IMA_SHOW_BINARY_NO_FIELD_LEN;
@@ -336,7 +336,7 @@ static ssize_t ima_write_policy(struct file *file, const char __user *buf,
 	if (data[0] == '/') {
 		result = ima_read_policy(data);
 	} else if (ima_appraise & IMA_APPRAISE_POLICY) {
-		pr_err("IMA: signed policy file (specified as an absolute pathname) required\n");
+		pr_err("signed policy file (specified as an absolute pathname) required\n");
 		integrity_audit_msg(AUDIT_INTEGRITY_STATUS, NULL, NULL,
 				    "policy_update", "signed policy required",
 				    1, 0);
@@ -355,6 +355,7 @@ out:
 }
 
 static struct dentry *ima_dir;
+static struct dentry *ima_symlink;
 static struct dentry *binary_runtime_measurements;
 static struct dentry *ascii_runtime_measurements;
 static struct dentry *runtime_measurements_count;
@@ -416,7 +417,7 @@ static int ima_release_policy(struct inode *inode, struct file *file)
 		valid_policy = 0;
 	}
 
-	pr_info("IMA: policy update %s\n", cause);
+	pr_info("policy update %s\n", cause);
 	integrity_audit_msg(AUDIT_INTEGRITY_STATUS, NULL, NULL,
 			    "policy_update", cause, !valid_policy, 0);
 
@@ -428,11 +429,13 @@ static int ima_release_policy(struct inode *inode, struct file *file)
 	}
 
 	ima_update_policy();
-#ifndef	CONFIG_IMA_WRITE_POLICY
+#if !defined(CONFIG_IMA_WRITE_POLICY) && !defined(CONFIG_IMA_READ_POLICY)
 	securityfs_remove(ima_policy);
 	ima_policy = NULL;
-#else
+#elif defined(CONFIG_IMA_WRITE_POLICY)
 	clear_bit(IMA_FS_BUSY, &ima_fs_flags);
+#elif defined(CONFIG_IMA_READ_POLICY)
+	inode->i_mode &= ~S_IWUSR;
 #endif
 	return 0;
 }
@@ -447,9 +450,14 @@ static const struct file_operations ima_measure_policy_ops = {
 
 int __init ima_fs_init(void)
 {
-	ima_dir = securityfs_create_dir("ima", NULL);
+	ima_dir = securityfs_create_dir("ima", integrity_dir);
 	if (IS_ERR(ima_dir))
 		return -1;
+
+	ima_symlink = securityfs_create_symlink("ima", NULL, "integrity/ima",
+						NULL);
+	if (IS_ERR(ima_symlink))
+		goto out;
 
 	binary_runtime_measurements =
 	    securityfs_create_file("binary_runtime_measurements",
@@ -491,6 +499,7 @@ out:
 	securityfs_remove(runtime_measurements_count);
 	securityfs_remove(ascii_runtime_measurements);
 	securityfs_remove(binary_runtime_measurements);
+	securityfs_remove(ima_symlink);
 	securityfs_remove(ima_dir);
 	return -1;
 }

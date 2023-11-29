@@ -205,7 +205,6 @@ static struct scsi_host_template qla4xxx_driver_template = {
 
 	.this_id		= -1,
 	.cmd_per_lun		= 3,
-	.use_clustering		= ENABLE_CLUSTERING,
 	.sg_tablesize		= SG_ALL,
 
 	.max_sectors		= 0xFFFF,
@@ -843,11 +842,9 @@ static int qla4xxx_delete_chap(struct Scsi_Host *shost, uint16_t chap_tbl_idx)
 	uint32_t chap_size;
 	int ret = 0;
 
-	chap_table = dma_pool_alloc(ha->chap_dma_pool, GFP_KERNEL, &chap_dma);
+	chap_table = dma_pool_zalloc(ha->chap_dma_pool, GFP_KERNEL, &chap_dma);
 	if (chap_table == NULL)
 		return -ENOMEM;
-
-	memset(chap_table, 0, sizeof(struct ql4_chap_table));
 
 	if (is_qla80XX(ha))
 		max_chap_entries = (ha->hw.flt_chap_size / 2) /
@@ -1855,7 +1852,7 @@ static enum blk_eh_timer_return qla4xxx_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	struct iscsi_cls_session *session;
 	struct iscsi_session *sess;
 	unsigned long flags;
-	enum blk_eh_timer_return ret = BLK_EH_NOT_HANDLED;
+	enum blk_eh_timer_return ret = BLK_EH_DONE;
 
 	session = starget_to_session(scsi_target(sc->device));
 	sess = session->dd_data;
@@ -2721,7 +2718,6 @@ qla4xxx_iface_set_param(struct Scsi_Host *shost, void *data, uint32_t len)
 		return -ENOMEM;
 	}
 
-	memset(init_fw_cb, 0, sizeof(struct addr_ctrl_blk));
 	memset(&mbox_cmd, 0, sizeof(mbox_cmd));
 	memset(&mbox_sts, 0, sizeof(mbox_sts));
 
@@ -2889,7 +2885,7 @@ static int qla4xxx_session_get_param(struct iscsi_cls_session *cls_sess,
 						chap_tbl.secret_len);
 			}
 		}
-		/* allow fall-through */
+		/* fall through */
 	default:
 		return iscsi_session_get_param(cls_sess, param, buf);
 	}
@@ -3397,7 +3393,7 @@ static int qla4xxx_alloc_pdu(struct iscsi_task *task, uint8_t opcode)
 	if (task->data_count) {
 		task_data->data_dma = dma_map_single(&ha->pdev->dev, task->data,
 						     task->data_count,
-						     PCI_DMA_TODEVICE);
+						     DMA_TO_DEVICE);
 	}
 
 	DEBUG2(ql4_printk(KERN_INFO, ha, "%s: MaxRecvLen %u, iscsi hrd %d\n",
@@ -3452,7 +3448,7 @@ static void qla4xxx_task_cleanup(struct iscsi_task *task)
 
 	if (task->data_count) {
 		dma_unmap_single(&ha->pdev->dev, task_data->data_dma,
-				 task->data_count, PCI_DMA_TODEVICE);
+				 task->data_count, DMA_TO_DEVICE);
 	}
 
 	DEBUG2(ql4_printk(KERN_INFO, ha, "%s: MaxRecvLen %u, iscsi hrd %d\n",
@@ -3985,16 +3981,15 @@ exit_session_conn_param:
 /*
  * Timer routines
  */
+static void qla4xxx_timer(struct timer_list *t);
 
-static void qla4xxx_start_timer(struct scsi_qla_host *ha, void *func,
+static void qla4xxx_start_timer(struct scsi_qla_host *ha,
 				unsigned long interval)
 {
 	DEBUG(printk("scsi: %s: Starting timer thread for adapter %d\n",
 		     __func__, ha->host->host_no));
-	init_timer(&ha->timer);
+	timer_setup(&ha->timer, qla4xxx_timer, 0);
 	ha->timer.expires = jiffies + interval * HZ;
-	ha->timer.data = (unsigned long)ha;
-	ha->timer.function = (void (*)(unsigned long))func;
 	add_timer(&ha->timer);
 	ha->timer_active = 1;
 }
@@ -4176,20 +4171,16 @@ static void qla4xxx_mem_free(struct scsi_qla_host *ha)
 	ha->fw_dump_size = 0;
 
 	/* Free srb pool. */
-	if (ha->srb_mempool)
-		mempool_destroy(ha->srb_mempool);
-
+	mempool_destroy(ha->srb_mempool);
 	ha->srb_mempool = NULL;
 
-	if (ha->chap_dma_pool)
-		dma_pool_destroy(ha->chap_dma_pool);
+	dma_pool_destroy(ha->chap_dma_pool);
 
 	if (ha->chap_list)
 		vfree(ha->chap_list);
 	ha->chap_list = NULL;
 
-	if (ha->fw_ddb_dma_pool)
-		dma_pool_destroy(ha->fw_ddb_dma_pool);
+	dma_pool_destroy(ha->fw_ddb_dma_pool);
 
 	/* release io space registers  */
 	if (is_qla8022(ha)) {
@@ -4235,7 +4226,6 @@ static int qla4xxx_mem_alloc(struct scsi_qla_host *ha)
 
 		goto mem_alloc_error_exit;
 	}
-	memset(ha->queues, 0, ha->queues_len);
 
 	/*
 	 * As per RISC alignment requirements -- the bus-address must be a
@@ -4537,8 +4527,9 @@ static void qla4xxx_check_relogin_flash_ddb(struct iscsi_cls_session *cls_sess)
  * qla4xxx_timer - checks every second for work to do.
  * @ha: Pointer to host adapter structure.
  **/
-static void qla4xxx_timer(struct scsi_qla_host *ha)
+static void qla4xxx_timer(struct timer_list *t)
 {
+	struct scsi_qla_host *ha = from_timer(ha, t, timer);
 	int start_dpc = 0;
 	uint16_t w;
 
@@ -8841,7 +8832,7 @@ skip_retry_init:
 	ha->isp_ops->enable_intrs(ha);
 
 	/* Start timer thread. */
-	qla4xxx_start_timer(ha, qla4xxx_timer, 1);
+	qla4xxx_start_timer(ha, 1);
 
 	set_bit(AF_INIT_DONE, &ha->flags);
 
@@ -9042,25 +9033,16 @@ static void qla4xxx_remove_adapter(struct pci_dev *pdev)
 /**
  * qla4xxx_config_dma_addressing() - Configure OS DMA addressing method.
  * @ha: HA context
- *
- * At exit, the @ha's flags.enable_64bit_addressing set to indicated
- * supported addressing method.
  */
 static void qla4xxx_config_dma_addressing(struct scsi_qla_host *ha)
 {
-	int retval;
-
 	/* Update our PCI device dma_mask for full 64 bit mask */
-	if (pci_set_dma_mask(ha->pdev, DMA_BIT_MASK(64)) == 0) {
-		if (pci_set_consistent_dma_mask(ha->pdev, DMA_BIT_MASK(64))) {
-			dev_dbg(&ha->pdev->dev,
-				  "Failed to set 64 bit PCI consistent mask; "
-				   "using 32 bit.\n");
-			retval = pci_set_consistent_dma_mask(ha->pdev,
-							     DMA_BIT_MASK(32));
-		}
-	} else
-		retval = pci_set_dma_mask(ha->pdev, DMA_BIT_MASK(32));
+	if (dma_set_mask_and_coherent(&ha->pdev->dev, DMA_BIT_MASK(64))) {
+		dev_dbg(&ha->pdev->dev,
+			  "Failed to set 64 bit PCI consistent mask; "
+			   "using 32 bit.\n");
+		dma_set_mask_and_coherent(&ha->pdev->dev, DMA_BIT_MASK(32));
+	}
 }
 
 static int qla4xxx_slave_alloc(struct scsi_device *sdev)
@@ -9846,7 +9828,6 @@ qla4xxx_pci_resume(struct pci_dev *pdev)
 		     __func__);
 	}
 
-	pci_cleanup_aer_uncorrect_error_status(pdev);
 	clear_bit(AF_EEH_BUSY, &ha->flags);
 }
 

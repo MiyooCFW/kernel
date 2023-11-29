@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * net/dsa/tag_trailer.c - Trailer tag format handling
  * Copyright (c) 2008-2009 Marvell Semiconductor
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/etherdevice.h>
@@ -16,7 +12,7 @@
 
 static struct sk_buff *trailer_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct dsa_slave_priv *p = netdev_priv(dev);
+	struct dsa_port *dp = dsa_slave_to_port(dev);
 	struct sk_buff *nskb;
 	int padlen;
 	u8 *trailer;
@@ -48,7 +44,7 @@ static struct sk_buff *trailer_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	trailer = skb_put(nskb, 4);
 	trailer[0] = 0x80;
-	trailer[1] = 1 << p->dp->index;
+	trailer[1] = 1 << dp->index;
 	trailer[2] = 0x10;
 	trailer[3] = 0x00;
 
@@ -58,9 +54,6 @@ static struct sk_buff *trailer_xmit(struct sk_buff *skb, struct net_device *dev)
 static struct sk_buff *trailer_rcv(struct sk_buff *skb, struct net_device *dev,
 				   struct packet_type *pt)
 {
-	struct dsa_switch_tree *dst = dev->dsa_ptr;
-	struct dsa_port *cpu_dp = dsa_get_cpu_port(dst);
-	struct dsa_switch *ds = cpu_dp->ds;
 	u8 *trailer;
 	int source_port;
 
@@ -73,21 +66,26 @@ static struct sk_buff *trailer_rcv(struct sk_buff *skb, struct net_device *dev,
 		return NULL;
 
 	source_port = trailer[1] & 7;
-	if (source_port >= ds->num_ports || !ds->ports[source_port].netdev)
-		return NULL;
 
-	if (unlikely(ds->cpu_port_mask & BIT(source_port)))
+	skb->dev = dsa_master_find_slave(dev, 0, source_port);
+	if (!skb->dev)
 		return NULL;
 
 	if (pskb_trim_rcsum(skb, skb->len - 4))
 		return NULL;
 
-	skb->dev = ds->ports[source_port].netdev;
-
 	return skb;
 }
 
-const struct dsa_device_ops trailer_netdev_ops = {
+static const struct dsa_device_ops trailer_netdev_ops = {
+	.name	= "trailer",
+	.proto	= DSA_TAG_PROTO_TRAILER,
 	.xmit	= trailer_xmit,
 	.rcv	= trailer_rcv,
+	.overhead = 4,
 };
+
+MODULE_LICENSE("GPL");
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_TRAILER);
+
+module_dsa_tag_driver(trailer_netdev_ops);

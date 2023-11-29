@@ -1,8 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2016 Facebook
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
  */
 #include <stdio.h>
 #include <unistd.h>
@@ -21,6 +18,7 @@
 #include "libbpf.h"
 #include "bpf_load.h"
 #include "perf-sys.h"
+#include "trace_helpers.h"
 
 #define SAMPLE_FREQ 50
 
@@ -33,6 +31,11 @@ static void print_ksym(__u64 addr)
 	if (!addr)
 		return;
 	sym = ksym_search(addr);
+	if (!sym) {
+		printf("ksym not found. Is kallsyms loaded?\n");
+		return;
+	}
+
 	printf("%s;", sym->name);
 	if (!strstr(sym->name, "sys_read"))
 		sys_read_seen = true;
@@ -137,6 +140,9 @@ static void test_perf_event_all_cpu(struct perf_event_attr *attr)
 	int *pmu_fd = malloc(nr_cpus * sizeof(int));
 	int i, error = 0;
 
+	/* system wide perf event, no need to inherit */
+	attr->inherit = 0;
+
 	/* open perf_event on all cpus */
 	for (i = 0; i < nr_cpus; i++) {
 		pmu_fd[i] = sys_perf_event_open(attr, -1, i, -1, 0);
@@ -168,6 +174,11 @@ static void test_perf_event_task(struct perf_event_attr *attr)
 {
 	int pmu_fd, error = 0;
 
+	/* per task perf event, enable inherit so the "dd ..." command can be traced properly.
+	 * Enabling inherit will cause bpf_perf_prog_read_time helper failure.
+	 */
+	attr->inherit = 1;
+
 	/* open task bound event */
 	pmu_fd = sys_perf_event_open(attr, 0, -1, -1, 0);
 	if (pmu_fd < 0) {
@@ -196,14 +207,12 @@ static void test_bpf_perf_event(void)
 		.freq = 1,
 		.type = PERF_TYPE_HARDWARE,
 		.config = PERF_COUNT_HW_CPU_CYCLES,
-		.inherit = 1,
 	};
 	struct perf_event_attr attr_type_sw = {
 		.sample_freq = SAMPLE_FREQ,
 		.freq = 1,
 		.type = PERF_TYPE_SOFTWARE,
 		.config = PERF_COUNT_SW_CPU_CLOCK,
-		.inherit = 1,
 	};
 	struct perf_event_attr attr_hw_cache_l1d = {
 		.sample_freq = SAMPLE_FREQ,
@@ -213,7 +222,6 @@ static void test_bpf_perf_event(void)
 			PERF_COUNT_HW_CACHE_L1D |
 			(PERF_COUNT_HW_CACHE_OP_READ << 8) |
 			(PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16),
-		.inherit = 1,
 	};
 	struct perf_event_attr attr_hw_cache_branch_miss = {
 		.sample_freq = SAMPLE_FREQ,
@@ -223,7 +231,6 @@ static void test_bpf_perf_event(void)
 			PERF_COUNT_HW_CACHE_BPU |
 			(PERF_COUNT_HW_CACHE_OP_READ << 8) |
 			(PERF_COUNT_HW_CACHE_RESULT_MISS << 16),
-		.inherit = 1,
 	};
 	struct perf_event_attr attr_type_raw = {
 		.sample_freq = SAMPLE_FREQ,
@@ -231,7 +238,17 @@ static void test_bpf_perf_event(void)
 		.type = PERF_TYPE_RAW,
 		/* Intel Instruction Retired */
 		.config = 0xc0,
-		.inherit = 1,
+	};
+	struct perf_event_attr attr_type_raw_lock_load = {
+		.sample_freq = SAMPLE_FREQ,
+		.freq = 1,
+		.type = PERF_TYPE_RAW,
+		/* Intel MEM_UOPS_RETIRED.LOCK_LOADS */
+		.config = 0x21d0,
+		/* Request to record lock address from PEBS */
+		.sample_type = PERF_SAMPLE_ADDR,
+		/* Record address value requires precise event */
+		.precise_ip = 2,
 	};
 
 	printf("Test HW_CPU_CYCLES\n");
@@ -253,6 +270,10 @@ static void test_bpf_perf_event(void)
 	printf("Test Instruction Retired\n");
 	test_perf_event_all_cpu(&attr_type_raw);
 	test_perf_event_task(&attr_type_raw);
+
+	printf("Test Lock Load\n");
+	test_perf_event_all_cpu(&attr_type_raw_lock_load);
+	test_perf_event_task(&attr_type_raw_lock_load);
 
 	printf("*** PASS ***\n");
 }

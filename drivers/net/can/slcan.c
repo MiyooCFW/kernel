@@ -55,6 +55,7 @@
 #include <linux/workqueue.h>
 #include <linux/can.h>
 #include <linux/can/skb.h>
+#include <linux/can/can-ml.h>
 
 MODULE_ALIAS_LDISC(N_SLCAN);
 MODULE_DESCRIPTION("serial line CAN interface");
@@ -513,12 +514,14 @@ static void slc_sync(void)
 }
 
 /* Find a free SLCAN channel, and link in this `tty' line. */
-static struct slcan *slc_alloc(dev_t line)
+static struct slcan *slc_alloc(void)
 {
 	int i;
 	char name[IFNAMSIZ];
 	struct net_device *dev = NULL;
+	struct can_ml_priv *can_ml;
 	struct slcan       *sl;
+	int size;
 
 	for (i = 0; i < maxdev; i++) {
 		dev = slcan_devs[i];
@@ -532,12 +535,15 @@ static struct slcan *slc_alloc(dev_t line)
 		return NULL;
 
 	sprintf(name, "slcan%d", i);
-	dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, slc_setup);
+	size = ALIGN(sizeof(*sl), NETDEV_ALIGN) + sizeof(struct can_ml_priv);
+	dev = alloc_netdev(size, name, NET_NAME_UNKNOWN, slc_setup);
 	if (!dev)
 		return NULL;
 
 	dev->base_addr  = i;
 	sl = netdev_priv(dev);
+	can_ml = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
+	can_set_ml_priv(dev, can_ml);
 
 	/* Initialize channel control data */
 	sl->magic = SLCAN_MAGIC;
@@ -588,7 +594,7 @@ static int slcan_open(struct tty_struct *tty)
 
 	/* OK.  Find a free SLCAN channel to use. */
 	err = -ENFILE;
-	sl = slc_alloc(tty_devnum(tty));
+	sl = slc_alloc();
 	if (sl == NULL)
 		goto err_exit;
 
@@ -714,7 +720,7 @@ static int __init slcan_init(void)
 	pr_info("slcan: serial line CAN interface driver\n");
 	pr_info("slcan: %d dynamic interface channels.\n", maxdev);
 
-	slcan_devs = kzalloc(sizeof(struct net_device *)*maxdev, GFP_KERNEL);
+	slcan_devs = kcalloc(maxdev, sizeof(struct net_device *), GFP_KERNEL);
 	if (!slcan_devs)
 		return -ENOMEM;
 

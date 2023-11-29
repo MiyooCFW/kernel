@@ -22,7 +22,7 @@ static inline bool __is_tcf_gact_act(const struct tc_action *a, int act,
 #ifdef CONFIG_NET_CLS_ACT
 	struct tcf_gact *gact;
 
-	if (a->ops && a->ops->type != TCA_ACT_GACT)
+	if (a->ops && a->ops->id != TCA_ID_GACT)
 		return false;
 
 	gact = to_gact(a);
@@ -32,6 +32,11 @@ static inline bool __is_tcf_gact_act(const struct tc_action *a, int act,
 
 #endif
 	return false;
+}
+
+static inline bool is_tcf_gact_ok(const struct tc_action *a)
+{
+	return __is_tcf_gact_act(a, TC_ACT_OK, false);
 }
 
 static inline bool is_tcf_gact_shot(const struct tc_action *a)

@@ -1,23 +1,12 @@
-/******************************************************************************
+// SPDX-License-Identifier: GPL-2.0
+/*
  * Copyright(c) 2008 - 2010 Realtek Corporation. All rights reserved.
  *
  * Based on the r8180 driver, which is:
  * Copyright 2004-2005 Andrea Merello <andrea.merello@gmail.com>, et al.
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * The full GNU General Public License is included in this distribution in the
- * file called LICENSE.
- *
- * Contact Information:
- * wlanfae <wlanfae@realtek.com>
- *****************************************************************************/
+ * Contact Information: wlanfae <wlanfae@realtek.com>
+ */
 #include <linux/uaccess.h>
 #include <linux/pci.h>
 #include <linux/vmalloc.h>
@@ -85,7 +74,7 @@ static struct pci_driver rtl8192_pci_driver = {
 
 static short _rtl92e_is_tx_queue_empty(struct net_device *dev);
 static void _rtl92e_watchdog_wq_cb(void *data);
-static void _rtl92e_watchdog_timer_cb(unsigned long data);
+static void _rtl92e_watchdog_timer_cb(struct timer_list *t);
 static void _rtl92e_hard_data_xmit(struct sk_buff *skb, struct net_device *dev,
 				   int rate);
 static int _rtl92e_hard_start_xmit(struct sk_buff *skb, struct net_device *dev);
@@ -436,7 +425,7 @@ static int _rtl92e_qos_handle_probe_response(struct r8192_priv *priv,
 				network->qos_data.param_count)) {
 			network->qos_data.old_param_count =
 				network->qos_data.param_count;
-	priv->rtllib->wmm_acm = network->qos_data.wmm_acm;
+			priv->rtllib->wmm_acm = network->qos_data.wmm_acm;
 			schedule_work(&priv->qos_activate);
 			RT_TRACE(COMP_QOS,
 				 "QoS parameters change call qos_activate\n");
@@ -766,12 +755,12 @@ static int _rtl92e_sta_up(struct net_device *dev, bool is_silent_reset)
 	priv->bfirst_init = false;
 
 	if (priv->polling_timer_on == 0)
-		rtl92e_check_rfctrl_gpio_timer((unsigned long)dev);
+		rtl92e_check_rfctrl_gpio_timer(&priv->gpio_polling_timer);
 
 	if (priv->rtllib->state != RTLLIB_LINKED)
 		rtllib_softmac_start_protocol(priv->rtllib, 0);
 	rtllib_reset_queue(priv->rtllib);
-	_rtl92e_watchdog_timer_cb((unsigned long)dev);
+	_rtl92e_watchdog_timer_cb(&priv->watch_dog_timer);
 
 	if (!netif_queue_stopped(dev))
 		netif_start_queue(dev);
@@ -1050,7 +1039,7 @@ static short _rtl92e_get_channel_map(struct net_device *dev)
 	}
 	RT_TRACE(COMP_INIT, "Channel plan is %d\n", priv->ChannelPlan);
 	dot11d_init(priv->rtllib);
-	Dot11d_Channelmap(priv->ChannelPlan, priv->rtllib);
+	dot11d_channel_map(priv->ChannelPlan, priv->rtllib);
 	for (i = 1; i <= 11; i++)
 		(priv->rtllib->active_channel_map)[i] = 1;
 	(priv->rtllib->active_channel_map)[12] = 2;
@@ -1076,13 +1065,10 @@ static short _rtl92e_init(struct net_device *dev)
 
 	rtl92e_dm_init(dev);
 
-	setup_timer(&priv->watch_dog_timer,
-		    _rtl92e_watchdog_timer_cb,
-		    (unsigned long)dev);
+	timer_setup(&priv->watch_dog_timer, _rtl92e_watchdog_timer_cb, 0);
 
-	setup_timer(&priv->gpio_polling_timer,
-		    rtl92e_check_rfctrl_gpio_timer,
-		    (unsigned long)dev);
+	timer_setup(&priv->gpio_polling_timer, rtl92e_check_rfctrl_gpio_timer,
+		    0);
 
 	rtl92e_irq_disable(dev);
 	if (request_irq(dev->irq, _rtl92e_irq, IRQF_SHARED, dev->name, dev)) {
@@ -1153,7 +1139,7 @@ static enum reset_type _rtl92e_tx_check_stuck(struct net_device *dev)
 		if (skb_queue_len(&ring->queue) == 0) {
 			continue;
 		} else {
-			skb = (&ring->queue)->next;
+			skb = __skb_peek(&ring->queue);
 			tcb_desc = (struct cb_desc *)(skb->cb +
 				    MAX_DEV_ADDR_SIZE);
 			tcb_desc->nStuckCount++;
@@ -1532,9 +1518,9 @@ static void _rtl92e_watchdog_wq_cb(void *data)
 	RT_TRACE(COMP_TRACE, " <==RtUsbCheckForHangWorkItemCallback()\n");
 }
 
-static void _rtl92e_watchdog_timer_cb(unsigned long data)
+static void _rtl92e_watchdog_timer_cb(struct timer_list *t)
 {
-	struct r8192_priv *priv = rtllib_priv((struct net_device *)data);
+	struct r8192_priv *priv = from_timer(priv, t, watch_dog_timer);
 
 	schedule_delayed_work(&priv->watch_dog_wq, 0);
 	mod_timer(&priv->watch_dog_timer, jiffies +
@@ -1577,7 +1563,7 @@ static void _rtl92e_free_rx_ring(struct net_device *dev)
 			pci_unmap_single(priv->pdev,
 				*((dma_addr_t *)skb->cb),
 				priv->rxbuffersize, PCI_DMA_FROMDEVICE);
-				kfree_skb(skb);
+			kfree_skb(skb);
 		}
 
 		pci_free_consistent(priv->pdev,
@@ -1733,8 +1719,7 @@ static short _rtl92e_tx(struct net_device *dev, struct sk_buff *skb)
 				    MAX_DEV_ADDR_SIZE);
 	struct tx_desc *pdesc = NULL;
 	struct rtllib_hdr_1addr *header = NULL;
-	u16 fc = 0, type = 0, stype = 0;
-	bool  multi_addr = false, broad_addr = false, uni_addr = false;
+	u16 fc = 0, type = 0;
 	u8 *pda_addr = NULL;
 	int   idx;
 	u32 fwinfo_size = 0;
@@ -1752,22 +1737,14 @@ static short _rtl92e_tx(struct net_device *dev, struct sk_buff *skb)
 	header = (struct rtllib_hdr_1addr *)(((u8 *)skb->data) + fwinfo_size);
 	fc = le16_to_cpu(header->frame_ctl);
 	type = WLAN_FC_GET_TYPE(fc);
-	stype = WLAN_FC_GET_STYPE(fc);
 	pda_addr = header->addr1;
 
 	if (is_broadcast_ether_addr(pda_addr))
-		broad_addr = true;
+		priv->stats.txbytesbroadcast += skb->len - fwinfo_size;
 	else if (is_multicast_ether_addr(pda_addr))
-		multi_addr = true;
-	else
-		uni_addr = true;
-
-	if (uni_addr)
-		priv->stats.txbytesunicast += skb->len - fwinfo_size;
-	else if (multi_addr)
 		priv->stats.txbytesmulticast += skb->len - fwinfo_size;
 	else
-		priv->stats.txbytesbroadcast += skb->len - fwinfo_size;
+		priv->stats.txbytesunicast += skb->len - fwinfo_size;
 
 	spin_lock_irqsave(&priv->irq_th_lock, flags);
 	ring = &priv->tx_ring[tcb_desc->queue_index];
@@ -2520,7 +2497,7 @@ static int _rtl92e_pci_probe(struct pci_dev *pdev,
 	if (dev_alloc_name(dev, ifname) < 0) {
 		RT_TRACE(COMP_INIT,
 			 "Oops: devname already taken! Trying wlan%%d...\n");
-			dev_alloc_name(dev, ifname);
+		dev_alloc_name(dev, ifname);
 	}
 
 	RT_TRACE(COMP_INIT, "Driver probe completed1\n");
@@ -2537,7 +2514,7 @@ static int _rtl92e_pci_probe(struct pci_dev *pdev,
 	RT_TRACE(COMP_INIT, "dev name: %s\n", dev->name);
 
 	if (priv->polling_timer_on == 0)
-		rtl92e_check_rfctrl_gpio_timer((unsigned long)dev);
+		rtl92e_check_rfctrl_gpio_timer(&priv->gpio_polling_timer);
 
 	RT_TRACE(COMP_INIT, "Driver probe completed\n");
 	return 0;
@@ -2651,9 +2628,9 @@ bool rtl92e_disable_nic(struct net_device *dev)
 
 module_pci_driver(rtl8192_pci_driver);
 
-void rtl92e_check_rfctrl_gpio_timer(unsigned long data)
+void rtl92e_check_rfctrl_gpio_timer(struct timer_list *t)
 {
-	struct r8192_priv *priv = rtllib_priv((struct net_device *)data);
+	struct r8192_priv *priv = from_timer(priv, t, gpio_polling_timer);
 
 	priv->polling_timer_on = 1;
 

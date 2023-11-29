@@ -18,13 +18,19 @@
 int blk_rq_append_bio(struct request *rq, struct bio **bio)
 {
 	struct bio *orig_bio = *bio;
+	struct bvec_iter iter;
+	struct bio_vec bv;
+	unsigned int nr_segs = 0;
 
 	blk_queue_bounce(rq->q, bio);
 
+	bio_for_each_bvec(bv, *bio, iter)
+		nr_segs++;
+
 	if (!rq->bio) {
-		blk_rq_bio_prep(rq->q, rq, *bio);
+		blk_rq_bio_prep(rq, *bio, nr_segs);
 	} else {
-		if (!ll_back_merge_fn(rq->q, rq, *bio)) {
+		if (!ll_back_merge_fn(rq, *bio, nr_segs)) {
 			if (orig_bio != *bio) {
 				bio_put(*bio);
 				*bio = orig_bio;
@@ -73,13 +79,6 @@ static int __blk_rq_map_user_iov(struct request *rq,
 
 	bio->bi_opf &= ~REQ_OP_MASK;
 	bio->bi_opf |= req_op(rq);
-
-	if (map_data && map_data->null_mapped)
-		bio_set_flag(bio, BIO_NULL_MAPPED);
-
-	iov_iter_advance(iter, bio->bi_iter.bi_size);
-	if (map_data)
-		map_data->offset += bio->bi_iter.bi_size;
 
 	orig_bio = bio;
 

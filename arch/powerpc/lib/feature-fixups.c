@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2001 Ben. Herrenschmidt (benh@kernel.crashing.org)
  *
@@ -5,11 +6,6 @@
  *      Copyright (C) 2003 Dave Engebretsen <engebret@us.ibm.com>
  *
  *  Copyright 2008 Michael Ellerman, IBM Corporation.
- *
- *  This program is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU General Public License
- *  as published by the Free Software Foundation; either version
- *  2 of the License, or (at your option) any later version.
  */
 
 #include <linux/types.h>
@@ -119,7 +115,7 @@ void do_feature_fixups(unsigned long value, void *fixup_start, void *fixup_end)
 }
 
 #ifdef CONFIG_PPC_BOOK3S_64
-void do_stf_entry_barrier_fixups(enum stf_barrier_type types)
+static void do_stf_entry_barrier_fixups(enum stf_barrier_type types)
 {
 	unsigned int instrs[3], *dest;
 	long *start, *end;
@@ -169,7 +165,7 @@ void do_stf_entry_barrier_fixups(enum stf_barrier_type types)
 		                                           : "unknown");
 }
 
-void do_stf_exit_barrier_fixups(enum stf_barrier_type types)
+static void do_stf_exit_barrier_fixups(enum stf_barrier_type types)
 {
 	unsigned int instrs[6], *dest;
 	long *start, *end;
@@ -626,7 +622,7 @@ static void test_basic_patching(void)
 	extern unsigned int end_ftr_fixup_test1[];
 	extern unsigned int ftr_fixup_test1_orig[];
 	extern unsigned int ftr_fixup_test1_expected[];
-	int size = end_ftr_fixup_test1 - ftr_fixup_test1;
+	int size = 4 * (end_ftr_fixup_test1 - ftr_fixup_test1);
 
 	fixup.value = fixup.mask = 8;
 	fixup.start_off = calc_offset(&fixup, ftr_fixup_test1 + 1);
@@ -658,7 +654,7 @@ static void test_alternative_patching(void)
 	extern unsigned int ftr_fixup_test2_orig[];
 	extern unsigned int ftr_fixup_test2_alt[];
 	extern unsigned int ftr_fixup_test2_expected[];
-	int size = end_ftr_fixup_test2 - ftr_fixup_test2;
+	int size = 4 * (end_ftr_fixup_test2 - ftr_fixup_test2);
 
 	fixup.value = fixup.mask = 0xF;
 	fixup.start_off = calc_offset(&fixup, ftr_fixup_test2 + 1);
@@ -690,7 +686,7 @@ static void test_alternative_case_too_big(void)
 	extern unsigned int end_ftr_fixup_test3[];
 	extern unsigned int ftr_fixup_test3_orig[];
 	extern unsigned int ftr_fixup_test3_alt[];
-	int size = end_ftr_fixup_test3 - ftr_fixup_test3;
+	int size = 4 * (end_ftr_fixup_test3 - ftr_fixup_test3);
 
 	fixup.value = fixup.mask = 0xC;
 	fixup.start_off = calc_offset(&fixup, ftr_fixup_test3 + 1);
@@ -717,7 +713,7 @@ static void test_alternative_case_too_small(void)
 	extern unsigned int ftr_fixup_test4_orig[];
 	extern unsigned int ftr_fixup_test4_alt[];
 	extern unsigned int ftr_fixup_test4_expected[];
-	int size = end_ftr_fixup_test4 - ftr_fixup_test4;
+	int size = 4 * (end_ftr_fixup_test4 - ftr_fixup_test4);
 	unsigned long flag;
 
 	/* Check a high-bit flag */
@@ -751,7 +747,7 @@ static void test_alternative_case_with_branch(void)
 	extern unsigned int ftr_fixup_test5[];
 	extern unsigned int end_ftr_fixup_test5[];
 	extern unsigned int ftr_fixup_test5_expected[];
-	int size = end_ftr_fixup_test5 - ftr_fixup_test5;
+	int size = 4 * (end_ftr_fixup_test5 - ftr_fixup_test5);
 
 	check(memcmp(ftr_fixup_test5, ftr_fixup_test5_expected, size) == 0);
 }
@@ -761,9 +757,19 @@ static void test_alternative_case_with_external_branch(void)
 	extern unsigned int ftr_fixup_test6[];
 	extern unsigned int end_ftr_fixup_test6[];
 	extern unsigned int ftr_fixup_test6_expected[];
-	int size = end_ftr_fixup_test6 - ftr_fixup_test6;
+	int size = 4 * (end_ftr_fixup_test6 - ftr_fixup_test6);
 
 	check(memcmp(ftr_fixup_test6, ftr_fixup_test6_expected, size) == 0);
+}
+
+static void test_alternative_case_with_branch_to_end(void)
+{
+	extern unsigned int ftr_fixup_test7[];
+	extern unsigned int end_ftr_fixup_test7[];
+	extern unsigned int ftr_fixup_test7_expected[];
+	int size = 4 * (end_ftr_fixup_test7 - ftr_fixup_test7);
+
+	check(memcmp(ftr_fixup_test7, ftr_fixup_test7_expected, size) == 0);
 }
 
 static void test_cpu_macros(void)
@@ -821,6 +827,7 @@ static int __init test_feature_fixups(void)
 	test_alternative_case_too_small();
 	test_alternative_case_with_branch();
 	test_alternative_case_with_external_branch();
+	test_alternative_case_with_branch_to_end();
 	test_cpu_macros();
 	test_fw_macros();
 	test_lwsync_macros();

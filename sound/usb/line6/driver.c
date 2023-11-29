@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Line 6 Linux USB driver
  *
  * Copyright (C) 2004-2010 Markus Grabner (grabner@icg.tugraz.at)
- *
- *	This program is free software; you can redistribute it and/or
- *	modify it under the terms of the GNU General Public License as
- *	published by the Free Software Foundation, version 2.
- *
  */
 
 #include <linux/kernel.h>
@@ -175,29 +171,25 @@ static int line6_send_raw_message_async_part(struct message *msg,
 	}
 
 	msg->done += bytes;
-	retval = usb_submit_urb(urb, GFP_ATOMIC);
 
-	if (retval < 0) {
-		dev_err(line6->ifcdev, "%s: usb_submit_urb failed (%d)\n",
-			__func__, retval);
-		usb_free_urb(urb);
-		kfree(msg);
-		return retval;
-	}
+	/* sanity checks of EP before actually submitting */
+	retval = usb_urb_ep_type_check(urb);
+	if (retval < 0)
+		goto error;
+
+	retval = usb_submit_urb(urb, GFP_ATOMIC);
+	if (retval < 0)
+		goto error;
 
 	return 0;
-}
 
-/*
-	Setup and start timer.
-*/
-void line6_start_timer(struct timer_list *timer, unsigned long msecs,
-		       void (*function)(unsigned long), unsigned long data)
-{
-	setup_timer(timer, function, data);
-	mod_timer(timer, jiffies + msecs_to_jiffies(msecs));
+ error:
+	dev_err(line6->ifcdev, "%s: usb_submit_urb failed (%d)\n",
+		__func__, retval);
+	usb_free_urb(urb);
+	kfree(msg);
+	return retval;
 }
-EXPORT_SYMBOL_GPL(line6_start_timer);
 
 /*
 	Asynchronously send raw message.
@@ -351,7 +343,7 @@ int line6_read_data(struct usb_line6 *line6, unsigned address, void *data,
 	if (address > 0xffff || datalen > 0xff)
 		return -EINVAL;
 
-	len = kmalloc(sizeof(*len), GFP_KERNEL);
+	len = kmalloc(1, GFP_KERNEL);
 	if (!len)
 		return -ENOMEM;
 
@@ -427,7 +419,7 @@ int line6_write_data(struct usb_line6 *line6, unsigned address, void *data,
 	if (address > 0xffff || datalen > 0xffff)
 		return -EINVAL;
 
-	status = kmalloc(sizeof(*status), GFP_KERNEL);
+	status = kmalloc(1, GFP_KERNEL);
 	if (!status)
 		return -ENOMEM;
 
@@ -718,6 +710,15 @@ static int line6_init_cap_control(struct usb_line6 *line6)
 	return 0;
 }
 
+static void line6_startup_work(struct work_struct *work)
+{
+	struct usb_line6 *line6 =
+		container_of(work, struct usb_line6, startup_work.work);
+
+	if (line6->startup)
+		line6->startup(line6);
+}
+
 /*
 	Probe USB device.
 */
@@ -753,6 +754,7 @@ int line6_probe(struct usb_interface *interface,
 	line6->properties = properties;
 	line6->usbdev = usbdev;
 	line6->ifcdev = &interface->dev;
+	INIT_DELAYED_WORK(&line6->startup_work, line6_startup_work);
 
 	strcpy(card->id, properties->id);
 	strcpy(card->driver, driver_name);
@@ -823,6 +825,8 @@ void line6_disconnect(struct usb_interface *interface)
 	if (WARN_ON(usbdev != line6->usbdev))
 		return;
 
+	cancel_delayed_work_sync(&line6->startup_work);
+
 	if (line6->urb_listen != NULL)
 		line6_stop_listen(line6);
 
@@ -857,10 +861,8 @@ int line6_suspend(struct usb_interface *interface, pm_message_t message)
 	if (line6->properties->capabilities & LINE6_CAP_CONTROL)
 		line6_stop_listen(line6);
 
-	if (line6pcm != NULL) {
-		snd_pcm_suspend_all(line6pcm->pcm);
+	if (line6pcm != NULL)
 		line6pcm->flags = 0;
-	}
 
 	return 0;
 }

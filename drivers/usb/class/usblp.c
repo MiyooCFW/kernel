@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * usblp.c
  *
@@ -29,22 +30,6 @@
  *	v0.13 - alloc space for statusbuf (<status> not on stack);
  *		use usb_alloc_coherent() for read buf & write buf;
  *      none  - Maintained in Linux kernel after v0.13
- */
-
-/*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <linux/module.h>
@@ -324,6 +309,7 @@ static void usblp_bulk_read(struct urb *urb)
 {
 	struct usblp *usblp = urb->context;
 	int status = urb->status;
+	unsigned long flags;
 
 	if (usblp->present && usblp->used) {
 		if (status)
@@ -331,14 +317,14 @@ static void usblp_bulk_read(struct urb *urb)
 			    "nonzero read bulk status received: %d\n",
 			    usblp->minor, status);
 	}
-	spin_lock(&usblp->lock);
+	spin_lock_irqsave(&usblp->lock, flags);
 	if (status < 0)
 		usblp->rstatus = status;
 	else
 		usblp->rstatus = urb->actual_length;
 	usblp->rcomplete = 1;
 	wake_up(&usblp->rwait);
-	spin_unlock(&usblp->lock);
+	spin_unlock_irqrestore(&usblp->lock, flags);
 
 	usb_free_urb(urb);
 }
@@ -347,6 +333,7 @@ static void usblp_bulk_write(struct urb *urb)
 {
 	struct usblp *usblp = urb->context;
 	int status = urb->status;
+	unsigned long flags;
 
 	if (usblp->present && usblp->used) {
 		if (status)
@@ -354,7 +341,7 @@ static void usblp_bulk_write(struct urb *urb)
 			    "nonzero write bulk status received: %d\n",
 			    usblp->minor, status);
 	}
-	spin_lock(&usblp->lock);
+	spin_lock_irqsave(&usblp->lock, flags);
 	if (status < 0)
 		usblp->wstatus = status;
 	else
@@ -362,7 +349,7 @@ static void usblp_bulk_write(struct urb *urb)
 	usblp->no_paper = 0;
 	usblp->wcomplete = 1;
 	wake_up(&usblp->wwait);
-	spin_unlock(&usblp->lock);
+	spin_unlock_irqrestore(&usblp->lock, flags);
 
 	usb_free_urb(urb);
 }
@@ -505,18 +492,26 @@ static int usblp_release(struct inode *inode, struct file *file)
 }
 
 /* No kernel lock - fine */
-static unsigned int usblp_poll(struct file *file, struct poll_table_struct *wait)
+static __poll_t usblp_poll(struct file *file, struct poll_table_struct *wait)
 {
-	int ret;
+	struct usblp *usblp = file->private_data;
+	__poll_t ret = 0;
 	unsigned long flags;
 
-	struct usblp *usblp = file->private_data;
 	/* Should we check file->f_mode & FMODE_WRITE before poll_wait()? */
 	poll_wait(file, &usblp->rwait, wait);
 	poll_wait(file, &usblp->wwait, wait);
+
+	mutex_lock(&usblp->mut);
+	if (!usblp->present)
+		ret |= EPOLLHUP;
+	mutex_unlock(&usblp->mut);
+
 	spin_lock_irqsave(&usblp->lock, flags);
-	ret = ((usblp->bidir && usblp->rcomplete) ? POLLIN  | POLLRDNORM : 0) |
-	   ((usblp->no_paper || usblp->wcomplete) ? POLLOUT | POLLWRNORM : 0);
+	if (usblp->bidir && usblp->rcomplete)
+		ret |= EPOLLIN  | EPOLLRDNORM;
+	if (usblp->no_paper || usblp->wcomplete)
+		ret |= EPOLLOUT | EPOLLWRNORM;
 	spin_unlock_irqrestore(&usblp->lock, flags);
 	return ret;
 }
@@ -1107,7 +1102,7 @@ static struct usb_class_driver usblp_class = {
 	.minor_base =	USBLP_MINOR_BASE,
 };
 
-static ssize_t usblp_show_ieee1284_id(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t ieee1284_id_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct usblp *usblp = usb_get_intfdata(intf);
@@ -1119,7 +1114,13 @@ static ssize_t usblp_show_ieee1284_id(struct device *dev, struct device_attribut
 	return sprintf(buf, "%s", usblp->device_id_string+2);
 }
 
-static DEVICE_ATTR(ieee1284_id, S_IRUGO, usblp_show_ieee1284_id, NULL);
+static DEVICE_ATTR_RO(ieee1284_id);
+
+static struct attribute *usblp_attrs[] = {
+	&dev_attr_ieee1284_id.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(usblp);
 
 static int usblp_probe(struct usb_interface *intf,
 		       const struct usb_device_id *id)
@@ -1195,9 +1196,6 @@ static int usblp_probe(struct usb_interface *intf,
 
 	/* Retrieve and store the device ID string. */
 	usblp_cache_device_id_string(usblp);
-	retval = device_create_file(&intf->dev, &dev_attr_ieee1284_id);
-	if (retval)
-		goto abort_intfdata;
 
 #ifdef DEBUG
 	usblp_check_status(usblp, 0);
@@ -1228,7 +1226,6 @@ static int usblp_probe(struct usb_interface *intf,
 
 abort_intfdata:
 	usb_set_intfdata(intf, NULL);
-	device_remove_file(&intf->dev, &dev_attr_ieee1284_id);
 abort:
 	kfree(usblp->readbuf);
 	kfree(usblp->statusbuf);
@@ -1403,8 +1400,6 @@ static void usblp_disconnect(struct usb_interface *intf)
 		BUG();
 	}
 
-	device_remove_file(&intf->dev, &dev_attr_ieee1284_id);
-
 	mutex_lock(&usblp_mutex);
 	mutex_lock(&usblp->mut);
 	usblp->present = 0;
@@ -1466,6 +1461,7 @@ static struct usb_driver usblp_driver = {
 	.suspend =	usblp_suspend,
 	.resume =	usblp_resume,
 	.id_table =	usblp_ids,
+	.dev_groups =	usblp_groups,
 	.supports_autosuspend =	1,
 };
 

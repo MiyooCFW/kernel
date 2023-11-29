@@ -344,8 +344,6 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	struct llc_sap *sap;
 	int rc = -EINVAL;
 
-	dprintk("%s: binding %02X\n", __func__, addr->sllc_sap);
-
 	lock_sock(sk);
 	if (unlikely(!sock_flag(sk, SOCK_ZAPPED) || addrlen != sizeof(*addr)))
 		goto out;
@@ -354,6 +352,7 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		addr->sllc_arphrd = ARPHRD_ETHER;
 	if (unlikely(addr->sllc_family != AF_LLC || addr->sllc_arphrd != ARPHRD_ETHER))
 		goto out;
+	dprintk("%s: binding %02X\n", __func__, addr->sllc_sap);
 	rc = -ENODEV;
 	rcu_read_lock();
 	if (sk->sk_bound_dev_if) {
@@ -808,7 +807,7 @@ static int llc_ui_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		}
 		/* Well, if we have backlog, try to process it now yet. */
 
-		if (copied >= target && !sk->sk_backlog.tail)
+		if (copied >= target && !READ_ONCE(sk->sk_backlog.tail))
 			break;
 
 		if (copied) {
@@ -1014,7 +1013,7 @@ out:
  *	Return the address information of a socket.
  */
 static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
-			  int *uaddrlen, int peer)
+			  int peer)
 {
 	struct sockaddr_llc sllc;
 	struct sock *sk = sock->sk;
@@ -1025,7 +1024,6 @@ static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
 	lock_sock(sk);
 	if (sock_flag(sk, SOCK_ZAPPED))
 		goto out;
-	*uaddrlen = sizeof(sllc);
 	if (peer) {
 		rc = -ENOTCONN;
 		if (sk->sk_state != TCP_ESTABLISHED)
@@ -1046,9 +1044,9 @@ static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
 			       IFHWADDRLEN);
 		}
 	}
-	rc = 0;
 	sllc.sllc_family = AF_LLC;
 	memcpy(uaddr, &sllc, sizeof(sllc));
+	rc = sizeof(sllc);
 out:
 	release_sock(sk);
 	return rc;

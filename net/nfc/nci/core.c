@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  The NFC Controller Interface is the communication protocol between an
  *  NFC Controller (NFCC) and a Device Host (DH).
@@ -10,19 +11,6 @@
  *  Acknowledgements:
  *  This file is based on hci_core.c, which was written
  *  by Maxim Krasnyansky.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2
- *  as published by the Free Software Foundation
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, see <http://www.gnu.org/licenses/>.
- *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s: " fmt, __func__
@@ -607,18 +595,18 @@ static int nci_close_device(struct nci_dev *ndev)
 }
 
 /* NCI command timer function */
-static void nci_cmd_timer(unsigned long arg)
+static void nci_cmd_timer(struct timer_list *t)
 {
-	struct nci_dev *ndev = (void *) arg;
+	struct nci_dev *ndev = from_timer(ndev, t, cmd_timer);
 
 	atomic_set(&ndev->cmd_cnt, 1);
 	queue_work(ndev->cmd_wq, &ndev->cmd_work);
 }
 
 /* NCI data exchange timer function */
-static void nci_data_timer(unsigned long arg)
+static void nci_data_timer(struct timer_list *t)
 {
-	struct nci_dev *ndev = (void *) arg;
+	struct nci_dev *ndev = from_timer(ndev, t, data_timer);
 
 	set_bit(NCI_DATA_EXCHANGE_TO, &ndev->flags);
 	queue_work(ndev->rx_wq, &ndev->rx_work);
@@ -1254,10 +1242,8 @@ int nci_register_device(struct nci_dev *ndev)
 	skb_queue_head_init(&ndev->rx_q);
 	skb_queue_head_init(&ndev->tx_q);
 
-	setup_timer(&ndev->cmd_timer, nci_cmd_timer,
-		    (unsigned long) ndev);
-	setup_timer(&ndev->data_timer, nci_data_timer,
-		    (unsigned long) ndev);
+	timer_setup(&ndev->cmd_timer, nci_cmd_timer, 0);
+	timer_setup(&ndev->data_timer, nci_data_timer, 0);
 
 	mutex_init(&ndev->req_lock);
 	INIT_LIST_HEAD(&ndev->conn_info_list);

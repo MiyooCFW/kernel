@@ -59,10 +59,10 @@ gp102_run_secure_scrub(struct nvkm_secboot *sb)
 
 	nvkm_debug(subdev, "running VPR scrubber binary on NVDEC...\n");
 
-	engine = nvkm_engine_ref(&device->nvdec->engine);
+	engine = nvkm_engine_ref(&device->nvdec[0]->engine);
 	if (IS_ERR(engine))
 		return PTR_ERR(engine);
-	falcon = device->nvdec->falcon;
+	falcon = device->nvdec[0]->falcon;
 
 	nvkm_falcon_get(falcon, &sb->subdev);
 
@@ -133,7 +133,7 @@ gp102_secboot_run_blob(struct nvkm_secboot *sb, struct nvkm_gpuobj *blob,
 	return gm200_secboot_run_blob(sb, blob, falcon);
 }
 
-static const struct nvkm_secboot_func
+const struct nvkm_secboot_func
 gp102_secboot = {
 	.dtor = gm200_secboot_dtor,
 	.oneinit = gm200_secboot_oneinit,
@@ -190,6 +190,9 @@ MODULE_FIRMWARE("nvidia/gp102/nvdec/scrubber.bin");
 MODULE_FIRMWARE("nvidia/gp102/sec2/desc.bin");
 MODULE_FIRMWARE("nvidia/gp102/sec2/image.bin");
 MODULE_FIRMWARE("nvidia/gp102/sec2/sig.bin");
+MODULE_FIRMWARE("nvidia/gp102/sec2/desc-1.bin");
+MODULE_FIRMWARE("nvidia/gp102/sec2/image-1.bin");
+MODULE_FIRMWARE("nvidia/gp102/sec2/sig-1.bin");
 MODULE_FIRMWARE("nvidia/gp104/acr/bl.bin");
 MODULE_FIRMWARE("nvidia/gp104/acr/unload_bl.bin");
 MODULE_FIRMWARE("nvidia/gp104/acr/ucode_load.bin");
@@ -210,6 +213,9 @@ MODULE_FIRMWARE("nvidia/gp104/nvdec/scrubber.bin");
 MODULE_FIRMWARE("nvidia/gp104/sec2/desc.bin");
 MODULE_FIRMWARE("nvidia/gp104/sec2/image.bin");
 MODULE_FIRMWARE("nvidia/gp104/sec2/sig.bin");
+MODULE_FIRMWARE("nvidia/gp104/sec2/desc-1.bin");
+MODULE_FIRMWARE("nvidia/gp104/sec2/image-1.bin");
+MODULE_FIRMWARE("nvidia/gp104/sec2/sig-1.bin");
 MODULE_FIRMWARE("nvidia/gp106/acr/bl.bin");
 MODULE_FIRMWARE("nvidia/gp106/acr/unload_bl.bin");
 MODULE_FIRMWARE("nvidia/gp106/acr/ucode_load.bin");
@@ -230,6 +236,9 @@ MODULE_FIRMWARE("nvidia/gp106/nvdec/scrubber.bin");
 MODULE_FIRMWARE("nvidia/gp106/sec2/desc.bin");
 MODULE_FIRMWARE("nvidia/gp106/sec2/image.bin");
 MODULE_FIRMWARE("nvidia/gp106/sec2/sig.bin");
+MODULE_FIRMWARE("nvidia/gp106/sec2/desc-1.bin");
+MODULE_FIRMWARE("nvidia/gp106/sec2/image-1.bin");
+MODULE_FIRMWARE("nvidia/gp106/sec2/sig-1.bin");
 MODULE_FIRMWARE("nvidia/gp107/acr/bl.bin");
 MODULE_FIRMWARE("nvidia/gp107/acr/unload_bl.bin");
 MODULE_FIRMWARE("nvidia/gp107/acr/ucode_load.bin");
@@ -250,3 +259,6 @@ MODULE_FIRMWARE("nvidia/gp107/nvdec/scrubber.bin");
 MODULE_FIRMWARE("nvidia/gp107/sec2/desc.bin");
 MODULE_FIRMWARE("nvidia/gp107/sec2/image.bin");
 MODULE_FIRMWARE("nvidia/gp107/sec2/sig.bin");
+MODULE_FIRMWARE("nvidia/gp107/sec2/desc-1.bin");
+MODULE_FIRMWARE("nvidia/gp107/sec2/image-1.bin");
+MODULE_FIRMWARE("nvidia/gp107/sec2/sig-1.bin");

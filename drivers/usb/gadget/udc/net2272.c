@@ -1,22 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Driver for PLX NET2272 USB device controller
  *
  * Copyright (C) 2005-2006 PLX Technology, Inc.
  * Copyright (C) 2006-2011 Analog Devices, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include <linux/delay.h>
@@ -586,8 +573,7 @@ net2272_read_fifo(struct net2272_ep *ep, struct net2272_request *req)
 
 		/* completion */
 		if (unlikely(cleanup || is_short ||
-				((req->req.actual == req->req.length)
-				 && !req->req.zero))) {
+				req->req.actual == req->req.length)) {
 
 			if (cleanup) {
 				net2272_out_flush(ep);
@@ -1191,11 +1177,6 @@ registers_show(struct device *_dev, struct device_attribute *attr, char *buf)
 	next = buf;
 	size = PAGE_SIZE;
 	spin_lock_irqsave(&dev->lock, flags);
-
-	if (dev->driver)
-		s = dev->driver->driver.name;
-	else
-		s = "(none)";
 
 	/* Main Control Registers */
 	t = scnprintf(next, size, "%s version %s,"

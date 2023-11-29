@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2001 MontaVista Software Inc.
  * Author: Jun Sun, jsun@mvista.com or jsun@junsun.net
  * Copyright (c) 2003, 2004  Maciej W. Rozycki
  *
  * Common time service routines for MIPS machines.
- *
- * This program is free software; you can redistribute	it and/or modify it
- * under  the terms of	the GNU General	 Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 #include <linux/bug.h>
 #include <linux/clockchips.h>
@@ -40,8 +36,10 @@ static unsigned long glb_lpj_ref_freq;
 static int cpufreq_callback(struct notifier_block *nb,
 			    unsigned long val, void *data)
 {
-	int cpu;
 	struct cpufreq_freqs *freq = data;
+	struct cpumask *cpus = freq->policy->cpus;
+	unsigned long lpj;
+	int cpu;
 
 	/*
 	 * Skip lpj numbers adjustment if the CPU-freq transition is safe for
@@ -62,7 +60,6 @@ static int cpufreq_callback(struct notifier_block *nb,
 		}
 	}
 
-	cpu = freq->cpu;
 	/*
 	 * Adjust global lpj variable and per-CPU udelay_val number in
 	 * accordance with the new CPU frequency.
@@ -73,8 +70,12 @@ static int cpufreq_callback(struct notifier_block *nb,
 						glb_lpj_ref_freq,
 						freq->new);
 
-		cpu_data[cpu].udelay_val = cpufreq_scale(per_cpu(pcp_lpj_ref, cpu),
-					   per_cpu(pcp_lpj_ref_freq, cpu), freq->new);
+		for_each_cpu(cpu, cpus) {
+			lpj = cpufreq_scale(per_cpu(pcp_lpj_ref, cpu),
+					    per_cpu(pcp_lpj_ref_freq, cpu),
+					    freq->new);
+			cpu_data[cpu].udelay_val = (unsigned int)lpj;
+		}
 	}
 
 	return NOTIFY_OK;
@@ -98,21 +99,6 @@ core_initcall(register_cpufreq_notifier);
  */
 DEFINE_SPINLOCK(rtc_lock);
 EXPORT_SYMBOL(rtc_lock);
-
-int __weak rtc_mips_set_time(unsigned long sec)
-{
-	return -ENODEV;
-}
-
-int __weak rtc_mips_set_mmss(unsigned long nowtime)
-{
-	return rtc_mips_set_time(nowtime);
-}
-
-int update_persistent_clock(struct timespec now)
-{
-	return rtc_mips_set_mmss(now.tv_sec);
-}
 
 static int null_perf_irq(void)
 {

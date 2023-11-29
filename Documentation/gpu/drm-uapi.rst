@@ -85,16 +85,18 @@ leads to a few additional requirements:
 - The userspace side must be fully reviewed and tested to the standards of that
   userspace project. For e.g. mesa this means piglit testcases and review on the
   mailing list. This is again to ensure that the new interface actually gets the
-  job done.
+  job done.  The userspace-side reviewer should also provide an Acked-by on the
+  kernel uAPI patch indicating that they believe the proposed uAPI is sound and
+  sufficiently documented and validated for userspace's consumption.
 
 - The userspace patches must be against the canonical upstream, not some vendor
   fork. This is to make sure that no one cheats on the review and testing
   requirements by doing a quick fork.
 
 - The kernel patch can only be merged after all the above requirements are met,
-  but it **must** be merged **before** the userspace patches land. uAPI always flows
-  from the kernel, doing things the other way round risks divergence of the uAPI
-  definitions and header files.
+  but it **must** be merged to either drm-next or drm-misc-next **before** the
+  userspace patches land. uAPI always flows from the kernel, doing things the
+  other way round risks divergence of the uAPI definitions and header files.
 
 These are fairly steep requirements, but have grown out from years of shared
 pain and experience with uAPI added hastily, and almost always regretted about
@@ -168,6 +170,64 @@ IOCTL Support on Device Nodes
 .. kernel-doc:: drivers/gpu/drm/drm_ioctl.c
    :doc: driver specific ioctls
 
+Recommended IOCTL Return Values
+-------------------------------
+
+In theory a driver's IOCTL callback is only allowed to return very few error
+codes. In practice it's good to abuse a few more. This section documents common
+practice within the DRM subsystem:
+
+ENOENT:
+        Strictly this should only be used when a file doesn't exist e.g. when
+        calling the open() syscall. We reuse that to signal any kind of object
+        lookup failure, e.g. for unknown GEM buffer object handles, unknown KMS
+        object handles and similar cases.
+
+ENOSPC:
+        Some drivers use this to differentiate "out of kernel memory" from "out
+        of VRAM". Sometimes also applies to other limited gpu resources used for
+        rendering (e.g. when you have a special limited compression buffer).
+        Sometimes resource allocation/reservation issues in command submission
+        IOCTLs are also signalled through EDEADLK.
+
+        Simply running out of kernel/system memory is signalled through ENOMEM.
+
+EPERM/EACCES:
+        Returned for an operation that is valid, but needs more privileges.
+        E.g. root-only or much more common, DRM master-only operations return
+        this when when called by unpriviledged clients. There's no clear
+        difference between EACCES and EPERM.
+
+ENODEV:
+        The device is not (yet) present or fully initialized.
+
+EOPNOTSUPP:
+        Feature (like PRIME, modesetting, GEM) is not supported by the driver.
+
+ENXIO:
+        Remote failure, either a hardware transaction (like i2c), but also used
+        when the exporting driver of a shared dma-buf or fence doesn't support a
+        feature needed.
+
+EINTR:
+        DRM drivers assume that userspace restarts all IOCTLs. Any DRM IOCTL can
+        return EINTR and in such a case should be restarted with the IOCTL
+        parameters left unchanged.
+
+EIO:
+        The GPU died and couldn't be resurrected through a reset. Modesetting
+        hardware failures are signalled through the "link status" connector
+        property.
+
+EINVAL:
+        Catch-all for anything that is an invalid argument combination which
+        cannot work.
+
+IOCTL also use other error codes like ETIME, EFAULT, EBUSY, ENOTTY but their
+usage is in line with the common meanings. The above list tries to just document
+DRM specific patterns. Note that ENOTTY has the slightly unintuitive meaning of
+"this IOCTL does not exist", and is used exactly as such in DRM.
+
 .. kernel-doc:: include/drm/drm_ioctl.h
    :internal:
 
@@ -179,6 +239,14 @@ IOCTL Support on Device Nodes
 
 Testing and validation
 ======================
+
+Testing Requirements for userspace API
+--------------------------------------
+
+New cross-driver userspace interface extensions, like new IOCTL, new KMS
+properties, new files in sysfs or anything else that constitutes an API change
+should have driver-agnostic testcases in IGT for that feature, if such a test
+can be reasonably made using IGT for the target hardware.
 
 Validating changes with IGT
 ---------------------------
@@ -261,3 +329,12 @@ DRM_IOCTL_MODESET_CTL
     mode setting, since on many devices the vertical blank counter is
     reset to 0 at some point during modeset. Modern drivers should not
     call this any more since with kernel mode setting it is a no-op.
+
+Userspace API Structures
+========================
+
+.. kernel-doc:: include/uapi/drm/drm_mode.h
+   :doc: overview
+
+.. kernel-doc:: include/uapi/drm/drm_mode.h
+   :internal:

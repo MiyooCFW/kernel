@@ -1,24 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * mtu3_gadget_ep0.c - MediaTek USB3 DRD peripheral driver ep0 handling
  *
  * Copyright (c) 2016 MediaTek Inc.
  *
  * Author:  Chunfeng.Yun <chunfeng.yun@mediatek.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
+#include <linux/iopoll.h>
 #include <linux/usb/composite.h>
 
 #include "mtu3.h"
+#include "mtu3_debug.h"
+#include "mtu3_trace.h"
 
 /* ep0 is always mtu3->in_eps[0] */
 #define	next_ep0_request(mtu)	next_request((mtu)->ep0)
@@ -212,8 +206,8 @@ ep0_get_status(struct mtu3 *mtu, const struct usb_ctrlrequest *setup)
 	case USB_RECIP_DEVICE:
 		result[0] = mtu->is_self_powered << USB_DEVICE_SELF_POWERED;
 		result[0] |= mtu->may_wakeup << USB_DEVICE_REMOTE_WAKEUP;
-		/* superspeed only */
-		if (mtu->g.speed == USB_SPEED_SUPER) {
+
+		if (mtu->g.speed >= USB_SPEED_SUPER) {
 			result[0] |= mtu->u1_enable << USB_DEV_STAT_U1_ENABLED;
 			result[0] |= mtu->u2_enable << USB_DEV_STAT_U2_ENABLED;
 		}
@@ -272,6 +266,7 @@ static int handle_test_mode(struct mtu3 *mtu, struct usb_ctrlrequest *setup)
 {
 	void __iomem *mbase = mtu->mac_base;
 	int handled = 1;
+	u32 value;
 
 	switch (le16_to_cpu(setup->wIndex) >> 8) {
 	case TEST_J:
@@ -301,6 +296,14 @@ static int handle_test_mode(struct mtu3 *mtu, struct usb_ctrlrequest *setup)
 	if (mtu->test_mode_nr == TEST_PACKET_MODE)
 		ep0_load_test_packet(mtu);
 
+	/* send status before entering test mode. */
+	value = mtu3_readl(mbase, U3D_EP0CSR) & EP0_W1C_BITS;
+	mtu3_writel(mbase, U3D_EP0CSR, value | EP0_SETUPPKTRDY | EP0_DATAEND);
+
+	/* wait for ACK status sent by host */
+	readl_poll_timeout_atomic(mbase + U3D_EP0CSR, value,
+			!(value & EP0_DATAEND), 100, 5000);
+
 	mtu3_writel(mbase, U3D_USB2_TEST_MODE, mtu->test_mode_nr);
 
 	mtu->ep0_state = MU3D_EP0_STATE_SETUP;
@@ -329,8 +332,8 @@ static int ep0_handle_feature_dev(struct mtu3 *mtu,
 		handled = handle_test_mode(mtu, setup);
 		break;
 	case USB_DEVICE_U1_ENABLE:
-		if (mtu->g.speed != USB_SPEED_SUPER ||
-			mtu->g.state != USB_STATE_CONFIGURED)
+		if (mtu->g.speed < USB_SPEED_SUPER ||
+		    mtu->g.state != USB_STATE_CONFIGURED)
 			break;
 
 		lpc = mtu3_readl(mbase, U3D_LINK_POWER_CONTROL);
@@ -344,8 +347,8 @@ static int ep0_handle_feature_dev(struct mtu3 *mtu,
 		handled = 1;
 		break;
 	case USB_DEVICE_U2_ENABLE:
-		if (mtu->g.speed != USB_SPEED_SUPER ||
-			mtu->g.state != USB_STATE_CONFIGURED)
+		if (mtu->g.speed < USB_SPEED_SUPER ||
+		    mtu->g.state != USB_STATE_CONFIGURED)
 			break;
 
 		lpc = mtu3_readl(mbase, U3D_LINK_POWER_CONTROL);
@@ -384,8 +387,8 @@ static int ep0_handle_feature(struct mtu3 *mtu,
 		break;
 	case USB_RECIP_INTERFACE:
 		/* superspeed only */
-		if ((value == USB_INTRF_FUNC_SUSPEND)
-			&& (mtu->g.speed == USB_SPEED_SUPER)) {
+		if (value == USB_INTRF_FUNC_SUSPEND &&
+		    mtu->g.speed >= USB_SPEED_SUPER) {
 			/*
 			 * forward the request because function drivers
 			 * should handle it
@@ -555,7 +558,7 @@ static void ep0_tx_state(struct mtu3 *mtu)
 	struct usb_request *req;
 	u32 csr;
 	u8 *src;
-	u8 count;
+	u32 count;
 	u32 maxp;
 
 	dev_dbg(mtu->dev, "%s\n", __func__);
@@ -633,6 +636,7 @@ __acquires(mtu->lock)
 	int handled = 0;
 
 	ep0_read_setup(mtu, &setup);
+	trace_mtu3_handle_setup(&setup);
 
 	if ((setup.bRequestType & USB_TYPE_MASK) == USB_TYPE_STANDARD)
 		handled = handle_standard_request(mtu, &setup);
@@ -691,8 +695,12 @@ irqreturn_t mtu3_ep0_isr(struct mtu3 *mtu)
 	mtu3_writel(mbase, U3D_EPISR, int_status); /* W1C */
 
 	/* only handle ep0's */
-	if (!(int_status & EP0ISR))
+	if (!(int_status & (EP0ISR | SETUPENDISR)))
 		return IRQ_NONE;
+
+	/* abort current SETUP, and process new one */
+	if (int_status & SETUPENDISR)
+		mtu->ep0_state = MU3D_EP0_STATE_SETUP;
 
 	csr = mtu3_readl(mbase, U3D_EP0CSR);
 
@@ -705,6 +713,7 @@ irqreturn_t mtu3_ep0_isr(struct mtu3 *mtu)
 		ret = IRQ_HANDLED;
 	}
 	dev_dbg(mtu->dev, "ep0_state: %s\n", decode_ep0_state(mtu));
+	mtu3_dbg_trace(mtu->dev, "ep0_state %s", decode_ep0_state(mtu));
 
 	switch (mtu->ep0_state) {
 	case MU3D_EP0_STATE_TX:

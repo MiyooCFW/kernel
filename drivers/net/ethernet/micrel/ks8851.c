@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* drivers/net/ethernet/micrel/ks8851.c
  *
  * Copyright 2009 Simtec Electronics
  *	http://www.simtec.co.uk/
  *	Ben Dooks <ben@simtec.co.uk>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -28,6 +25,7 @@
 #include <linux/spi/spi.h>
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
+#include <linux/of_net.h>
 
 #include "ks8851.h"
 
@@ -140,6 +138,12 @@ struct ks8851_net {
 };
 
 static int msg_enable;
+
+/* SPI frame opcodes */
+#define KS_SPIOP_RD	(0x00)
+#define KS_SPIOP_WR	(0x40)
+#define KS_SPIOP_RXFIFO	(0x80)
+#define KS_SPIOP_TXFIFO	(0xC0)
 
 /* shift for byte-enable data */
 #define BYTE_EN(_x)	((_x) << 2)
@@ -407,15 +411,23 @@ static void ks8851_read_mac_addr(struct net_device *dev)
  * @ks: The device structure
  *
  * Get or create the initial mac address for the device and then set that
- * into the station address register. If there is an EEPROM present, then
+ * into the station address register. A mac address supplied in the device
+ * tree takes precedence. Otherwise, if there is an EEPROM present, then
  * we try that. If no valid mac address is found we use eth_random_addr()
  * to create a new one.
  */
 static void ks8851_init_mac(struct ks8851_net *ks)
 {
 	struct net_device *dev = ks->netdev;
+	const u8 *mac_addr;
 
-	/* first, try reading what we've got already */
+	mac_addr = of_get_mac_address(ks->spidev->dev.of_node);
+	if (!IS_ERR(mac_addr)) {
+		ether_addr_copy(dev->dev_addr, mac_addr);
+		ks8851_write_mac_addr(dev);
+		return;
+	}
+
 	if (ks->rc_ccr & CCR_EEPROM) {
 		ks8851_read_mac_addr(dev);
 		if (is_valid_ether_addr(dev->dev_addr))

@@ -1,10 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * aQuantia Corporation Network Driver
  * Copyright (C) 2014-2017 aQuantia Corporation. All rights reserved
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
  */
 
 /* File aq_hw_utils.c: Definitions of helper functions used across
@@ -13,6 +10,7 @@
 
 #include "aq_hw_utils.h"
 #include "aq_hw.h"
+#include "aq_nic.h"
 
 void aq_hw_write_reg_bit(struct aq_hw_s *aq_hw, u32 addr, u32 msk,
 			 u32 shift, u32 val)
@@ -39,8 +37,10 @@ u32 aq_hw_read_reg(struct aq_hw_s *hw, u32 reg)
 {
 	u32 value = readl(hw->mmio + reg);
 
-	if ((~0U) == value && (~0U) == readl(hw->mmio + hw->not_ff_addr))
-		aq_utils_obj_set(&hw->header.flags, AQ_HW_FLAG_ERR_UNPLUG);
+	if ((~0U) == value &&
+	    (~0U) == readl(hw->mmio +
+			   hw->aq_nic_cfg->aq_hw_caps->hw_alive_check_addr))
+		aq_utils_obj_set(&hw->flags, AQ_HW_FLAG_ERR_UNPLUG);
 
 	return value;
 }
@@ -50,15 +50,27 @@ void aq_hw_write_reg(struct aq_hw_s *hw, u32 reg, u32 value)
 	writel(value, hw->mmio + reg);
 }
 
+/* Most of 64-bit registers are in LSW, MSW form.
+   Counters are normally implemented by HW as latched pairs:
+   reading LSW first locks MSW, to overcome LSW overflow
+ */
+u64 aq_hw_read_reg64(struct aq_hw_s *hw, u32 reg)
+{
+	u64 value = aq_hw_read_reg(hw, reg);
+
+	value |= (u64)aq_hw_read_reg(hw, reg + 4) << 32;
+	return value;
+}
+
 int aq_hw_err_from_flags(struct aq_hw_s *hw)
 {
 	int err = 0;
 
-	if (aq_utils_obj_test(&hw->header.flags, AQ_HW_FLAG_ERR_UNPLUG)) {
+	if (aq_utils_obj_test(&hw->flags, AQ_HW_FLAG_ERR_UNPLUG)) {
 		err = -ENXIO;
 		goto err_exit;
 	}
-	if (aq_utils_obj_test(&hw->header.flags, AQ_HW_FLAG_ERR_HW)) {
+	if (aq_utils_obj_test(&hw->flags, AQ_HW_FLAG_ERR_HW)) {
 		err = -EIO;
 		goto err_exit;
 	}

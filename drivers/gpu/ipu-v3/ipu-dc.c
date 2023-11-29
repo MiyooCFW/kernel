@@ -1,16 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2010 Sascha Hauer <s.hauer@pengutronix.de>
  * Copyright (C) 2005-2009 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * for more details.
  */
 
 #include <linux/export.h>
@@ -249,10 +240,7 @@ EXPORT_SYMBOL_GPL(ipu_dc_enable);
 
 void ipu_dc_enable_channel(struct ipu_dc *dc)
 {
-	int di;
 	u32 reg;
-
-	di = dc->di;
 
 	reg = readl(dc->base + DC_WR_CH_CONF);
 	reg |= DC_WR_CH_CONF_PROG_TYPE_NORMAL;

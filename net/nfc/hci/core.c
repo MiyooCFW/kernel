@@ -1,18 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2012  Intel Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #define pr_fmt(fmt) "hci: %s: " fmt, __func__
@@ -451,9 +439,9 @@ exit_noskb:
 		nfc_hci_driver_failure(hdev, r);
 }
 
-static void nfc_hci_cmd_timeout(unsigned long data)
+static void nfc_hci_cmd_timeout(struct timer_list *t)
 {
-	struct nfc_hci_dev *hdev = (struct nfc_hci_dev *)data;
+	struct nfc_hci_dev *hdev = from_timer(hdev, t, cmd_timer);
 
 	schedule_work(&hdev->msg_tx_work);
 }
@@ -1027,9 +1015,7 @@ int nfc_hci_register_device(struct nfc_hci_dev *hdev)
 
 	INIT_WORK(&hdev->msg_tx_work, nfc_hci_msg_tx_work);
 
-	init_timer(&hdev->cmd_timer);
-	hdev->cmd_timer.data = (unsigned long)hdev;
-	hdev->cmd_timer.function = nfc_hci_cmd_timeout;
+	timer_setup(&hdev->cmd_timer, nfc_hci_cmd_timeout, 0);
 
 	skb_queue_head_init(&hdev->rx_hcp_frags);
 

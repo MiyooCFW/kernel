@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	AARP:		An implementation of the AppleTalk AARP protocol for
  *			Ethernet 'ELAP'.
@@ -13,12 +14,6 @@
  *		Use neighbour discovery code.
  *		Token Ring Support.
  *
- *		This program is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
- *
- *
  *	References:
  *		Inside AppleTalk (2nd Ed).
  *	Fixes:
@@ -26,7 +21,6 @@
  *		Rob Newberry	-	Added proxy AARP and AARP proc fs,
  *					moved probing from DDP module.
  *		Arnaldo C. Melo -	don't mangle rx packets
- *
  */
 
 #include <linux/if_arp.h>
@@ -310,7 +304,7 @@ static void __aarp_expire_device(struct aarp_entry **n, struct net_device *dev)
 }
 
 /* Handle the timer event */
-static void aarp_expire_timeout(unsigned long unused)
+static void aarp_expire_timeout(struct timer_list *unused)
 {
 	int ct;
 
@@ -888,7 +882,7 @@ int __init aarp_proto_init(void)
 		printk(KERN_CRIT "Unable to register AARP with SNAP.\n");
 		return -ENOMEM;
 	}
-	setup_timer(&aarp_timer, aarp_expire_timeout, 0);
+	timer_setup(&aarp_timer, aarp_expire_timeout, 0);
 	aarp_timer.expires  = jiffies + sysctl_aarp_expiry_time;
 	add_timer(&aarp_timer);
 	rc = register_netdevice_notifier(&aarp_notifier);
@@ -916,11 +910,6 @@ void aarp_device_down(struct net_device *dev)
 }
 
 #ifdef CONFIG_PROC_FS
-struct aarp_iter_state {
-	int bucket;
-	struct aarp_entry **table;
-};
-
 /*
  * Get the aarp entry that is in the chain described
  * by the iterator.
@@ -1042,25 +1031,11 @@ static int aarp_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations aarp_seq_ops = {
+const struct seq_operations aarp_seq_ops = {
 	.start  = aarp_seq_start,
 	.next   = aarp_seq_next,
 	.stop   = aarp_seq_stop,
 	.show   = aarp_seq_show,
-};
-
-static int aarp_seq_open(struct inode *inode, struct file *file)
-{
-	return seq_open_private(file, &aarp_seq_ops,
-			sizeof(struct aarp_iter_state));
-}
-
-const struct file_operations atalk_seq_arp_fops = {
-	.owner		= THIS_MODULE,
-	.open           = aarp_seq_open,
-	.read           = seq_read,
-	.llseek         = seq_lseek,
-	.release	= seq_release_private,
 };
 #endif
 

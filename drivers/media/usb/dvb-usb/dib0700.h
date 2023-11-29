@@ -1,8 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Linux driver for devices based on the DiBcom DiB0700 USB bridge
- *
- *	This program is free software; you can redistribute it and/or modify it
- *	under the terms of the GNU General Public License as published by the Free
- *	Software Foundation, version 2.
  *
  *  Copyright (C) 2005-6 DiBcom, SA
  */
@@ -51,6 +48,8 @@ struct dib0700_state {
 	int (*read_status)(struct dvb_frontend *, enum fe_status *);
 	int (*sleep)(struct dvb_frontend* fe);
 	u8 buf[255];
+	struct i2c_client *i2c_client_demod;
+	struct i2c_client *i2c_client_tuner;
 };
 
 extern int dib0700_get_version(struct dvb_usb_device *d, u32 *hwversion,

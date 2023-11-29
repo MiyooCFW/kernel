@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * SAMSUNG EXYNOS7 SoC device tree source
  *
  * Copyright (c) 2014 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <dt-bindings/clock/exynos7-clk.h>
@@ -31,37 +28,65 @@
 		tmuctrl0 = &tmuctrl_0;
 	};
 
+	arm-pmu {
+		compatible = "arm,cortex-a57-pmu", "arm,armv8-pmuv3";
+		interrupts = <GIC_SPI 56 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-affinity = <&cpu_atlas0>, <&cpu_atlas1>,
+				     <&cpu_atlas2>, <&cpu_atlas3>;
+	};
+
+	fin_pll: clock {
+		/* XXTI */
+		compatible = "fixed-clock";
+		clock-output-names = "fin_pll";
+		#clock-cells = <0>;
+	};
+
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
 		cpu_atlas0: cpu@0 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a57", "arm,armv8";
+			compatible = "arm,cortex-a57";
 			reg = <0x0>;
 			enable-method = "psci";
 		};
 
 		cpu_atlas1: cpu@1 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a57", "arm,armv8";
+			compatible = "arm,cortex-a57";
 			reg = <0x1>;
 			enable-method = "psci";
 		};
 
 		cpu_atlas2: cpu@2 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a57", "arm,armv8";
+			compatible = "arm,cortex-a57";
 			reg = <0x2>;
 			enable-method = "psci";
 		};
 
 		cpu_atlas3: cpu@3 {
 			device_type = "cpu";
-			compatible = "arm,cortex-a57", "arm,armv8";
+			compatible = "arm,cortex-a57";
 			reg = <0x3>;
 			enable-method = "psci";
 		};
+	};
+
+	gpu: gpu@14ac0000 {
+		compatible = "samsung,exynos5433-mali", "arm,mali-t760";
+		reg = <0x14ac0000 0x5000>;
+		interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 240 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "job", "mmu", "gpu";
+		status = "disabled";
+		/* TODO: operating points for DVFS, cooling device */
 	};
 
 	psci {
@@ -82,12 +107,6 @@
 			reg = <0x10000000 0x100>;
 		};
 
-		fin_pll: xxti {
-			compatible = "fixed-clock";
-			clock-output-names = "fin_pll";
-			#clock-cells = <0>;
-		};
-
 		gic: interrupt-controller@11001000 {
 			compatible = "arm,gic-400";
 			#interrupt-cells = <3>;
@@ -105,7 +124,7 @@
 			#size-cells = <1>;
 			ranges;
 
-			pdma0: pdma@10E10000 {
+			pdma0: pdma@10e10000 {
 				compatible = "arm,pl330", "arm,primecell";
 				reg = <0x10E10000 0x1000>;
 				interrupts = <GIC_SPI 225 IRQ_TYPE_LEVEL_HIGH>;
@@ -116,7 +135,7 @@
 				#dma-requests = <32>;
 			};
 
-			pdma1: pdma@10EB0000 {
+			pdma1: pdma@10eb0000 {
 				compatible = "arm,pl330", "arm,primecell";
 				reg = <0x10EB0000 0x1000>;
 				interrupts = <GIC_SPI 226 IRQ_TYPE_LEVEL_HIGH>;
@@ -474,38 +493,9 @@
 			status = "disabled";
 		};
 
-		arm-pmu {
-			compatible = "arm,cortex-a57-pmu", "arm,armv8-pmuv3";
-			interrupts = <GIC_SPI 56 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-affinity = <&cpu_atlas0>, <&cpu_atlas1>,
-					     <&cpu_atlas2>, <&cpu_atlas3>;
-		};
-
-		timer {
-			compatible = "arm,armv8-timer";
-			interrupts = <GIC_PPI 13
-					(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
-				     <GIC_PPI 14
-					(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
-				     <GIC_PPI 11
-					(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
-				     <GIC_PPI 10
-					(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>;
-		};
-
 		pmu_system_controller: system-controller@105c0000 {
 			compatible = "samsung,exynos7-pmu", "syscon";
 			reg = <0x105c0000 0x5000>;
-		};
-
-		reboot: syscon-reboot {
-			compatible = "syscon-reboot";
-			regmap = <&pmu_system_controller>;
-			offset = <0x0400>;
-			mask = <0x1>;
 		};
 
 		rtc: rtc@10590000 {
@@ -594,7 +584,7 @@
 			clocks = <&clock_peris PCLK_TMU>,
 				 <&clock_peris SCLK_TMU>;
 			clock-names = "tmu_apbif", "tmu_sclk";
-			#include "exynos7-tmu-sensor-conf.dtsi"
+			#thermal-sensor-cells = <0>;
 		};
 
 		thermal-zones {
@@ -640,6 +630,19 @@
 			};
 		};
 	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13
+				(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
+			     <GIC_PPI 14
+				(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
+			     <GIC_PPI 11
+				(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
+			     <GIC_PPI 10
+				(GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>;
+	};
 };
 
 #include "exynos7-pinctrl.dtsi"
+#include "arm/exynos-syscon-restart.dtsi"

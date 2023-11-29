@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * u_audio.c -- interface to USB gadget "ALSA sound card" utilities
  *
@@ -9,16 +10,6 @@
  *    Copyright (C) 2011
  *    Yadwinder Singh (yadi.brar01@gmail.com)
  *    Jaswinder Singh (jaswinder.singh@linaro.org)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -49,7 +40,7 @@ struct uac_rtd_params {
 
 	void *rbuf;
 
-	unsigned max_psize;	/* MaxPacketSize of endpoint */
+	unsigned int max_psize;	/* MaxPacketSize of endpoint */
 	struct uac_req *ureq;
 
 	spinlock_t lock;
@@ -87,7 +78,7 @@ static const struct snd_pcm_hardware uac_pcm_hardware = {
 
 static void u_audio_iso_complete(struct usb_ep *ep, struct usb_request *req)
 {
-	unsigned pending;
+	unsigned int pending;
 	unsigned long flags, flags2;
 	unsigned int hw_ptr;
 	int status = req->status;

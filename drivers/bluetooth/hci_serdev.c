@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Bluetooth HCI serdev driver lib
  *
@@ -8,17 +9,6 @@
  *  Copyright (C) 2000-2001  Qualcomm Incorporated
  *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
  *  Copyright (C) 2004-2005  Marcel Holtmann <marcel@holtmann.org>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
  */
 
 #include <linux/kernel.h>
@@ -57,9 +47,10 @@ static inline struct sk_buff *hci_uart_dequeue(struct hci_uart *hu)
 {
 	struct sk_buff *skb = hu->tx_skb;
 
-	if (!skb)
-		skb = hu->proto->dequeue(hu);
-	else
+	if (!skb) {
+		if (test_bit(HCI_UART_PROTO_READY, &hu->flags))
+			skb = hu->proto->dequeue(hu);
+	} else
 		hu->tx_skb = NULL;
 
 	return skb;
@@ -94,20 +85,12 @@ static void hci_uart_write_work(struct work_struct *work)
 			hci_uart_tx_complete(hu, hci_skb_pkt_type(skb));
 			kfree_skb(skb);
 		}
-	} while(test_bit(HCI_UART_TX_WAKEUP, &hu->tx_state));
 
-	clear_bit(HCI_UART_SENDING, &hu->tx_state);
+		clear_bit(HCI_UART_SENDING, &hu->tx_state);
+	} while (test_bit(HCI_UART_TX_WAKEUP, &hu->tx_state));
 }
 
 /* ------- Interface to HCI layer ------ */
-
-/* Initialize device */
-static int hci_uart_open(struct hci_dev *hdev)
-{
-	BT_DBG("%s %p", hdev->name, hdev);
-
-	return 0;
-}
 
 /* Reset device */
 static int hci_uart_flush(struct hci_dev *hdev)
@@ -125,6 +108,17 @@ static int hci_uart_flush(struct hci_dev *hdev)
 
 	if (test_bit(HCI_UART_PROTO_READY, &hu->flags))
 		hu->proto->flush(hu);
+
+	return 0;
+}
+
+/* Initialize device */
+static int hci_uart_open(struct hci_dev *hdev)
+{
+	BT_DBG("%s %p", hdev->name, hdev);
+
+	/* Undo clearing this from hci_uart_close() */
+	hdev->flush = hci_uart_flush;
 
 	return 0;
 }
@@ -185,7 +179,7 @@ static int hci_uart_setup(struct hci_dev *hdev)
 	if (hu->proto->set_baudrate && speed) {
 		err = hu->proto->set_baudrate(hu, speed);
 		if (err)
-			BT_ERR("%s: failed to set baudrate", hdev->name);
+			bt_dev_err(hdev, "Failed to set baudrate");
 		else
 			serdev_device_set_baudrate(hu->serdev, speed);
 	}
@@ -199,15 +193,13 @@ static int hci_uart_setup(struct hci_dev *hdev)
 	skb = __hci_cmd_sync(hdev, HCI_OP_READ_LOCAL_VERSION, 0, NULL,
 			     HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
-		BT_ERR("%s: Reading local version information failed (%ld)",
-		       hdev->name, PTR_ERR(skb));
+		bt_dev_err(hdev, "Reading local version info failed (%ld)",
+			   PTR_ERR(skb));
 		return 0;
 	}
 
-	if (skb->len != sizeof(*ver)) {
-		BT_ERR("%s: Event length mismatch for version information",
-		       hdev->name);
-	}
+	if (skb->len != sizeof(*ver))
+		bt_dev_err(hdev, "Event length mismatch for version info");
 
 	kfree_skb(skb);
 	return 0;
@@ -283,9 +275,15 @@ int hci_uart_register_device(struct hci_uart *hu,
 
 	serdev_device_set_client_ops(hu->serdev, &hci_serdev_client_ops);
 
-	err = p->open(hu);
+	err = serdev_device_open(hu->serdev);
 	if (err)
 		return err;
+
+	percpu_init_rwsem(&hu->proto_lock);
+
+	err = p->open(hu);
+	if (err)
+		goto err_open;
 
 	hu->proto = p;
 	set_bit(HCI_UART_PROTO_READY, &hu->flags);
@@ -303,8 +301,8 @@ int hci_uart_register_device(struct hci_uart *hu,
 	hdev->bus = HCI_UART;
 	hci_set_drvdata(hdev, hu);
 
+	INIT_WORK(&hu->init_ready, hci_uart_init_work);
 	INIT_WORK(&hu->write_work, hci_uart_write_work);
-	percpu_init_rwsem(&hu->proto_lock);
 
 	/* Only when vendor specific setup callback is provided, consider
 	 * the manufacturer information valid. This avoids filling in the
@@ -325,9 +323,6 @@ int hci_uart_register_device(struct hci_uart *hu,
 
 	if (test_bit(HCI_UART_EXT_CONFIG, &hu->hdev_flags))
 		set_bit(HCI_QUIRK_EXTERNAL_CONFIG, &hdev->quirks);
-
-	if (!test_bit(HCI_UART_RESET_ON_INIT, &hu->hdev_flags))
-		set_bit(HCI_QUIRK_RESET_ON_CLOSE, &hdev->quirks);
 
 	if (test_bit(HCI_UART_CREATE_AMP, &hu->hdev_flags))
 		hdev->dev_type = HCI_AMP;
@@ -352,6 +347,8 @@ err_register:
 err_alloc:
 	clear_bit(HCI_UART_PROTO_READY, &hu->flags);
 	p->close(hu);
+err_open:
+	serdev_device_close(hu->serdev);
 	return err;
 }
 EXPORT_SYMBOL_GPL(hci_uart_register_device);
@@ -370,5 +367,6 @@ void hci_uart_unregister_device(struct hci_uart *hu)
 	cancel_work_sync(&hu->write_work);
 
 	hu->proto->close(hu);
+	serdev_device_close(hu->serdev);
 }
 EXPORT_SYMBOL_GPL(hci_uart_unregister_device);

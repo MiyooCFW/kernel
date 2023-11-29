@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * comedi/drivers/ni_usb6501.c
  * Comedi driver for National Instruments USB-6501
  *
  * COMEDI - Linux Control and Measurement Device Interface
  * Copyright (C) 2014 Luca Ellero <luca.ellero@brickedbrain.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 /*
@@ -581,14 +572,12 @@ static void ni6501_detach(struct comedi_device *dev)
 	if (!devpriv)
 		return;
 
-	mutex_lock(&devpriv->mut);
+	mutex_destroy(&devpriv->mut);
 
 	usb_set_intfdata(intf, NULL);
 
 	kfree(devpriv->usb_rx_buf);
 	kfree(devpriv->usb_tx_buf);
-
-	mutex_unlock(&devpriv->mut);
 }
 
 static struct comedi_driver ni6501_driver = {

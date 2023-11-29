@@ -1,16 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * VMware vSockets Driver
  *
  * Copyright (C) 2007-2013 VMware, Inc. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation version 2 and no later version.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 
 #ifndef __AF_VSOCK_H__
@@ -23,6 +15,11 @@
 #include "vsock_addr.h"
 
 #define LAST_RESERVED_PORT 1023
+
+#define VSOCK_HASH_SIZE         251
+extern struct list_head vsock_bind_table[VSOCK_HASH_SIZE + 1];
+extern struct list_head vsock_connected_table[VSOCK_HASH_SIZE];
+extern spinlock_t vsock_table_lock;
 
 #define vsock_sk(__sk)    ((struct vsock_sock *)__sk)
 #define sk_vsock(__vsk)   (&(__vsk)->sk)
@@ -171,6 +168,18 @@ void vsock_core_exit(void);
 const struct vsock_transport *vsock_core_get_transport(void);
 
 /**** UTILS ****/
+
+/* vsock_table_lock must be held */
+static inline bool __vsock_in_bound_table(struct vsock_sock *vsk)
+{
+	return !list_empty(&vsk->bound_table);
+}
+
+/* vsock_table_lock must be held */
+static inline bool __vsock_in_connected_table(struct vsock_sock *vsk)
+{
+	return !list_empty(&vsk->connected_table);
+}
 
 void vsock_release_pending(struct sock *pending);
 void vsock_add_pending(struct sock *listener, struct sock *pending);

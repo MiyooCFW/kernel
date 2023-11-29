@@ -1,10 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright 2016-17 IBM Corp.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #ifndef _VAS_H
@@ -13,6 +9,9 @@
 #include <linux/idr.h>
 #include <asm/vas.h>
 #include <linux/io.h>
+#include <linux/dcache.h>
+#include <linux/mutex.h>
+#include <linux/stringify.h>
 
 /*
  * Overview of Virtual Accelerator Switchboard (VAS).
@@ -106,8 +105,8 @@
  *
  * TODO: Needs tuning for per-process credits
  */
-#define VAS_WCREDS_MIN			16
-#define VAS_WCREDS_MAX			((64 << 10) - 1)
+#define VAS_RX_WCREDS_MAX		((64 << 10) - 1)
+#define VAS_TX_WCREDS_MAX		((4 << 10) - 1)
 #define VAS_WCREDS_DEFAULT		(1 << 10)
 
 /*
@@ -259,6 +258,16 @@
 #define VAS_NX_UTIL_ADDER		PPC_BITMASK(32, 63)
 
 /*
+ * VREG(x):
+ * Expand a register's short name (eg: LPID) into two parameters:
+ *	- the register's short name in string form ("LPID"), and
+ *	- the name of the macro (eg: VAS_LPID_OFFSET), defining the
+ *	  register's offset in the window context
+ */
+#define VREG_SFX(n, s)	__stringify(n), VAS_##n##s
+#define VREG(r)		VREG_SFX(r, _OFFSET)
+
+/*
  * Local Notify Scope Control Register. (Receive windows only).
  */
 enum vas_notify_scope {
@@ -307,6 +316,9 @@ struct vas_instance {
 	struct mutex mutex;
 	struct vas_window *rxwin[VAS_COP_TYPE_MAX];
 	struct vas_window *windows[VAS_WINDOWS_PER_CHIP];
+
+	char *dbgname;
+	struct dentry *dbgdir;
 };
 
 /*
@@ -322,6 +334,10 @@ struct vas_window {
 	void *hvwc_map;		/* HV window context */
 	void *uwc_map;		/* OS/User window context */
 	pid_t pid;		/* Linux process id of owner */
+	int wcreds_max;		/* Window credits */
+
+	char *dbgname;
+	struct dentry *dbgdir;
 
 	/* Fields applicable only to send windows */
 	void *paste_kaddr;
@@ -383,44 +399,22 @@ struct vas_winctx {
 	enum vas_notify_after_count notify_after_count;
 };
 
+extern struct mutex vas_mutex;
+
 extern struct vas_instance *find_vas_instance(int vasid);
-
-/*
- * VREG(x):
- * Expand a register's short name (eg: LPID) into two parameters:
- *	- the register's short name in string form ("LPID"), and
- *	- the name of the macro (eg: VAS_LPID_OFFSET), defining the
- *	  register's offset in the window context
- */
-#define VREG_SFX(n, s)	__stringify(n), VAS_##n##s
-#define VREG(r)		VREG_SFX(r, _OFFSET)
-
-#ifdef vas_debug
-static inline void dump_rx_win_attr(struct vas_rx_win_attr *attr)
-{
-	pr_err("fault %d, notify %d, intr %d early %d\n",
-			attr->fault_win, attr->notify_disable,
-			attr->intr_disable, attr->notify_early);
-
-	pr_err("rx_fifo_size %d, max value %d\n",
-				attr->rx_fifo_size, VAS_RX_FIFO_SIZE_MAX);
-}
+extern void vas_init_dbgdir(void);
+extern void vas_instance_init_dbgdir(struct vas_instance *vinst);
+extern void vas_window_init_dbgdir(struct vas_window *win);
+extern void vas_window_free_dbgdir(struct vas_window *win);
 
 static inline void vas_log_write(struct vas_window *win, char *name,
 			void *regptr, u64 val)
 {
 	if (val)
-		pr_err("%swin #%d: %s reg %p, val 0x%016llx\n",
+		pr_debug("%swin #%d: %s reg %p, val 0x%016llx\n",
 				win->tx_win ? "Tx" : "Rx", win->winid, name,
 				regptr, val);
 }
-
-#else	/* vas_debug */
-
-#define vas_log_write(win, name, reg, val)
-#define dump_rx_win_attr(attr)
-
-#endif	/* vas_debug */
 
 static inline void write_uwc_reg(struct vas_window *win, char *name,
 			s32 reg, u64 val)
@@ -450,18 +444,12 @@ static inline u64 read_hvwc_reg(struct vas_window *win,
 	return in_be64(win->hvwc_map+reg);
 }
 
-#ifdef vas_debug
-
-static void print_fifo_msg_count(struct vas_window *txwin)
+static inline void decode_pswid(u32 pswid, int *vasid, int *winid)
 {
-	uint64_t read_hvwc_reg(struct vas_window *w, char *n, uint64_t o);
-	pr_devel("Winid %d, Msg count %llu\n", txwin->winid,
-			(uint64_t)read_hvwc_reg(txwin, VREG(LRFIFO_PUSH)));
+	if (vasid)
+		*vasid = pswid >> (31 - 7) & 0xFF;
+
+	if (winid)
+		*winid = pswid & 0xFFFF;
 }
-#else	/* vas_debug */
-
-#define print_fifo_msg_count(window)
-
-#endif	/* vas_debug */
-
 #endif /* _VAS_H */

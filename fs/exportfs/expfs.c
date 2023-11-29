@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) Neil Brown 2002
  * Copyright (C) Christoph Hellwig 2007
@@ -6,7 +7,7 @@
  * and for mapping back from file handles to dentries.
  *
  * For details on why we do all the strange and hairy things in here
- * take a look at Documentation/filesystems/nfs/Exporting.
+ * take a look at Documentation/filesystems/nfs/exporting.rst.
  */
 #include <linux/exportfs.h>
 #include <linux/fs.h>
@@ -435,6 +436,15 @@ struct dentry *exportfs_decode_fh(struct vfsmount *mnt, struct fid *fid,
 		return ERR_CAST(result);
 	if (IS_ERR_OR_NULL(result))
 		return ERR_PTR(-ESTALE);
+
+	/*
+	 * If no acceptance criteria was specified by caller, a disconnected
+	 * dentry is also accepatable. Callers may use this mode to query if
+	 * file handle is stale or to get a reference to an inode without
+	 * risking the high overhead caused by directory reconnect.
+	 */
+	if (!acceptable)
+		return result;
 
 	if (d_is_dir(result)) {
 		/*

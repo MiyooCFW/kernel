@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  cx18 init/start/stop/exit stream functions
  *
@@ -5,16 +6,6 @@
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
  *  Copyright (C) 2008  Andy Walls <awalls@md.metrocast.net>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
  */
 
 #include "cx18-driver.h"
@@ -29,7 +20,7 @@
 #include "cx18-scb.h"
 #include "cx18-dvb.h"
 
-#define CX18_DSP0_INTERRUPT_MASK     	0xd0004C
+#define CX18_DSP0_INTERRUPT_MASK	0xd0004C
 
 static const struct v4l2_file_operations cx18_v4l2_enc_fops = {
 	.owner = THIS_MODULE,
@@ -116,7 +107,7 @@ static int cx18_prepare_buffer(struct videobuf_queue *q,
 	unsigned int width, unsigned int height,
 	enum v4l2_field field)
 {
-        struct cx18 *cx = s->cx;
+	struct cx18 *cx = s->cx;
 	int rc = 0;
 
 	/* check settings */
@@ -282,7 +273,7 @@ static void cx18_stream_init(struct cx18 *cx, int type)
 	INIT_WORK(&s->out_work_order, cx18_out_work_handler);
 
 	INIT_LIST_HEAD(&s->vb_capture);
-	setup_timer(&s->vb_timeout, cx18_vb_timeout, (unsigned long)s);
+	timer_setup(&s->vb_timeout, cx18_vb_timeout, 0);
 	spin_lock_init(&s->vb_lock);
 	if (type == CX18_ENC_STREAM_TYPE_YUV) {
 		spin_lock_init(&s->vbuf_q_lock);
@@ -420,6 +411,7 @@ static int cx18_reg_dev(struct cx18 *cx, int type)
 		return 0;
 
 	num = s->video_dev.num;
+	s->video_dev.device_caps = s->v4l2_dev_caps;	/* device capabilities */
 	/* card number + user defined offset + device offset */
 	if (type != CX18_ENC_STREAM_TYPE_MPG) {
 		struct cx18_stream *s_mpg = &cx->streams[CX18_ENC_STREAM_TYPE_MPG];
@@ -853,7 +845,7 @@ int cx18_start_v4l2_encode_stream(struct cx18_stream *s)
 
 		/*
 		 * Audio related reset according to
-		 * Documentation/video4linux/cx2341x/fw-encoder-api.txt
+		 * Documentation/media/v4l-drivers/cx2341x.rst
 		 */
 		if (atomic_read(&cx->ana_capturing) == 0)
 			cx18_vapi(cx, CX18_CPU_SET_MISC_PARAMETERS, 2,
@@ -861,7 +853,7 @@ int cx18_start_v4l2_encode_stream(struct cx18_stream *s)
 
 		/*
 		 * Number of lines for Field 1 & Field 2 according to
-		 * Documentation/video4linux/cx2341x/fw-encoder-api.txt
+		 * Documentation/media/v4l-drivers/cx2341x.rst
 		 * Field 1 is 312 for 625 line systems in BT.656
 		 * Field 2 is 313 for 625 line systems in BT.656
 		 */

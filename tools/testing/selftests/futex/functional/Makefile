@@ -18,4 +18,6 @@ TEST_GEN_PROGS := \
 
 TEST_PROGS := run.sh
 
+top_srcdir = ../../../../..
+KSFT_KHDR_INSTALL := 1
 include ../../lib.mk

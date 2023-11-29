@@ -4,9 +4,11 @@
  *
  * Builtin regression testing command: ever growing number of sanity tests
  */
+#include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <sys/wait.h>
@@ -20,7 +22,9 @@
 #include <subcmd/parse-options.h>
 #include "string2.h"
 #include "symbol.h"
+#include "util/rlimit.h"
 #include <linux/kernel.h>
+#include <linux/string.h>
 #include <subcmd/exec-cmd.h>
 
 static bool dont_fork;
@@ -113,6 +117,21 @@ static struct test generic_tests[] = {
 		.desc = "Breakpoint overflow sampling",
 		.func = test__bp_signal_overflow,
 		.is_supported = test__bp_signal_is_supported,
+	},
+	{
+		.desc = "Breakpoint accounting",
+		.func = test__bp_accounting,
+		.is_supported = test__bp_signal_is_supported,
+	},
+	{
+		.desc = "Watchpoint",
+		.func = test__wp,
+		.is_supported = test__wp_is_supported,
+		.subtest = {
+			.skip_if_fail	= false,
+			.get_nr		= test__wp_subtest_get_nr,
+			.get_desc	= test__wp_subtest_get_desc,
+		},
 	},
 	{
 		.desc = "Number of exit events of a simple workload",
@@ -270,6 +289,18 @@ static struct test generic_tests[] = {
 		.func = test__unit_number__scnprint,
 	},
 	{
+		.desc = "mem2node",
+		.func = test__mem2node,
+	},
+	{
+		.desc = "time utils",
+		.func = test__time_utils,
+	},
+	{
+		.desc = "map_groups__merge_in",
+		.func = test__map_groups__merge_in,
+	},
+	{
 		.func = NULL,
 	},
 };
@@ -404,15 +435,18 @@ static const char *shell_test__description(char *description, size_t size,
 	if (!fp)
 		return NULL;
 
+	/* Skip shebang */
+	while (fgetc(fp) != '\n');
+
 	description = fgets(description, size, fp);
 	fclose(fp);
 
-	return description ? trim(description + 1) : NULL;
+	return description ? strim(description + 1) : NULL;
 }
 
-#define for_each_shell_test(dir, ent)		\
+#define for_each_shell_test(dir, base, ent)	\
 	while ((ent = readdir(dir)) != NULL)	\
-		if (ent->d_type == DT_REG && ent->d_name[0] != '.')
+		if (!is_directory(base, ent) && ent->d_name[0] != '.')
 
 static const char *shell_tests__dir(char *path, size_t size)
 {
@@ -451,7 +485,7 @@ static int shell_tests__max_desc_width(void)
 	if (!dir)
 		return -1;
 
-	for_each_shell_test(dir, ent) {
+	for_each_shell_test(dir, path, ent) {
 		char bf[256];
 		const char *desc = shell_test__description(bf, sizeof(bf), path, ent->d_name);
 
@@ -503,7 +537,7 @@ static int run_shell_tests(int argc, const char *argv[], int i, int width)
 	if (!dir)
 		return -1;
 
-	for_each_shell_test(dir, ent) {
+	for_each_shell_test(dir, st.dir, ent) {
 		int curr = i++;
 		char desc[256];
 		struct test test = {
@@ -613,7 +647,7 @@ static int perf_test__list_shell(int argc, const char **argv, int i)
 	if (!dir)
 		return -1;
 
-	for_each_shell_test(dir, ent) {
+	for_each_shell_test(dir, path, ent) {
 		int curr = i++;
 		char bf[256];
 		struct test t = {
@@ -644,6 +678,15 @@ static int perf_test__list(int argc, const char **argv)
 			continue;
 
 		pr_info("%2d: %s\n", i, t->desc);
+
+		if (t->subtest.get_nr) {
+			int subn = t->subtest.get_nr();
+			int subi;
+
+			for (subi = 0; subi < subn; subi++)
+				pr_info("%2d:%1d: %s\n", i, subi + 1,
+					t->subtest.get_desc(subi));
+		}
 	}
 
 	perf_test__list_shell(argc, argv, i);
@@ -686,6 +729,11 @@ int cmd_test(int argc, const char **argv)
 
 	if (skip != NULL)
 		skiplist = intlist__new(skip);
+	/*
+	 * Tests that create BPF maps, for instance, need more than the 64K
+	 * default:
+	 */
+	rlimit__bump_memlock();
 
 	return __cmd_test(argc, argv, skiplist);
 }

@@ -58,7 +58,7 @@ On-line docs
     * Title: **Linux Kernel Mailing List Glossary**
 
       :Author: various
-      :URL: http://kernelnewbies.org/glossary/
+      :URL: https://kernelnewbies.org/KernelGlossary
       :Date: rolling version
       :Keywords: glossary, terms, linux-kernel.
       :Description: From the introduction: "This glossary is intended as
@@ -94,18 +94,6 @@ On-line docs
       :Abstract:
         [...]. This paper examines some common problems for
         submitting larger changes and some strategies to avoid problems.
-
-    * Title: **Overview of the Virtual File System**
-
-      :Author: Richard Gooch.
-      :URL: http://www.mjmwired.net/kernel/Documentation/filesystems/vfs.txt
-      :Date: 2007
-      :Keywords: VFS, File System, mounting filesystems, opening files,
-        dentries, dcache.
-      :Description: Brief introduction to the Linux Virtual File System.
-        What is it, how it works, operations taken when opening a file or
-        mounting a file system and description of important data
-        structures explaining the purpose of each of their entries.
 
     * Title: **Linux Device Drivers, Third Edition**
 
@@ -565,7 +553,7 @@ Miscellaneous
 
     * Name: **Cross-Referencing Linux**
 
-      :URL: http://lxr.free-electrons.com/
+      :URL: https://elixir.bootlin.com/
       :Keywords: Browsing source code.
       :Description: Another web-based Linux kernel source code browser.
         Lots of cross references to variables and functions. You can see

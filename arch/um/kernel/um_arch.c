@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2000 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
- * Licensed under the GPL
  */
 
 #include <linux/cpu.h>
@@ -55,7 +55,7 @@ struct cpuinfo_um boot_cpu_data = {
 
 union thread_union cpu0_irqstack
 	__attribute__((__section__(".data..init_irqstack"))) =
-		{ INIT_THREAD_INFO(init_task) };
+		{ .thread_info = INIT_THREAD_INFO(init_task) };
 
 /* Changed in setup_arch, which is called in early boot */
 static char host_info[(__NEW_UTS_LEN + 1) * 5];
@@ -114,6 +114,7 @@ static int have_root __initdata = 0;
 
 /* Set in uml_mem_setup and modified in linux_main */
 long long physmem_size = 32 * 1024 * 1024;
+EXPORT_SYMBOL(physmem_size);
 
 static const char *usage_string =
 "User Mode Linux v%s\n"

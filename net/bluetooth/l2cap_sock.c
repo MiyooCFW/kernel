@@ -367,7 +367,7 @@ done:
 }
 
 static int l2cap_sock_getname(struct socket *sock, struct sockaddr *addr,
-			      int *len, int peer)
+			      int peer)
 {
 	struct sockaddr_l2 *la = (struct sockaddr_l2 *) addr;
 	struct sock *sk = sock->sk;
@@ -382,7 +382,6 @@ static int l2cap_sock_getname(struct socket *sock, struct sockaddr *addr,
 
 	memset(la, 0, sizeof(struct sockaddr_l2));
 	addr->sa_family = AF_BLUETOOTH;
-	*len = sizeof(struct sockaddr_l2);
 
 	la->l2_psm = chan->psm;
 
@@ -396,7 +395,7 @@ static int l2cap_sock_getname(struct socket *sock, struct sockaddr *addr,
 		la->l2_bdaddr_type = chan->src_type;
 	}
 
-	return 0;
+	return sizeof(struct sockaddr_l2);
 }
 
 static int l2cap_sock_getsockopt_old(struct socket *sock, int optname,
@@ -427,6 +426,20 @@ static int l2cap_sock_getsockopt_old(struct socket *sock, int optname,
 			err = -EINVAL;
 			break;
 		}
+
+		/* Only BR/EDR modes are supported here */
+		switch (chan->mode) {
+		case L2CAP_MODE_BASIC:
+		case L2CAP_MODE_ERTM:
+		case L2CAP_MODE_STREAMING:
+			break;
+		default:
+			err = -EINVAL;
+			break;
+		}
+
+		if (err < 0)
+			break;
 
 		memset(&opts, 0, sizeof(opts));
 		opts.imtu     = chan->imtu;
@@ -687,10 +700,8 @@ static int l2cap_sock_setsockopt_old(struct socket *sock, int optname,
 			break;
 		}
 
-		chan->mode = opts.mode;
-		switch (chan->mode) {
-		case L2CAP_MODE_LE_FLOWCTL:
-			break;
+		/* Only BR/EDR modes are supported here */
+		switch (opts.mode) {
 		case L2CAP_MODE_BASIC:
 			clear_bit(CONF_STATE2_DEVICE, &chan->conf_state);
 			break;
@@ -704,6 +715,10 @@ static int l2cap_sock_setsockopt_old(struct socket *sock, int optname,
 			break;
 		}
 
+		if (err < 0)
+			break;
+
+		chan->mode = opts.mode;
 		chan->imtu = opts.imtu;
 		chan->omtu = opts.omtu;
 		chan->fcs  = opts.fcs;
@@ -801,10 +816,13 @@ static int l2cap_sock_setsockopt(struct socket *sock, int level, int optname,
 
 		conn = chan->conn;
 
-		/*change security for LE channels */
+		/* change security for LE channels */
 		if (chan->scid == L2CAP_CID_ATT) {
-			if (smp_conn_security(conn->hcon, sec.level))
+			if (smp_conn_security(conn->hcon, sec.level)) {
+				err = -EINVAL;
 				break;
+			}
+
 			set_bit(FLAG_PENDING_SECURITY, &chan->flags);
 			sk->sk_state = BT_CONFIG;
 			chan->state = BT_CONFIG;
@@ -1709,6 +1727,7 @@ static const struct proto_ops l2cap_sock_ops = {
 	.recvmsg	= l2cap_sock_recvmsg,
 	.poll		= bt_sock_poll,
 	.ioctl		= bt_sock_ioctl,
+	.gettstamp	= sock_gettstamp,
 	.mmap		= sock_no_mmap,
 	.socketpair	= sock_no_socketpair,
 	.shutdown	= l2cap_sock_shutdown,

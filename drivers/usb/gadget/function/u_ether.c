@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * u_ether.c -- Ethernet-over-USB link layer utilities for Gadget stack
  *
  * Copyright (C) 2003-2005,2008 David Brownell
  * Copyright (C) 2003-2004 Robert Schwebel, Benedikt Spranger
  * Copyright (C) 2008 Nokia Corporation
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 /* #define VERBOSE_DEBUG */
@@ -21,6 +17,8 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
+#include <linux/string_helpers.h>
+#include <linux/usb/composite.h>
 
 #include "u_ether.h"
 
@@ -103,41 +101,6 @@ static inline int qlen(struct usb_gadget *gadget, unsigned qmult)
 	else
 		return DEFAULT_QLEN;
 }
-
-/*-------------------------------------------------------------------------*/
-
-/* REVISIT there must be a better way than having two sets
- * of debug calls ...
- */
-
-#undef DBG
-#undef VDBG
-#undef ERROR
-#undef INFO
-
-#define xprintk(d, level, fmt, args...) \
-	printk(level "%s: " fmt , (d)->net->name , ## args)
-
-#ifdef DEBUG
-#undef DEBUG
-#define DBG(dev, fmt, args...) \
-	xprintk(dev , KERN_DEBUG , fmt , ## args)
-#else
-#define DBG(dev, fmt, args...) \
-	do { } while (0)
-#endif /* DEBUG */
-
-#ifdef VERBOSE_DEBUG
-#define VDBG	DBG
-#else
-#define VDBG(dev, fmt, args...) \
-	do { } while (0)
-#endif /* DEBUG */
-
-#define ERROR(dev, fmt, args...) \
-	xprintk(dev , KERN_ERR , fmt , ## args)
-#define INFO(dev, fmt, args...) \
-	xprintk(dev , KERN_INFO , fmt , ## args)
 
 /*-------------------------------------------------------------------------*/
 
@@ -978,6 +941,8 @@ int gether_get_host_addr_cdc(struct net_device *net, char *host_addr, int len)
 	dev = netdev_priv(net);
 	snprintf(host_addr, len, "%pm", dev->host_mac);
 
+	string_upper(host_addr, host_addr);
+
 	return strlen(host_addr);
 }
 EXPORT_SYMBOL_GPL(gether_get_host_addr_cdc);
@@ -1014,9 +979,9 @@ int gether_get_ifname(struct net_device *net, char *name, int len)
 	int ret;
 
 	rtnl_lock();
-	ret = snprintf(name, len, "%s\n", netdev_name(net));
+	ret = scnprintf(name, len, "%s\n", netdev_name(net));
 	rtnl_unlock();
-	return ret < len ? ret : len;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(gether_get_ifname);
 

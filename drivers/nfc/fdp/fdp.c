@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* -------------------------------------------------------------------------
  * Copyright (C) 2014-2016, Intel Corporation
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
  * -------------------------------------------------------------------------
  */
 
@@ -725,7 +717,7 @@ static struct nci_driver_ops fdp_prop_ops[] = {
 	},
 };
 
-struct nci_ops nci_ops = {
+static struct nci_ops nci_ops = {
 	.open = fdp_nci_open,
 	.close = fdp_nci_close,
 	.send = fdp_nci_send,

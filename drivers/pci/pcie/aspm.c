@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * File:	drivers/pci/pcie/aspm.c
- * Enabling PCIe link L0s/L1 state and Clock Power Management
+ * Enable PCIe link L0s/L1 state and Clock Power Management
  *
  * Copyright (C) 2007 Intel
  * Copyright (C) Zhang Yanmin (yanmin.zhang@intel.com)
@@ -19,7 +18,6 @@
 #include <linux/slab.h>
 #include <linux/jiffies.h>
 #include <linux/delay.h>
-#include <linux/pci-aspm.h>
 #include "../pci.h"
 
 #ifdef MODULE_PARAM_PREFIX
@@ -43,18 +41,6 @@
 #define ASPM_STATE_ALL		(ASPM_STATE_L0S | ASPM_STATE_L1 |	\
 				 ASPM_STATE_L1SS)
 
-/*
- * When L1 substates are enabled, the LTR L1.2 threshold is a timing parameter
- * that decides whether L1.1 or L1.2 is entered (Refer PCIe spec for details).
- * Not sure is there is a way to "calculate" this on the fly, but maybe we
- * could turn it into a parameter in future.  This value has been taken from
- * the following files from Intel's coreboot (which is the only code I found
- * to have used this):
- * https://www.coreboot.org/pipermail/coreboot-gerrit/2015-March/021134.html
- * https://review.coreboot.org/#/c/8832/
- */
-#define LTR_L1_2_THRESHOLD_BITS	((1 << 21) | (1 << 23) | (1 << 30))
-
 struct aspm_latency {
 	u32 l0s;			/* L0s latency (nsec) */
 	u32 l1;				/* L1 latency (nsec) */
@@ -66,8 +52,6 @@ struct pcie_link_state {
 	struct pcie_link_state *root;	/* pointer to the root port link */
 	struct pcie_link_state *parent;	/* pointer to the parent Link state */
 	struct list_head sibling;	/* node in link_list */
-	struct list_head children;	/* list of child link states */
-	struct list_head link;		/* node in parent's children list */
 
 	/* ASPM state */
 	u32 aspm_support:7;		/* Supported ASPM state */
@@ -216,11 +200,38 @@ static void pcie_clkpm_cap_init(struct pcie_link_state *link, int blacklist)
 	link->clkpm_disable = blacklist ? 1 : 0;
 }
 
-static bool pcie_retrain_link(struct pcie_link_state *link)
+static int pcie_wait_for_retrain(struct pci_dev *pdev)
+{
+	unsigned long end_jiffies;
+	u16 reg16;
+
+	/* Wait for Link Training to be cleared by hardware */
+	end_jiffies = jiffies + LINK_RETRAIN_TIMEOUT;
+	do {
+		pcie_capability_read_word(pdev, PCI_EXP_LNKSTA, &reg16);
+		if (!(reg16 & PCI_EXP_LNKSTA_LT))
+			return 0;
+		msleep(1);
+	} while (time_before(jiffies, end_jiffies));
+
+	return -ETIMEDOUT;
+}
+
+static int pcie_retrain_link(struct pcie_link_state *link)
 {
 	struct pci_dev *parent = link->pdev;
-	unsigned long start_jiffies;
+	int rc;
 	u16 reg16;
+
+	/*
+	 * Ensure the updated LNKCTL parameters are used during link
+	 * training by checking that there is no ongoing link training to
+	 * avoid LTSSM race as recommended in Implementation Note at the
+	 * end of PCIe r6.0.1 sec 7.5.3.7.
+	 */
+	rc = pcie_wait_for_retrain(parent);
+	if (rc)
+		return rc;
 
 	pcie_capability_read_word(parent, PCI_EXP_LNKCTL, &reg16);
 	reg16 |= PCI_EXP_LNKCTL_RL;
@@ -235,17 +246,7 @@ static bool pcie_retrain_link(struct pcie_link_state *link)
 		pcie_capability_write_word(parent, PCI_EXP_LNKCTL, reg16);
 	}
 
-	/* Wait for link training end. Break out after waiting for timeout */
-	start_jiffies = jiffies;
-	for (;;) {
-		pcie_capability_read_word(parent, PCI_EXP_LNKSTA, &reg16);
-		if (!(reg16 & PCI_EXP_LNKSTA_LT))
-			break;
-		if (time_after(jiffies, start_jiffies + LINK_RETRAIN_TIMEOUT))
-			break;
-		msleep(1);
-	}
-	return !(reg16 & PCI_EXP_LNKSTA_LT);
+	return pcie_wait_for_retrain(parent);
 }
 
 /*
@@ -256,7 +257,7 @@ static bool pcie_retrain_link(struct pcie_link_state *link)
 static void pcie_aspm_configure_common_clock(struct pcie_link_state *link)
 {
 	int same_clock = 1;
-	u16 reg16, parent_reg, child_reg[8];
+	u16 reg16, ccc, parent_old_ccc, child_old_ccc[8];
 	struct pci_dev *child, *parent = link->pdev;
 	struct pci_bus *linkbus = parent->subordinate;
 	/*
@@ -276,35 +277,49 @@ static void pcie_aspm_configure_common_clock(struct pcie_link_state *link)
 	if (!(reg16 & PCI_EXP_LNKSTA_SLC))
 		same_clock = 0;
 
+	/* Port might be already in common clock mode */
+	pcie_capability_read_word(parent, PCI_EXP_LNKCTL, &reg16);
+	parent_old_ccc = reg16 & PCI_EXP_LNKCTL_CCC;
+	if (same_clock && (reg16 & PCI_EXP_LNKCTL_CCC)) {
+		bool consistent = true;
+
+		list_for_each_entry(child, &linkbus->devices, bus_list) {
+			pcie_capability_read_word(child, PCI_EXP_LNKCTL,
+						  &reg16);
+			if (!(reg16 & PCI_EXP_LNKCTL_CCC)) {
+				consistent = false;
+				break;
+			}
+		}
+		if (consistent)
+			return;
+		pci_warn(parent, "ASPM: current common clock configuration is broken, reconfiguring\n");
+	}
+
+	ccc = same_clock ? PCI_EXP_LNKCTL_CCC : 0;
 	/* Configure downstream component, all functions */
 	list_for_each_entry(child, &linkbus->devices, bus_list) {
 		pcie_capability_read_word(child, PCI_EXP_LNKCTL, &reg16);
-		child_reg[PCI_FUNC(child->devfn)] = reg16;
-		if (same_clock)
-			reg16 |= PCI_EXP_LNKCTL_CCC;
-		else
-			reg16 &= ~PCI_EXP_LNKCTL_CCC;
-		pcie_capability_write_word(child, PCI_EXP_LNKCTL, reg16);
+		child_old_ccc[PCI_FUNC(child->devfn)] = reg16 & PCI_EXP_LNKCTL_CCC;
+		pcie_capability_clear_and_set_word(child, PCI_EXP_LNKCTL,
+						   PCI_EXP_LNKCTL_CCC, ccc);
 	}
 
 	/* Configure upstream component */
-	pcie_capability_read_word(parent, PCI_EXP_LNKCTL, &reg16);
-	parent_reg = reg16;
-	if (same_clock)
-		reg16 |= PCI_EXP_LNKCTL_CCC;
-	else
-		reg16 &= ~PCI_EXP_LNKCTL_CCC;
-	pcie_capability_write_word(parent, PCI_EXP_LNKCTL, reg16);
+	pcie_capability_clear_and_set_word(parent, PCI_EXP_LNKCTL,
+					   PCI_EXP_LNKCTL_CCC, ccc);
 
-	if (pcie_retrain_link(link))
-		return;
+	if (pcie_retrain_link(link)) {
 
-	/* Training failed. Restore common clock configurations */
-	dev_err(&parent->dev, "ASPM: Could not configure common clock\n");
-	list_for_each_entry(child, &linkbus->devices, bus_list)
-		pcie_capability_write_word(child, PCI_EXP_LNKCTL,
-					   child_reg[PCI_FUNC(child->devfn)]);
-	pcie_capability_write_word(parent, PCI_EXP_LNKCTL, parent_reg);
+		/* Training failed. Restore common clock configurations */
+		pci_err(parent, "ASPM: Could not configure common clock\n");
+		list_for_each_entry(child, &linkbus->devices, bus_list)
+			pcie_capability_clear_and_set_word(child, PCI_EXP_LNKCTL,
+							   PCI_EXP_LNKCTL_CCC,
+							   child_old_ccc[PCI_FUNC(child->devfn)]);
+		pcie_capability_clear_and_set_word(parent, PCI_EXP_LNKCTL,
+						   PCI_EXP_LNKCTL_CCC, parent_old_ccc);
+	}
 }
 
 /* Convert L0s latency encoding to ns */
@@ -350,9 +365,34 @@ static u32 calc_l1ss_pwron(struct pci_dev *pdev, u32 scale, u32 val)
 	case 2:
 		return val * 100;
 	}
-	dev_err(&pdev->dev, "%s: Invalid T_PwrOn scale: %u\n",
-		__func__, scale);
+	pci_err(pdev, "%s: Invalid T_PwrOn scale: %u\n", __func__, scale);
 	return 0;
+}
+
+static void encode_l12_threshold(u32 threshold_us, u32 *scale, u32 *value)
+{
+	u32 threshold_ns = threshold_us * 1000;
+
+	/* See PCIe r3.1, sec 7.33.3 and sec 6.18 */
+	if (threshold_ns < 32) {
+		*scale = 0;
+		*value = threshold_ns;
+	} else if (threshold_ns < 1024) {
+		*scale = 1;
+		*value = threshold_ns >> 5;
+	} else if (threshold_ns < 32768) {
+		*scale = 2;
+		*value = threshold_ns >> 10;
+	} else if (threshold_ns < 1048576) {
+		*scale = 3;
+		*value = threshold_ns >> 15;
+	} else if (threshold_ns < 33554432) {
+		*scale = 4;
+		*value = threshold_ns >> 20;
+	} else {
+		*scale = 5;
+		*value = threshold_ns >> 25;
+	}
 }
 
 struct aspm_register_info {
@@ -392,6 +432,15 @@ static void pcie_get_aspm_reg(struct pci_dev *pdev,
 		info->l1ss_cap = 0;
 		return;
 	}
+
+	/*
+	 * If we don't have LTR for the entire path from the Root Complex
+	 * to this device, we can't use ASPM L1.2 because it relies on the
+	 * LTR_L1.2_THRESHOLD.  See PCIe r4.0, secs 5.5.4, 6.18.
+	 */
+	if (!pdev->ltr_path)
+		info->l1ss_cap &= ~PCI_L1SS_CAP_ASPM_L1_2;
+
 	pci_read_config_dword(pdev, info->l1ss_cap_ptr + PCI_L1SS_CTL1,
 			      &info->l1ss_ctl1);
 	pci_read_config_dword(pdev, info->l1ss_cap_ptr + PCI_L1SS_CTL2,
@@ -465,6 +514,7 @@ static void aspm_calc_l1ss_info(struct pcie_link_state *link,
 				struct aspm_register_info *dwreg)
 {
 	u32 val1, val2, scale1, scale2;
+	u32 t_common_mode, t_power_on, l1_2_threshold, scale, value;
 
 	link->l1ss.up_cap_ptr = upreg->l1ss_cap_ptr;
 	link->l1ss.dw_cap_ptr = dwreg->l1ss_cap_ptr;
@@ -473,30 +523,39 @@ static void aspm_calc_l1ss_info(struct pcie_link_state *link,
 	if (!(link->aspm_support & ASPM_STATE_L1_2_MASK))
 		return;
 
-	/* Choose the greater of the two T_cmn_mode_rstr_time */
-	val1 = (upreg->l1ss_cap >> 8) & 0xFF;
-	val2 = (dwreg->l1ss_cap >> 8) & 0xFF;
-	if (val1 > val2)
-		link->l1ss.ctl1 |= val1 << 8;
-	else
-		link->l1ss.ctl1 |= val2 << 8;
-	/*
-	 * We currently use LTR L1.2 threshold to be fixed constant picked from
-	 * Intel's coreboot.
-	 */
-	link->l1ss.ctl1 |= LTR_L1_2_THRESHOLD_BITS;
+	/* Choose the greater of the two Port Common_Mode_Restore_Times */
+	val1 = (upreg->l1ss_cap & PCI_L1SS_CAP_CM_RESTORE_TIME) >> 8;
+	val2 = (dwreg->l1ss_cap & PCI_L1SS_CAP_CM_RESTORE_TIME) >> 8;
+	t_common_mode = max(val1, val2);
 
-	/* Choose the greater of the two T_pwr_on */
-	val1 = (upreg->l1ss_cap >> 19) & 0x1F;
-	scale1 = (upreg->l1ss_cap >> 16) & 0x03;
-	val2 = (dwreg->l1ss_cap >> 19) & 0x1F;
-	scale2 = (dwreg->l1ss_cap >> 16) & 0x03;
+	/* Choose the greater of the two Port T_POWER_ON times */
+	val1   = (upreg->l1ss_cap & PCI_L1SS_CAP_P_PWR_ON_VALUE) >> 19;
+	scale1 = (upreg->l1ss_cap & PCI_L1SS_CAP_P_PWR_ON_SCALE) >> 16;
+	val2   = (dwreg->l1ss_cap & PCI_L1SS_CAP_P_PWR_ON_VALUE) >> 19;
+	scale2 = (dwreg->l1ss_cap & PCI_L1SS_CAP_P_PWR_ON_SCALE) >> 16;
 
 	if (calc_l1ss_pwron(link->pdev, scale1, val1) >
-	    calc_l1ss_pwron(link->downstream, scale2, val2))
+	    calc_l1ss_pwron(link->downstream, scale2, val2)) {
 		link->l1ss.ctl2 |= scale1 | (val1 << 3);
-	else
+		t_power_on = calc_l1ss_pwron(link->pdev, scale1, val1);
+	} else {
 		link->l1ss.ctl2 |= scale2 | (val2 << 3);
+		t_power_on = calc_l1ss_pwron(link->downstream, scale2, val2);
+	}
+
+	/*
+	 * Set LTR_L1.2_THRESHOLD to the time required to transition the
+	 * Link from L0 to L1.2 and back to L0 so we enter L1.2 only if
+	 * downstream devices report (via LTR) that they can tolerate at
+	 * least that much latency.
+	 *
+	 * Based on PCIe r3.1, sec 5.5.3.3.1, Figures 5-16 and 5-17, and
+	 * Table 5-11.  T(POWER_OFF) is at most 2us and T(L1.2) is at
+	 * least 4us.
+	 */
+	l1_2_threshold = 2 + 4 + t_common_mode + t_power_on;
+	encode_l12_threshold(l1_2_threshold, &scale, &value);
+	link->l1ss.ctl1 |= t_common_mode << 8 | scale << 29 | value << 16;
 }
 
 static void pcie_aspm_cap_init(struct pcie_link_state *link, int blacklist)
@@ -659,21 +718,26 @@ static void pcie_config_aspm_l1ss(struct pcie_link_state *link, u32 state)
 
 	if (enable_req & ASPM_STATE_L1_2_MASK) {
 
-		/* Program T_pwr_on in both ports */
+		/* Program T_POWER_ON times in both ports */
 		pci_write_config_dword(parent, up_cap_ptr + PCI_L1SS_CTL2,
 				       link->l1ss.ctl2);
 		pci_write_config_dword(child, dw_cap_ptr + PCI_L1SS_CTL2,
 				       link->l1ss.ctl2);
 
-		/* Program T_cmn_mode in parent */
+		/* Program Common_Mode_Restore_Time in upstream device */
 		pci_clear_and_set_dword(parent, up_cap_ptr + PCI_L1SS_CTL1,
-					0xFF00, link->l1ss.ctl1);
+					PCI_L1SS_CTL1_CM_RESTORE_TIME,
+					link->l1ss.ctl1);
 
-		/* Program LTR L1.2 threshold in both ports */
+		/* Program LTR_L1.2_THRESHOLD time in both ports */
 		pci_clear_and_set_dword(parent,	up_cap_ptr + PCI_L1SS_CTL1,
-					0xE3FF0000, link->l1ss.ctl1);
+					PCI_L1SS_CTL1_LTR_L12_TH_VALUE |
+					PCI_L1SS_CTL1_LTR_L12_TH_SCALE,
+					link->l1ss.ctl1);
 		pci_clear_and_set_dword(child, dw_cap_ptr + PCI_L1SS_CTL1,
-					0xE3FF0000, link->l1ss.ctl1);
+					PCI_L1SS_CTL1_LTR_L12_TH_VALUE |
+					PCI_L1SS_CTL1_LTR_L12_TH_SCALE,
+					link->l1ss.ctl1);
 	}
 
 	val = 0;
@@ -792,7 +856,7 @@ static int pcie_aspm_sanity_check(struct pci_dev *pdev)
 		 */
 		pcie_capability_read_dword(child, PCI_EXP_DEVCAP, &reg32);
 		if (!(reg32 & PCI_EXP_DEVCAP_RBER) && !aspm_force) {
-			dev_info(&child->dev, "disabling ASPM on pre-1.1 PCIe device.  You can enable it with 'pcie_aspm=force'\n");
+			pci_info(child, "disabling ASPM on pre-1.1 PCIe device.  You can enable it with 'pcie_aspm=force'\n");
 			return -EINVAL;
 		}
 	}
@@ -808,8 +872,6 @@ static struct pcie_link_state *alloc_pcie_link_state(struct pci_dev *pdev)
 		return NULL;
 
 	INIT_LIST_HEAD(&link->sibling);
-	INIT_LIST_HEAD(&link->children);
-	INIT_LIST_HEAD(&link->link);
 	link->pdev = pdev;
 	link->downstream = pci_function_0(pdev->subordinate);
 
@@ -835,7 +897,6 @@ static struct pcie_link_state *alloc_pcie_link_state(struct pci_dev *pdev)
 
 		link->parent = parent;
 		link->root = link->parent->root;
-		list_add(&link->link, &parent->children);
 	}
 
 	list_add(&link->sibling, &link_list);
@@ -861,10 +922,10 @@ void pcie_aspm_init_link_state(struct pci_dev *pdev)
 
 	/*
 	 * We allocate pcie_link_state for the component on the upstream
-	 * end of a Link, so there's nothing to do unless this device has a
-	 * Link on its secondary side.
+	 * end of a Link, so there's nothing to do unless this device is
+	 * downstream port.
 	 */
-	if (!pdev->has_secondary_link)
+	if (!pcie_downstream_port(pdev))
 		return;
 
 	/* VIA has a strange chipset, root port is under a bridge */
@@ -945,22 +1006,24 @@ void pcie_aspm_exit_link_state(struct pci_dev *pdev)
 
 	down_read(&pci_bus_sem);
 	mutex_lock(&aspm_lock);
-	/*
-	 * All PCIe functions are in one slot, remove one function will remove
-	 * the whole slot, so just wait until we are the last function left.
-	 */
-	if (!list_empty(&parent->subordinate->devices))
-		goto out;
 
 	link = parent->link_state;
 	root = link->root;
 	parent_link = link->parent;
 
-	/* All functions are removed, so just disable ASPM for the link */
+	/*
+	 * link->downstream is a pointer to the pci_dev of function 0.  If
+	 * we remove that function, the pci_dev is about to be deallocated,
+	 * so we can't use link->downstream again.  Free the link state to
+	 * avoid this.
+	 *
+	 * If we're removing a non-0 function, it's possible we could
+	 * retain the link state, but PCIe r6.0, sec 7.5.3.7, recommends
+	 * programming the same ASPM Control value for all functions of
+	 * multi-function devices, so disable ASPM for all of them.
+	 */
 	pcie_config_aspm_link(link, 0);
 	list_del(&link->sibling);
-	list_del(&link->link);
-	/* Clock PM is for endpoint device */
 	free_link_state(link);
 
 	/* Recheck latencies and configure upstream links */
@@ -968,7 +1031,7 @@ void pcie_aspm_exit_link_state(struct pci_dev *pdev)
 		pcie_update_aspm_capable(root);
 		pcie_config_aspm_path(parent_link);
 	}
-out:
+
 	mutex_unlock(&aspm_lock);
 	up_read(&pci_bus_sem);
 }
@@ -1011,18 +1074,18 @@ void pcie_aspm_powersave_config_link(struct pci_dev *pdev)
 	up_read(&pci_bus_sem);
 }
 
-static void __pci_disable_link_state(struct pci_dev *pdev, int state, bool sem)
+static int __pci_disable_link_state(struct pci_dev *pdev, int state, bool sem)
 {
 	struct pci_dev *parent = pdev->bus->self;
 	struct pcie_link_state *link;
 
 	if (!pci_is_pcie(pdev))
-		return;
+		return 0;
 
-	if (pdev->has_secondary_link)
+	if (pcie_downstream_port(pdev))
 		parent = pdev;
 	if (!parent || !parent->link_state)
-		return;
+		return -EINVAL;
 
 	/*
 	 * A driver requested that ASPM be disabled on this device, but
@@ -1033,8 +1096,8 @@ static void __pci_disable_link_state(struct pci_dev *pdev, int state, bool sem)
 	 * ignored in this situation.
 	 */
 	if (aspm_disabled) {
-		dev_warn(&pdev->dev, "can't disable ASPM; OS doesn't have ASPM control\n");
-		return;
+		pci_warn(pdev, "can't disable ASPM; OS doesn't have ASPM control\n");
+		return -EPERM;
 	}
 
 	if (sem)
@@ -1053,11 +1116,13 @@ static void __pci_disable_link_state(struct pci_dev *pdev, int state, bool sem)
 	mutex_unlock(&aspm_lock);
 	if (sem)
 		up_read(&pci_bus_sem);
+
+	return 0;
 }
 
-void pci_disable_link_state_locked(struct pci_dev *pdev, int state)
+int pci_disable_link_state_locked(struct pci_dev *pdev, int state)
 {
-	__pci_disable_link_state(pdev, state, false);
+	return __pci_disable_link_state(pdev, state, false);
 }
 EXPORT_SYMBOL(pci_disable_link_state_locked);
 
@@ -1065,29 +1130,28 @@ EXPORT_SYMBOL(pci_disable_link_state_locked);
  * pci_disable_link_state - Disable device's link state, so the link will
  * never enter specific states.  Note that if the BIOS didn't grant ASPM
  * control to the OS, this does nothing because we can't touch the LNKCTL
- * register.
+ * register. Returns 0 or a negative errno.
  *
  * @pdev: PCI device
  * @state: ASPM link state to disable
  */
-void pci_disable_link_state(struct pci_dev *pdev, int state)
+int pci_disable_link_state(struct pci_dev *pdev, int state)
 {
-	__pci_disable_link_state(pdev, state, true);
+	return __pci_disable_link_state(pdev, state, true);
 }
 EXPORT_SYMBOL(pci_disable_link_state);
 
-static int pcie_aspm_set_policy(const char *val, struct kernel_param *kp)
+static int pcie_aspm_set_policy(const char *val,
+				const struct kernel_param *kp)
 {
 	int i;
 	struct pcie_link_state *link;
 
 	if (aspm_disabled)
 		return -EPERM;
-	for (i = 0; i < ARRAY_SIZE(policy_str); i++)
-		if (!strncmp(val, policy_str[i], strlen(policy_str[i])))
-			break;
-	if (i >= ARRAY_SIZE(policy_str))
-		return -EINVAL;
+	i = sysfs_match_string(policy_str, val);
+	if (i < 0)
+		return i;
 	if (i == aspm_policy)
 		return 0;
 
@@ -1103,7 +1167,7 @@ static int pcie_aspm_set_policy(const char *val, struct kernel_param *kp)
 	return 0;
 }
 
-static int pcie_aspm_get_policy(char *buffer, struct kernel_param *kp)
+static int pcie_aspm_get_policy(char *buffer, const struct kernel_param *kp)
 {
 	int i, cnt = 0;
 	for (i = 0; i < ARRAY_SIZE(policy_str); i++)
@@ -1117,6 +1181,26 @@ static int pcie_aspm_get_policy(char *buffer, struct kernel_param *kp)
 
 module_param_call(policy, pcie_aspm_set_policy, pcie_aspm_get_policy,
 	NULL, 0644);
+
+/**
+ * pcie_aspm_enabled - Check if PCIe ASPM has been enabled for a device.
+ * @pdev: Target device.
+ */
+bool pcie_aspm_enabled(struct pci_dev *pdev)
+{
+	struct pci_dev *bridge = pci_upstream_bridge(pdev);
+	bool ret;
+
+	if (!bridge)
+		return false;
+
+	mutex_lock(&aspm_lock);
+	ret = bridge->link_state ? !!bridge->link_state->aspm_enabled : false;
+	mutex_unlock(&aspm_lock);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(pcie_aspm_enabled);
 
 #ifdef CONFIG_PCIEASPM_DEBUG
 static ssize_t link_state_show(struct device *dev,

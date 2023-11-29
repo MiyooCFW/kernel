@@ -18,7 +18,7 @@ shortcut for ``print_hex_dump(KERN_DEBUG)``.
 
 For ``print_hex_dump_debug()``/``print_hex_dump_bytes()``, format string is
 its ``prefix_str`` argument, if it is constant string; or ``hexdump``
-in case ``prefix_str`` is build dynamically.
+in case ``prefix_str`` is built dynamically.
 
 Dynamic debug has even more useful features:
 
@@ -110,8 +110,8 @@ If your query set is big, you can batch them too::
 
   ~# cat query-batch-file > <debugfs>/dynamic_debug/control
 
-A another way is to use wildcard. The match rule support ``*`` (matches
-zero or more characters) and ``?`` (matches exactly one character).For
+Another way is to use wildcards. The match rule supports ``*`` (matches
+zero or more characters) and ``?`` (matches exactly one character). For
 example, you can match all usb drivers::
 
   ~# echo "file drivers/usb/* +p" > <debugfs>/dynamic_debug/control
@@ -197,8 +197,8 @@ line
     line number matches the callsite line number exactly.  A
     range of line numbers matches any callsite between the first
     and last line number inclusive.  An empty first number means
-    the first line in the file, an empty line number means the
-    last number in the file.  Examples::
+    the first line in the file, an empty last line number means the
+    last line number in the file.  Examples::
 
 	line 1603           // exactly line 1603
 	line 1600-1605      // the six lines from line 1600 to line 1605
@@ -258,7 +258,7 @@ this boot parameter for debugging purposes.
 
 If ``foo`` module is not built-in, ``foo.dyndbg`` will still be processed at
 boot time, without effect, but will be reprocessed when module is
-loaded later. ``dyndbg_query=`` and bare ``dyndbg=`` are only processed at
+loaded later. ``ddebug_query=`` and bare ``dyndbg=`` are only processed at
 boot.
 
 
@@ -301,7 +301,7 @@ The ``dyndbg`` option is a "fake" module parameter, which means:
 
 For ``CONFIG_DYNAMIC_DEBUG`` kernels, any settings given at boot-time (or
 enabled by ``-DDEBUG`` flag during compilation) can be disabled later via
-the sysfs interface if the debug messages are no longer needed::
+the debugfs interface if the debug messages are no longer needed::
 
    echo "module module_name -p" > <debugfs>/dynamic_debug/control
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TWL6030 GPADC module driver
  *
@@ -12,21 +13,6 @@
  * Based on twl4030-madc.c
  * Copyright (C) 2008 Nokia Corporation
  * Mikko Ylinen <mikko.k.ylinen@nokia.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
- *
  */
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -855,7 +841,6 @@ static const struct iio_chan_spec twl6032_gpadc_iio_channels[] = {
 
 static const struct iio_info twl6030_gpadc_iio_info = {
 	.read_raw = &twl6030_gpadc_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static const struct twl6030_gpadc_platform_data twl6030_pdata = {
@@ -911,9 +896,10 @@ static int twl6030_gpadc_probe(struct platform_device *pdev)
 
 	gpadc = iio_priv(indio_dev);
 
-	gpadc->twl6030_cal_tbl = devm_kzalloc(dev,
-					sizeof(*gpadc->twl6030_cal_tbl) *
-					pdata->nchannels, GFP_KERNEL);
+	gpadc->twl6030_cal_tbl = devm_kcalloc(dev,
+					pdata->nchannels,
+					sizeof(*gpadc->twl6030_cal_tbl),
+					GFP_KERNEL);
 	if (!gpadc->twl6030_cal_tbl)
 		return -ENOMEM;
 
@@ -931,10 +917,8 @@ static int twl6030_gpadc_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		dev_err(&pdev->dev, "failed to get irq\n");
+	if (irq < 0)
 		return irq;
-	}
 
 	ret = devm_request_threaded_irq(dev, irq, NULL,
 				twl6030_gpadc_irq_handler,
@@ -968,7 +952,7 @@ static int twl6030_gpadc_probe(struct platform_device *pdev)
 	}
 
 	ret = twl_i2c_write_u8(TWL6030_MODULE_ID0,
-				VBAT_MEAS | BB_MEAS | BB_MEAS,
+				VBAT_MEAS | BB_MEAS | VAC_MEAS,
 				TWL6030_MISC1);
 	if (ret < 0) {
 		dev_err(dev, "failed to wire up inputs\n");

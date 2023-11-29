@@ -1,19 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
 	Copyright (C) 2004 - 2009 Ivo van Doorn <IvDoorn@gmail.com>
 	<http://rt2x00.serialmonkey.com>
 
-	This program is free software; you can redistribute it and/or modify
-	it under the terms of the GNU General Public License as published by
-	the Free Software Foundation; either version 2 of the License, or
-	(at your option) any later version.
-
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-	GNU General Public License for more details.
-
-	You should have received a copy of the GNU General Public License
-	along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 /*
@@ -161,16 +150,6 @@ void rt2x00mac_tx(struct ieee80211_hw *hw,
 
 	if (unlikely(rt2x00queue_write_tx_frame(queue, skb, control->sta, false)))
 		goto exit_free_skb;
-
-	/*
-	 * Pausing queue has to be serialized with rt2x00lib_txdone(). Note
-	 * we should not use spin_lock_bh variant as bottom halve was already
-	 * disabled before ieee80211_xmit() call.
-	 */
-	spin_lock(&queue->tx_lock);
-	if (rt2x00queue_threshold(queue))
-		rt2x00queue_pause_queue(queue);
-	spin_unlock(&queue->tx_lock);
 
 	return;
 
@@ -537,24 +516,6 @@ int rt2x00mac_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 EXPORT_SYMBOL_GPL(rt2x00mac_set_key);
 #endif /* CONFIG_RT2X00_LIB_CRYPTO */
 
-int rt2x00mac_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-		      struct ieee80211_sta *sta)
-{
-	struct rt2x00_dev *rt2x00dev = hw->priv;
-
-	return rt2x00dev->ops->lib->sta_add(rt2x00dev, vif, sta);
-}
-EXPORT_SYMBOL_GPL(rt2x00mac_sta_add);
-
-int rt2x00mac_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-			 struct ieee80211_sta *sta)
-{
-	struct rt2x00_dev *rt2x00dev = hw->priv;
-
-	return rt2x00dev->ops->lib->sta_remove(rt2x00dev, sta);
-}
-EXPORT_SYMBOL_GPL(rt2x00mac_sta_remove);
-
 void rt2x00mac_sw_scan_start(struct ieee80211_hw *hw,
 			     struct ieee80211_vif *vif,
 			     const u8 *mac_addr)
@@ -738,9 +699,12 @@ void rt2x00mac_flush(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	if (!test_bit(DEVICE_STATE_PRESENT, &rt2x00dev->flags))
 		return;
 
+	set_bit(DEVICE_STATE_FLUSHING, &rt2x00dev->flags);
+
 	tx_queue_for_each(rt2x00dev, queue)
-		if (!rt2x00queue_empty(queue))
-			rt2x00queue_flush_queue(queue, drop);
+		rt2x00queue_flush_queue(queue, drop);
+
+	clear_bit(DEVICE_STATE_FLUSHING, &rt2x00dev->flags);
 }
 EXPORT_SYMBOL_GPL(rt2x00mac_flush);
 

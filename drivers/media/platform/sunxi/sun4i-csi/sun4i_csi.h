@@ -150,6 +150,9 @@ struct sun4i_csi {
 	struct list_head		buf_list;
 	spinlock_t			qlock;
 	unsigned int			sequence;
+
+	/* Hack */
+	bool			packed;
 };
 
 int sun4i_csi_dma_register(struct sun4i_csi *csi, int irq);

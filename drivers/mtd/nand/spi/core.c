@@ -304,6 +304,10 @@ static int spinand_write_to_cache_op(struct spinand_device *spinand,
 
 	wdesc = spinand->dirmaps[req->pos.plane].wdesc;
 
+	/* Workaround for some stupid chips which write full zero ecc when write to non-ECC OOB */
+	if(spinand->onchip_ecc_quirk && !req->datalen)
+		spinand_ecc_enable(spinand, false);
+
 	while (nbytes) {
 		ret = spi_mem_dirmap_write(wdesc, column, nbytes, buf);
 		if (ret < 0)
@@ -576,11 +580,18 @@ static bool spinand_isbad(struct nand_device *nand, const struct nand_pos *pos)
 		.oobbuf.in = marker,
 		.mode = MTD_OPS_RAW,
 	};
+	struct mtd_oob_region region;
+	int i;
 
 	spinand_select_target(spinand, pos->target);
 	spinand_read_page(spinand, &req, false);
-	if (marker[0] != 0xff || marker[1] != 0xff)
-		return true;
+
+	spinand->eccinfo.ooblayout->free(&spinand->base.mtd, 0, &region);
+
+	for(i = 0 ; i < sizeof(marker) && i < region.offset; i++){
+		if (marker[i] != 0xff)
+			return true;
+	}
 
 	return false;
 }
@@ -612,6 +623,7 @@ static int spinand_markbad(struct nand_device *nand, const struct nand_pos *pos)
 		.mode = MTD_OPS_RAW,
 	};
 	int ret;
+	struct mtd_oob_region region;
 
 	ret = spinand_select_target(spinand, pos->target);
 	if (ret)
@@ -620,6 +632,9 @@ static int spinand_markbad(struct nand_device *nand, const struct nand_pos *pos)
 	ret = spinand_write_enable_op(spinand);
 	if (ret)
 		return ret;
+
+	spinand->eccinfo.ooblayout->free(&spinand->base.mtd, 0, &region);
+	req.ooblen = region.offset < sizeof(marker) ? region.offset : sizeof(marker);
 
 	return spinand_write_page(spinand, &req);
 }
@@ -879,6 +894,8 @@ int spinand_match_and_init(struct spinand_device *spinand,
 		op = spinand_select_op_variant(spinand,
 					       info->op_variants.update_cache);
 		spinand->op_templates.update_cache = op;
+
+		spinand->onchip_ecc_quirk = info->onchip_ecc_quirk;
 
 		return 0;
 	}

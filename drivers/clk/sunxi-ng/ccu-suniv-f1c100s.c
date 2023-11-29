@@ -238,7 +238,14 @@ static SUNXI_CCU_MUX_WITH_GATE(i2s_clk, "i2s", i2s_spdif_parents,
 static SUNXI_CCU_MUX_WITH_GATE(spdif_clk, "spdif", i2s_spdif_parents,
 			       0x0b4, 16, 2, BIT(31), 0);
 
-/* The BSP header file has a CIR_CFG, but no mod clock uses this definition */
+static const char * const cir_clk_parents[] = { "osc32k", "osc24M" };
+static SUNXI_CCU_MP_WITH_MUX_GATE(cir_clk, "ir",
+				  cir_clk_parents, 0xb8,
+				  0, 4,		/* M */
+				  16, 2,	/* P */
+				  24, 2,	/* mux */
+				  BIT(31),	/* gate */
+				  0);
 
 static SUNXI_CCU_GATE(usb_phy0_clk,	"usb-phy0",	"osc24M",
 		      0x0cc, BIT(1), 0);
@@ -287,7 +294,7 @@ static SUNXI_CCU_M_WITH_MUX_TABLE_GATE(tve_clk2_clk, "tve-clk2",
 				       tve_clk2_parents, tve_clk2_table,
 				       0x120, 0, 4, 24, 3, BIT(31), 0);
 static SUNXI_CCU_M_WITH_GATE(tve_clk1_clk, "tve-clk1", "tve-clk2",
-			     0x120, 8, 1, BIT(15), 0);
+			     0x120, 8, 1, BIT(15), CLK_SET_RATE_PARENT);
 
 static const char * const tvd_parents[] = { "pll-video", "osc24M",
 					    "pll-video-2x" };
@@ -297,15 +304,12 @@ static SUNXI_CCU_M_WITH_MUX_GATE(tvd_clk, "tvd", tvd_parents,
 static const char * const csi_parents[] = { "pll-video", "osc24M" };
 static const u8 csi_table[] = { 0, 5, };
 static SUNXI_CCU_M_WITH_MUX_TABLE_GATE(csi_clk, "csi", csi_parents, csi_table,
-				       0x120, 0, 4, 8, 3, BIT(15), 0);
+				       0x134, 0, 4, 8, 3, BIT(15), 0);
 
-/*
- * TODO: BSP says the parent is pll-audio, however common sense and experience
- * told us it should be pll-ve. pll-ve is totally not used in BSP code.
- */
-static SUNXI_CCU_GATE(ve_clk, "ve", "pll-audio", 0x13c, BIT(31), 0);
 
-static SUNXI_CCU_GATE(codec_clk, "codec", "pll-audio", 0x140, BIT(31), 0);
+static SUNXI_CCU_GATE(ve_clk, "ve", "pll-ve", 0x13c, BIT(31), 0);
+
+static SUNXI_CCU_GATE(codec_clk, "codec", "pll-audio", 0x140, BIT(31), CLK_SET_RATE_PARENT);
 
 static SUNXI_CCU_GATE(avs_clk, "avs", "osc24M", 0x144, BIT(31), 0);
 
@@ -354,6 +358,7 @@ static struct ccu_common *suniv_ccu_clks[] = {
 	&mmc1_output_clk.common,
 	&i2s_clk.common,
 	&spdif_clk.common,
+	&cir_clk.common,
 	&usb_phy0_clk.common,
 	&dram_ve_clk.common,
 	&dram_csi_clk.common,
@@ -445,6 +450,7 @@ static struct clk_hw_onecell_data suniv_hw_clks = {
 		[CLK_MMC1_OUTPUT]	= &mmc1_output_clk.common.hw,
 		[CLK_I2S]		= &i2s_clk.common.hw,
 		[CLK_SPDIF]		= &spdif_clk.common.hw,
+		[CLK_CIR]		= &cir_clk.common.hw,
 		[CLK_USB_PHY0]		= &usb_phy0_clk.common.hw,
 		[CLK_DRAM_VE]		= &dram_ve_clk.common.hw,
 		[CLK_DRAM_CSI]		= &dram_csi_clk.common.hw,

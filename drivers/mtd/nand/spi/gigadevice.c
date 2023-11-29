@@ -194,6 +194,24 @@ static int gd5fxgq4ufxxg_ecc_get_status(struct spinand_device *spinand,
 	return -EINVAL;
 }
 
+static int gd5fxgq5_variant2_ooblayout_free(struct mtd_info *mtd, int section,
+					struct mtd_oob_region *region)
+{
+	if (section)
+		return -ERANGE;
+
+	/* Q5 seems have some bug on OOB ECC */
+	region->offset = 16;
+	region->length = 4;
+
+	return 0;
+}
+
+static const struct mtd_ooblayout_ops gd5fxgq5_variant2_ooblayout = {
+	.ecc = gd5fxgq4_variant2_ooblayout_ecc,
+	.free = gd5fxgq5_variant2_ooblayout_free,
+};
+
 static const struct spinand_info gigadevice_spinand_table[] = {
 	SPINAND_INFO("GD5F1GQ4xA", 0xF1,
 		     NAND_MEMORG(1, 2048, 64, 64, 1024, 20, 1, 1, 1),
@@ -240,6 +258,15 @@ static const struct spinand_info gigadevice_spinand_table[] = {
 		     SPINAND_HAS_QE_BIT,
 		     SPINAND_ECCINFO(&gd5fxgq4_variant2_ooblayout,
 				     gd5fxgq4ufxxg_ecc_get_status)),
+	SPINAND_INFO("GD5F1GQ5UExxG", 0x51,
+		     NAND_MEMORG(1, 2048, 128, 64, 1024, 20, 1, 1, 1),
+		     NAND_ECCREQ(4, 512),
+		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
+					      &write_cache_variants,
+					      &update_cache_variants),
+		     SPINAND_HAS_QE_BIT,
+		     SPINAND_ECCINFO(&gd5fxgq5_variant2_ooblayout,
+				     gd5fxgq4uexxg_ecc_get_status)),
 };
 
 static int gigadevice_spinand_detect(struct spinand_device *spinand)
@@ -249,13 +276,14 @@ static int gigadevice_spinand_detect(struct spinand_device *spinand)
 	int ret;
 
 	/*
+	 * Ancient GDF5 A-series retrun 0xFF in id[0]
 	 * Earlier GDF5-series devices (A,E) return [0][MID][DID]
 	 * Later (F) devices return [MID][DID1][DID2]
 	 */
 
 	if (id[0] == SPINAND_MFR_GIGADEVICE)
 		did = (id[1] << 8) + id[2];
-	else if (id[0] == 0 && id[1] == SPINAND_MFR_GIGADEVICE)
+	else if ((id[0] == 0 || id[0] == 0xff) && id[1] == SPINAND_MFR_GIGADEVICE)
 		did = id[2];
 	else
 		return 0;

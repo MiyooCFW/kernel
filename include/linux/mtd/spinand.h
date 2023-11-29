@@ -303,6 +303,8 @@ struct spinand_info {
 	} op_variants;
 	int (*select_target)(struct spinand_device *spinand,
 			     unsigned int target);
+
+	int onchip_ecc_quirk;
 };
 
 #define SPINAND_INFO_OP_VARIANTS(__read, __write, __update)		\
@@ -391,6 +393,8 @@ struct spinand_device {
 	u8 *scratchbuf;
 	const struct spinand_manufacturer *manufacturer;
 	void *priv;
+
+	int onchip_ecc_quirk;
 };
 
 /**

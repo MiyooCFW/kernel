@@ -8,6 +8,7 @@ Required properties:
 		- "allwinner,sun8i-a23-codec"
 		- "allwinner,sun8i-h3-codec"
 		- "allwinner,sun8i-v3s-codec"
+		- "allwinner,suniv-f1c100s-codec"
 - reg: must contain the registers location and length
 - interrupts: must contain the codec interrupt
 - dmas: DMA channels for tx and rx dma. See the DMA client binding,
@@ -27,6 +28,7 @@ Required properties for the following compatibles:
 		- "allwinner,sun8i-a23-codec"
 		- "allwinner,sun8i-h3-codec"
 		- "allwinner,sun8i-v3s-codec"
+		- "allwinner,suniv-f1c100s-codec"
 - resets: phandle to the reset control for this device
 - allwinner,audio-routing: A list of the connections between audio components.
 			   Each entry is a pair of strings, the first being the
@@ -41,6 +43,7 @@ Required properties for the following compatibles:
 			   "MIC1"
 			   "MIC2"	(not on sun8i-v3s)
 			   "MIC3"	(sun6i-a31 only)
+			   "MIC"	(suniv-f1c100s only)
 
 			   Microphone biases from the SoC:
 			   "HBIAS"
@@ -51,6 +54,8 @@ Required properties for the following compatibles:
 			   "Headset Mic"
 			   "Line In"
 			   "Line Out"
+			   "Right FM In"	(suniv-f1c100s only)
+			   "Left FM In"		(suniv-f1c100s only)
 			   "Mic"
 			   "Speaker"
 

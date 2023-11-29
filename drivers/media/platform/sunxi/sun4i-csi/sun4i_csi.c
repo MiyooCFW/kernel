@@ -217,6 +217,12 @@ static int sun4i_csi_probe(struct platform_device *pdev)
 		return PTR_ERR(csi->rst);
 	}
 
+	csi->packed = false;
+	if (device_property_present(&pdev->dev, "packed-format")) {
+		dev_info(&pdev->dev, "Packed (RAW) format enabled.");
+		csi->packed = true;
+	}
+
 	/* Initialize subdev */
 	v4l2_subdev_init(subdev, &sun4i_csi_subdev_ops);
 	subdev->flags = V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;

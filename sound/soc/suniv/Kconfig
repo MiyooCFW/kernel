@@ -1,0 +1,8 @@
+config SND_SUNIV_CODEC
+	tristate "Allwinner f1c500s codec support"
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select REGMAP_MMIO
+	help
+	  Select Y or M to add support for the Codec embedded in the Allwinner
+	  A10 and affiliated SoCs.
+

@@ -711,4 +711,10 @@ config CHARGER_WILCO
 	  information can be found in
 	  Documentation/ABI/testing/sysfs-class-power-wilco
 
+config BATTERY_MIYOO
+	tristate "Miyoo battery driver"
+	depends on MACH_SUNIV
+	help
+	  Say Y to enable support for the battery on Miyoo handheld.
+
 endif # POWER_SUPPLY

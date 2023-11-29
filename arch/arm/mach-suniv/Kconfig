@@ -1,0 +1,21 @@
+config ARCH_SUNXI
+	bool
+	select ARCH_HAS_RESET_CONTROLLER
+	select CLKSRC_MMIO
+	select GENERIC_IRQ_CHIP
+	select GPIOLIB
+	select PINCTRL
+	select RESET_CONTROLLER
+	select SUN4I_TIMER
+
+menuconfig ARCH_SUNXI_V5
+	bool "Allwinner ARMv5 SoCs"
+	depends on ARCH_MULTI_V5
+	select ARCH_SUNXI
+
+if ARCH_SUNXI_V5
+
+config MACH_SUNIV
+	bool "Allwinner suniv Family SoCs support"
+	default ARCH_SUNXI
+endif

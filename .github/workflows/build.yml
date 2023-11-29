@@ -61,7 +61,7 @@ jobs:
         mv drivers/video/fbdev/rm68090fb.ko dist/
         mv drivers/video/fbdev/miyoo-tvout.ko dist/
         mv drivers/usb/gadget/legacy/g_acm_ms.ko dist/
-
+        mv sound/drivers/snd-aloop.ko dist/
         
     - run: find ${{ inputs.submodule || '.' }}/dist
     

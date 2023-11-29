@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ltc2497.c - Driver for Analog Devices/Linear Technology LTC2497 ADC
  *
  * Copyright (C) 2017 Analog Devices Inc.
- *
- * Licensed under the GPL-2.
  *
  * Datasheet: http://cds.linear.com/docs/en/datasheet/2497fd.pdf
  */
@@ -186,7 +185,6 @@ static const struct iio_chan_spec ltc2497_channel[] = {
 
 static const struct iio_info ltc2497_info = {
 	.read_raw = ltc2497_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static int ltc2497_probe(struct i2c_client *client,

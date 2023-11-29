@@ -1,21 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * pcm emulation on emu8000 wavetable
  *
  *  Copyright (C) 2002 Takashi Iwai <tiwai@suse.de>
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include "emu8000_local.h"
@@ -193,9 +180,9 @@ static inline int emu8k_get_curpos(struct snd_emu8k_pcm *rec, int ch)
  * timer interrupt handler
  * check the current position and update the period if necessary.
  */
-static void emu8k_pcm_timer_func(unsigned long data)
+static void emu8k_pcm_timer_func(struct timer_list *t)
 {
-	struct snd_emu8k_pcm *rec = (struct snd_emu8k_pcm *)data;
+	struct snd_emu8k_pcm *rec = from_timer(rec, t, timer);
 	int ptr, delta;
 
 	spin_lock(&rec->timer_lock);
@@ -241,7 +228,7 @@ static int emu8k_pcm_open(struct snd_pcm_substream *subs)
 	runtime->private_data = rec;
 
 	spin_lock_init(&rec->timer_lock);
-	setup_timer(&rec->timer, emu8k_pcm_timer_func, (unsigned long)rec);
+	timer_setup(&rec->timer, emu8k_pcm_timer_func, 0);
 
 	runtime->hw = emu8k_pcm_hw;
 	runtime->hw.buffer_bytes_max = emu->mem_size - LOOP_BLANK_SIZE * 3;
@@ -470,7 +457,7 @@ static int emu8k_pcm_copy(struct snd_pcm_substream *subs,
 	/* convert to word unit */
 	pos = (pos << 1) + rec->loop_start[voice];
 	count <<= 1;
-	LOOP_WRITE(rec, pos, src, count, COPY_UESR);
+	LOOP_WRITE(rec, pos, src, count, COPY_USER);
 	return 0;
 }
 

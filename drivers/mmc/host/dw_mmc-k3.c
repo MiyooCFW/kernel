@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2013 Linaro Ltd.
  * Copyright (c) 2013 Hisilicon Limited.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/bitops.h>
@@ -75,7 +71,7 @@ struct hs_timing {
 	u32 smpl_phase_min;
 };
 
-struct hs_timing hs_timing_cfg[TIMING_MODE][TIMING_CFG_NUM] = {
+static struct hs_timing hs_timing_cfg[TIMING_MODE][TIMING_CFG_NUM] = {
 	{ /* reserved */ },
 	{ /* SD */
 		{7, 0, 15, 15,},  /* 0: LEGACY 400k */

@@ -13,6 +13,7 @@
 #include <linux/namei.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/bpf-cgroup.h>
 #include <linux/kmemleak.h>
 #include "internal.h"
 
@@ -21,6 +22,10 @@ static const struct file_operations proc_sys_file_operations;
 static const struct inode_operations proc_sys_inode_operations;
 static const struct file_operations proc_sys_dir_file_operations;
 static const struct inode_operations proc_sys_dir_operations;
+
+/* shared constants to be used in various sysctls */
+const int sysctl_vals[] = { 0, 1, INT_MAX };
+EXPORT_SYMBOL(sysctl_vals);
 
 /* Support for permanently empty directories */
 
@@ -558,9 +563,8 @@ static struct dentry *proc_sys_lookup(struct inode *dir, struct dentry *dentry,
 		goto out;
 	}
 
-	err = NULL;
 	d_set_d_op(dentry, &proc_sys_dentry_operations);
-	d_add(dentry, inode);
+	err = d_splice_alias(inode, dentry);
 
 out:
 	if (h)
@@ -575,8 +579,8 @@ static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 	struct inode *inode = file_inode(filp);
 	struct ctl_table_header *head = grab_header(inode);
 	struct ctl_table *table = PROC_I(inode)->sysctl_entry;
+	void *new_buf = NULL;
 	ssize_t error;
-	size_t res;
 
 	if (IS_ERR(head))
 		return PTR_ERR(head);
@@ -594,11 +598,27 @@ static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 	if (!table->proc_handler)
 		goto out;
 
+	error = BPF_CGROUP_RUN_PROG_SYSCTL(head, table, write, buf, &count,
+					   ppos, &new_buf);
+	if (error)
+		goto out;
+
 	/* careful: calling conventions are nasty here */
-	res = count;
-	error = table->proc_handler(table, write, buf, &res, ppos);
+	if (new_buf) {
+		mm_segment_t old_fs;
+
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		error = table->proc_handler(table, write, (void __user *)new_buf,
+					    &count, ppos);
+		set_fs(old_fs);
+		kfree(new_buf);
+	} else {
+		error = table->proc_handler(table, write, buf, &count, ppos);
+	}
+
 	if (!error)
-		error = res;
+		error = count;
 out:
 	sysctl_head_finish(head);
 
@@ -634,17 +654,17 @@ static int proc_sys_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static unsigned int proc_sys_poll(struct file *filp, poll_table *wait)
+static __poll_t proc_sys_poll(struct file *filp, poll_table *wait)
 {
 	struct inode *inode = file_inode(filp);
 	struct ctl_table_header *head = grab_header(inode);
 	struct ctl_table *table = PROC_I(inode)->sysctl_entry;
-	unsigned int ret = DEFAULT_POLLMASK;
+	__poll_t ret = DEFAULT_POLLMASK;
 	unsigned long event;
 
 	/* sysctl was unregistered */
 	if (IS_ERR(head))
-		return POLLERR | POLLHUP;
+		return EPOLLERR | EPOLLHUP;
 
 	if (!table->proc_handler)
 		goto out;
@@ -657,7 +677,7 @@ static unsigned int proc_sys_poll(struct file *filp, poll_table *wait)
 
 	if (event != atomic_read(&table->poll->event)) {
 		filp->private_data = proc_sys_poll_event(table->poll);
-		ret = POLLIN | POLLRDNORM | POLLERR | POLLPRI;
+		ret = EPOLLIN | EPOLLRDNORM | EPOLLERR | EPOLLPRI;
 	}
 
 out:
@@ -688,6 +708,7 @@ static bool proc_sys_fill_cache(struct file *file,
 		if (IS_ERR(child))
 			return false;
 		if (d_in_lookup(child)) {
+			struct dentry *res;
 			inode = proc_sys_make_inode(dir->d_sb, head, table);
 			if (IS_ERR(inode)) {
 				d_lookup_done(child);
@@ -695,7 +716,16 @@ static bool proc_sys_fill_cache(struct file *file,
 				return false;
 			}
 			d_set_d_op(child, &proc_sys_dentry_operations);
-			d_add(child, inode);
+			res = d_splice_alias(inode, child);
+			d_lookup_done(child);
+			if (unlikely(res)) {
+				if (IS_ERR(res)) {
+					dput(child);
+					return false;
+				}
+				dput(child);
+				child = res;
+			}
 		}
 	}
 	inode = d_inode(child);
@@ -716,12 +746,9 @@ static bool proc_sys_link_fill_cache(struct file *file,
 	if (IS_ERR(head))
 		return false;
 
-	if (S_ISLNK(table->mode)) {
-		/* It is not an error if we can not follow the link ignore it */
-		int err = sysctl_follow_link(&head, &table);
-		if (err)
-			goto out;
-	}
+	/* It is not an error if we can not follow the link ignore it */
+	if (sysctl_follow_link(&head, &table))
+		goto out;
 
 	ret = proc_sys_fill_cache(file, ctx, head, table);
 out:
@@ -1093,7 +1120,7 @@ static int sysctl_check_table_array(const char *path, struct ctl_table *table)
 	if ((table->proc_handler == proc_douintvec) ||
 	    (table->proc_handler == proc_douintvec_minmax)) {
 		if (table->maxlen != sizeof(unsigned int))
-			err |= sysctl_err(path, table, "array now allowed");
+			err |= sysctl_err(path, table, "array not allowed");
 	}
 
 	return err;
@@ -1456,7 +1483,7 @@ static int register_leaf_sysctl_tables(const char *path, char *pos,
 	/* If there are mixed files and directories we need a new table */
 	if (nr_dirs && nr_files) {
 		struct ctl_table *new;
-		files = kzalloc(sizeof(struct ctl_table) * (nr_files + 1),
+		files = kcalloc(nr_files + 1, sizeof(struct ctl_table),
 				GFP_KERNEL);
 		if (!files)
 			goto out;

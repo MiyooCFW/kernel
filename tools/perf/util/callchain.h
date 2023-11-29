@@ -2,13 +2,17 @@
 #ifndef __PERF_CALLCHAIN_H
 #define __PERF_CALLCHAIN_H
 
-#include "../perf.h"
 #include <linux/list.h>
 #include <linux/rbtree.h>
-#include "event.h"
-#include "map.h"
-#include "symbol.h"
+#include "map_symbol.h"
 #include "branch.h"
+
+struct addr_location;
+struct evsel;
+struct ip_callchain;
+struct map;
+struct perf_sample;
+struct thread;
 
 #define HELP_PAD "\t\t\t\t"
 
@@ -118,13 +122,14 @@ struct callchain_list {
 		bool		has_children;
 	};
 	u64			branch_count;
+	u64			from_count;
 	u64			predicted_count;
 	u64			abort_count;
 	u64			cycles_count;
 	u64			iter_count;
 	u64			iter_cycles;
 	struct branch_type_stat brtype_stat;
-	char		       *srcline;
+	const char		*srcline;
 	struct list_head	list;
 };
 
@@ -138,6 +143,7 @@ struct callchain_cursor_node {
 	u64				ip;
 	struct map			*map;
 	struct symbol			*sym;
+	const char			*srcline;
 	bool				branch;
 	struct branch_flags		branch_flags;
 	u64				branch_from;
@@ -186,25 +192,13 @@ int callchain_append(struct callchain_root *root,
 int callchain_merge(struct callchain_cursor *cursor,
 		    struct callchain_root *dst, struct callchain_root *src);
 
-/*
- * Initialize a cursor before adding entries inside, but keep
- * the previously allocated entries as a cache.
- */
-static inline void callchain_cursor_reset(struct callchain_cursor *cursor)
-{
-	struct callchain_cursor_node *node;
-
-	cursor->nr = 0;
-	cursor->last = &cursor->first;
-
-	for (node = cursor->first; node != NULL; node = node->next)
-		map__zput(node->map);
-}
+void callchain_cursor_reset(struct callchain_cursor *cursor);
 
 int callchain_cursor_append(struct callchain_cursor *cursor, u64 ip,
 			    struct map *map, struct symbol *sym,
 			    bool branch, struct branch_flags *flags,
-			    int nr_loop_iter, u64 iter_cycles, u64 branch_from);
+			    int nr_loop_iter, u64 iter_cycles, u64 branch_from,
+			    const char *srcline);
 
 /* Close a cursor writing session. Initialize for the reader */
 static inline void callchain_cursor_commit(struct callchain_cursor *cursor)
@@ -246,7 +240,7 @@ int record_opts__parse_callchain(struct record_opts *record,
 
 int sample__resolve_callchain(struct perf_sample *sample,
 			      struct callchain_cursor *cursor, struct symbol **parent,
-			      struct perf_evsel *evsel, struct addr_location *al,
+			      struct evsel *evsel, struct addr_location *al,
 			      int max_stack);
 int hist_entry__append_callchain(struct hist_entry *he, struct perf_sample *sample);
 int fill_callchain_info(struct addr_location *al, struct callchain_cursor_node *node,

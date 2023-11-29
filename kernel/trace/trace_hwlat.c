@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * trace_hwlatdetect.c - A simple Hardware Latency detector.
  *
@@ -35,9 +36,6 @@
  *
  * Includes useful feedback from Clark Williams <clark@redhat.com>
  *
- * This file is licensed under the terms of the GNU General Public
- * License version 2. This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  */
 #include <linux/kthread.h>
 #include <linux/tracefs.h>
@@ -282,7 +280,7 @@ static void move_to_next_cpu(void)
 	 * of this thread, than stop migrating for the duration
 	 * of the current test.
 	 */
-	if (!cpumask_equal(current_mask, &current->cpus_allowed))
+	if (!cpumask_equal(current_mask, current->cpus_ptr))
 		goto disable;
 
 	get_online_cpus();
@@ -356,6 +354,9 @@ static int start_kthread(struct trace_array *tr)
 	struct cpumask *current_mask = &save_cpumask;
 	struct task_struct *kthread;
 	int next_cpu;
+
+	if (hwlat_kthread)
+		return 0;
 
 	/* Just pick the first CPU on first iteration */
 	current_mask = &save_cpumask;

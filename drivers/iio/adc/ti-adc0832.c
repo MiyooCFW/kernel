@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ADC0831/ADC0832/ADC0834/ADC0838 8-bit ADC driver
  *
  * Copyright (c) 2016 Akinobu Mita <akinobu.mita@gmail.com>
- *
- * This file is subject to the terms and conditions of version 2 of
- * the GNU General Public License.  See the file COPYING in the main
- * directory of this archive for more details.
  *
  * Datasheet: http://www.ti.com/lit/ds/symlink/adc0832-n.pdf
  */
@@ -201,7 +198,6 @@ static int adc0832_read_raw(struct iio_dev *iio,
 
 static const struct iio_info adc0832_info = {
 	.read_raw = adc0832_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static irqreturn_t adc0832_trigger_handler(int irq, void *p)

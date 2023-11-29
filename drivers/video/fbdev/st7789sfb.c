@@ -608,14 +608,7 @@ static void suniv_cpu_init(struct myfb_par *par)
     }
 }
 
-static void lcd_delay_init(unsigned long param)
-{
-    suniv_cpu_init(mypar);
-	suniv_fb_addr_init(mypar);
-    suniv_lcdc_init(mypar->mode.xres, mypar->mode.yres);
-    mypar->lcdc_ready = 1;
-    suniv_enable_irq(mypar);
-}
+
 
 #define CNVT_TOHW(val, width) ((((val) << (width)) + 0x7FFF - (val)) >> 16)
 static int myfb_setcolreg(unsigned regno, unsigned red, unsigned green, unsigned blue, unsigned transp, struct fb_info *info)
@@ -764,7 +757,7 @@ static int myfb_probe(struct platform_device *device)
     fb_videomode_to_var(&myfb_var, mode);
 
     par->vram_size = (320 * 240 * 2 * 4) + 4096;
-    par->vram_virt = dma_alloc_coherent(NULL, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
+    par->vram_virt = dma_alloc_coherent(par->dev, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
     if (!par->vram_virt) {
         return -EINVAL;
     }
@@ -774,7 +767,7 @@ static int myfb_probe(struct platform_device *device)
     myfb_fix.line_length = 320 * 2;
     par->app_virt = (struct myfb_app*)((uint8_t*)par->vram_virt + (320 * 240 * 2 * 4));
 
-    par->v_palette_base = dma_alloc_coherent(NULL, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
+    par->v_palette_base = dma_alloc_coherent(par->dev, PALETTE_SIZE, (resource_size_t*)&par->p_palette_base, GFP_KERNEL | GFP_DMA);
     if (!par->v_palette_base) {
         return -EINVAL;
     }
@@ -808,8 +801,11 @@ static int myfb_probe(struct platform_device *device)
         clk_prepare_enable(of_clk_get(device->dev.of_node, ret));
     }
     init_waitqueue_head(&wait_vsync_queue);
-    setup_timer(&mytimer, lcd_delay_init, 0);
-    mod_timer(&mytimer, jiffies + HZ);
+    suniv_cpu_init(mypar);
+	suniv_fb_addr_init(mypar);
+    suniv_lcdc_init(mypar->mode.xres, mypar->mode.yres);
+    mypar->lcdc_ready = 1;
+    suniv_enable_irq(mypar);
     return 0;
 }
 
@@ -858,7 +854,7 @@ static int myfb_resume(struct platform_device *dev)
 
 static const struct of_device_id fb_of_match[] = {
         {
-                .compatible = "allwinner,suniv-f1c500s-tcon0",
+                .compatible = "allwinner,suniv-f1c100s-tcon0",
         },{}
 };
 MODULE_DEVICE_TABLE(of, fb_of_match);

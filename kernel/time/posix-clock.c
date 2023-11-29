@@ -1,21 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * posix-clock.c - support for dynamic clock devices
+ * Support for dynamic clock devices
  *
  * Copyright (C) 2010 OMICRON electronics GmbH
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include <linux/device.h>
 #include <linux/export.h>
@@ -66,13 +53,13 @@ static ssize_t posix_clock_read(struct file *fp, char __user *buf,
 	return err;
 }
 
-static unsigned int posix_clock_poll(struct file *fp, poll_table *wait)
+static __poll_t posix_clock_poll(struct file *fp, poll_table *wait)
 {
 	struct posix_clock *clk = get_posix_clock(fp);
-	unsigned int result = 0;
+	__poll_t result = 0;
 
 	if (!clk)
-		return POLLERR;
+		return EPOLLERR;
 
 	if (clk->ops.poll)
 		result = clk->ops.poll(clk, fp, wait);
@@ -211,7 +198,7 @@ struct posix_clock_desc {
 
 static int get_clock_desc(const clockid_t id, struct posix_clock_desc *cd)
 {
-	struct file *fp = fget(CLOCKID_TO_FD(id));
+	struct file *fp = fget(clockid_to_fd(id));
 	int err = -EINVAL;
 
 	if (!fp)
@@ -236,7 +223,7 @@ static void put_clock_desc(struct posix_clock_desc *cd)
 	fput(cd->fp);
 }
 
-static int pc_clock_adjtime(clockid_t id, struct timex *tx)
+static int pc_clock_adjtime(clockid_t id, struct __kernel_timex *tx)
 {
 	struct posix_clock_desc cd;
 	int err;

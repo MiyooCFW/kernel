@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Maxim Integrated MAX5481-MAX5484 digital potentiometer driver
  * Copyright 2016 Rockwell Collins
  *
  * Datasheet:
  * http://datasheets.maximintegrated.com/en/ds/MAX5481-MAX5484.pdf
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the gnu general public license version 2 as
- * published by the free software foundation.
- *
  */
 
 #include <linux/acpi.h>
@@ -119,7 +115,6 @@ static int max5481_write_raw(struct iio_dev *indio_dev,
 static const struct iio_info max5481_info = {
 	.read_raw = max5481_read_raw,
 	.write_raw = max5481_write_raw,
-	.driver_module = THIS_MODULE,
 };
 
 #if defined(CONFIG_OF)
@@ -138,7 +133,6 @@ static int max5481_probe(struct spi_device *spi)
 	struct iio_dev *indio_dev;
 	struct max5481_data *data;
 	const struct spi_device_id *id = spi_get_device_id(spi);
-	const struct of_device_id *match;
 	int ret;
 
 	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*data));
@@ -150,10 +144,8 @@ static int max5481_probe(struct spi_device *spi)
 
 	data->spi = spi;
 
-	match = of_match_device(of_match_ptr(max5481_match), &spi->dev);
-	if (match)
-		data->cfg = of_device_get_match_data(&spi->dev);
-	else
+	data->cfg = of_device_get_match_data(&spi->dev);
+	if (!data->cfg)
 		data->cfg = &max5481_cfg[id->driver_data];
 
 	indio_dev->name = id->name;
@@ -207,7 +199,6 @@ MODULE_DEVICE_TABLE(acpi, max5481_acpi_match);
 static struct spi_driver max5481_driver = {
 	.driver = {
 		.name  = "max5481",
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(max5481_match),
 		.acpi_match_table = ACPI_PTR(max5481_acpi_match),
 	},

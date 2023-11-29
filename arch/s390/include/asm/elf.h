@@ -107,6 +107,10 @@
 #define HWCAP_S390_VXRS_BCD	4096
 #define HWCAP_S390_VXRS_EXT	8192
 #define HWCAP_S390_GS		16384
+#define HWCAP_S390_VXRS_EXT2	32768
+#define HWCAP_S390_VXRS_PDE	65536
+#define HWCAP_S390_SORT		131072
+#define HWCAP_S390_DFLT		262144
 
 /* Internal bits, not exposed via elf */
 #define HWCAP_INT_SIE		1UL
@@ -125,8 +129,9 @@
  * ELF register definitions..
  */
 
+#include <linux/compat.h>
+
 #include <asm/ptrace.h>
-#include <asm/compat.h>
 #include <asm/syscall.h>
 #include <asm/user.h>
 
@@ -136,7 +141,6 @@ typedef s390_regs elf_gregset_t;
 typedef s390_fp_regs compat_elf_fpregset_t;
 typedef s390_compat_regs compat_elf_gregset_t;
 
-#include <linux/compat.h>
 #include <linux/sched/mm.h>	/* for task_struct */
 #include <asm/mmu_context.h>
 

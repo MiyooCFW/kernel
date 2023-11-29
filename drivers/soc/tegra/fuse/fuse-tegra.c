@@ -1,18 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2013-2014, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  */
 
 #include <linux/clk.h>
@@ -103,6 +91,9 @@ static struct tegra_fuse *fuse = &(struct tegra_fuse) {
 };
 
 static const struct of_device_id tegra_fuse_match[] = {
+#ifdef CONFIG_ARCH_TEGRA_186_SOC
+	{ .compatible = "nvidia,tegra186-efuse", .data = &tegra186_fuse_soc },
+#endif
 #ifdef CONFIG_ARCH_TEGRA_210_SOC
 	{ .compatible = "nvidia,tegra210-efuse", .data = &tegra210_fuse_soc },
 #endif
@@ -132,6 +123,7 @@ static int tegra_fuse_probe(struct platform_device *pdev)
 
 	/* take over the memory region from the early initialization */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	fuse->phys = res->start;
 	fuse->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(fuse->base)) {
 		err = PTR_ERR(fuse->base);
@@ -141,8 +133,10 @@ static int tegra_fuse_probe(struct platform_device *pdev)
 
 	fuse->clk = devm_clk_get(&pdev->dev, "fuse");
 	if (IS_ERR(fuse->clk)) {
-		dev_err(&pdev->dev, "failed to get FUSE clock: %ld",
-			PTR_ERR(fuse->clk));
+		if (PTR_ERR(fuse->clk) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "failed to get FUSE clock: %ld",
+				PTR_ERR(fuse->clk));
+
 		fuse->base = base;
 		return PTR_ERR(fuse->clk);
 	}

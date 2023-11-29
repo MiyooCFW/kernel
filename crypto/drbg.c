@@ -312,8 +312,7 @@ static int drbg_fini_sym_kernel(struct drbg_state *drbg);
 static int drbg_kcapi_sym_ctr(struct drbg_state *drbg,
 			      u8 *inbuf, u32 inbuflen,
 			      u8 *outbuf, u32 outlen);
-#define DRBG_CTR_NULL_LEN 128
-#define DRBG_OUTSCRATCHLEN DRBG_CTR_NULL_LEN
+#define DRBG_OUTSCRATCHLEN 256
 
 /* BCC function for CTR DRBG as defined in 10.4.3 */
 static int drbg_ctr_bcc(struct drbg_state *drbg,
@@ -606,8 +605,7 @@ static int drbg_ctr_generate(struct drbg_state *drbg,
 	}
 
 	/* 10.2.1.5.2 step 4.1 */
-	ret = drbg_kcapi_sym_ctr(drbg, drbg->ctr_null_value, DRBG_CTR_NULL_LEN,
-				 buf, len);
+	ret = drbg_kcapi_sym_ctr(drbg, NULL, 0, buf, len);
 	if (ret)
 		return ret;
 
@@ -1051,6 +1049,7 @@ static inline int __drbg_seed(struct drbg_state *drbg, struct list_head *seed,
 	switch (drbg->seeded) {
 	case DRBG_SEED_STATE_UNSEEDED:
 		/* Impossible, but handle it to silence compiler warnings. */
+		fallthrough;
 	case DRBG_SEED_STATE_PARTIAL:
 		/*
 		 * Require frequent reseeds until the seed source is
@@ -1319,8 +1318,10 @@ static inline int drbg_alloc_state(struct drbg_state *drbg)
 	if (IS_ENABLED(CONFIG_CRYPTO_FIPS)) {
 		drbg->prev = kzalloc(drbg_sec_strength(drbg->core->flags),
 				     GFP_KERNEL);
-		if (!drbg->prev)
+		if (!drbg->prev) {
+			ret = -ENOMEM;
 			goto fini;
+		}
 		drbg->fips_primed = false;
 	}
 
@@ -1514,6 +1515,14 @@ static int drbg_prepare_hrng(struct drbg_state *drbg)
 		return 0;
 
 	drbg->jent = crypto_alloc_rng("jitterentropy_rng", 0, 0);
+	if (IS_ERR(drbg->jent)) {
+		const int err = PTR_ERR(drbg->jent);
+
+		drbg->jent = NULL;
+		if (fips_enabled)
+			return err;
+		pr_info("DRBG: Continuing without Jitter RNG\n");
+	}
 
 	return 0;
 }
@@ -1568,14 +1577,6 @@ static int drbg_instantiate(struct drbg_state *drbg, struct drbg_string *pers,
 		ret = drbg_prepare_hrng(drbg);
 		if (ret)
 			goto free_everything;
-
-		if (IS_ERR(drbg->jent)) {
-			ret = PTR_ERR(drbg->jent);
-			drbg->jent = NULL;
-			if (fips_enabled || ret != -ENOENT)
-				goto free_everything;
-			pr_info("DRBG: Continuing without Jitter RNG\n");
-		}
 
 		reseed = false;
 	}
@@ -1667,7 +1668,6 @@ static int drbg_init_hash_kernel(struct drbg_state *drbg)
 	}
 
 	sdesc->shash.tfm = tfm;
-	sdesc->shash.flags = 0;
 	drbg->priv_data = sdesc;
 
 	return crypto_shash_alignmask(tfm);
@@ -1722,23 +1722,10 @@ static int drbg_fini_sym_kernel(struct drbg_state *drbg)
 		skcipher_request_free(drbg->ctr_req);
 	drbg->ctr_req = NULL;
 
-	kfree(drbg->ctr_null_value_buf);
-	drbg->ctr_null_value = NULL;
-
 	kfree(drbg->outscratchpadbuf);
 	drbg->outscratchpadbuf = NULL;
 
 	return 0;
-}
-
-static void drbg_skcipher_cb(struct crypto_async_request *req, int error)
-{
-	struct drbg_state *drbg = req->data;
-
-	if (error == -EINPROGRESS)
-		return;
-	drbg->ctr_async_err = error;
-	complete(&drbg->ctr_completion);
 }
 
 static int drbg_init_sym_kernel(struct drbg_state *drbg)
@@ -1771,7 +1758,7 @@ static int drbg_init_sym_kernel(struct drbg_state *drbg)
 		return PTR_ERR(sk_tfm);
 	}
 	drbg->ctr_handle = sk_tfm;
-	init_completion(&drbg->ctr_completion);
+	crypto_init_wait(&drbg->ctr_wait);
 
 	req = skcipher_request_alloc(sk_tfm, GFP_KERNEL);
 	if (!req) {
@@ -1780,19 +1767,11 @@ static int drbg_init_sym_kernel(struct drbg_state *drbg)
 		return -ENOMEM;
 	}
 	drbg->ctr_req = req;
-	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
-					drbg_skcipher_cb, drbg);
+	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG |
+						CRYPTO_TFM_REQ_MAY_SLEEP,
+					crypto_req_done, &drbg->ctr_wait);
 
 	alignmask = crypto_skcipher_alignmask(sk_tfm);
-	drbg->ctr_null_value_buf = kzalloc(DRBG_CTR_NULL_LEN + alignmask,
-					   GFP_KERNEL);
-	if (!drbg->ctr_null_value_buf) {
-		drbg_fini_sym_kernel(drbg);
-		return -ENOMEM;
-	}
-	drbg->ctr_null_value = (u8 *)PTR_ALIGN(drbg->ctr_null_value_buf,
-					       alignmask + 1);
-
 	drbg->outscratchpadbuf = kmalloc(DRBG_OUTSCRATCHLEN + alignmask,
 					 GFP_KERNEL);
 	if (!drbg->outscratchpadbuf) {
@@ -1801,6 +1780,9 @@ static int drbg_init_sym_kernel(struct drbg_state *drbg)
 	}
 	drbg->outscratchpad = (u8 *)PTR_ALIGN(drbg->outscratchpadbuf,
 					      alignmask + 1);
+
+	sg_init_table(&drbg->sg_in, 1);
+	sg_init_one(&drbg->sg_out, drbg->outscratchpad, DRBG_OUTSCRATCHLEN);
 
 	return alignmask;
 }
@@ -1830,35 +1812,35 @@ static int drbg_kcapi_sym_ctr(struct drbg_state *drbg,
 			      u8 *inbuf, u32 inlen,
 			      u8 *outbuf, u32 outlen)
 {
-	struct scatterlist sg_in, sg_out;
+	struct scatterlist *sg_in = &drbg->sg_in, *sg_out = &drbg->sg_out;
+	u32 scratchpad_use = min_t(u32, outlen, DRBG_OUTSCRATCHLEN);
 	int ret;
 
-	sg_init_one(&sg_in, inbuf, inlen);
-	sg_init_one(&sg_out, drbg->outscratchpad, DRBG_OUTSCRATCHLEN);
+	if (inbuf) {
+		/* Use caller-provided input buffer */
+		sg_set_buf(sg_in, inbuf, inlen);
+	} else {
+		/* Use scratchpad for in-place operation */
+		inlen = scratchpad_use;
+		memset(drbg->outscratchpad, 0, scratchpad_use);
+		sg_set_buf(sg_in, drbg->outscratchpad, scratchpad_use);
+	}
 
 	while (outlen) {
 		u32 cryptlen = min3(inlen, outlen, (u32)DRBG_OUTSCRATCHLEN);
 
 		/* Output buffer may not be valid for SGL, use scratchpad */
-		skcipher_request_set_crypt(drbg->ctr_req, &sg_in, &sg_out,
+		skcipher_request_set_crypt(drbg->ctr_req, sg_in, sg_out,
 					   cryptlen, drbg->V);
-		ret = crypto_skcipher_encrypt(drbg->ctr_req);
-		switch (ret) {
-		case 0:
-			break;
-		case -EINPROGRESS:
-		case -EBUSY:
-			wait_for_completion(&drbg->ctr_completion);
-			if (!drbg->ctr_async_err) {
-				reinit_completion(&drbg->ctr_completion);
-				break;
-			}
-		default:
+		ret = crypto_wait_req(crypto_skcipher_encrypt(drbg->ctr_req),
+					&drbg->ctr_wait);
+		if (ret)
 			goto out;
-		}
-		init_completion(&drbg->ctr_completion);
+
+		crypto_init_wait(&drbg->ctr_wait);
 
 		memcpy(outbuf, drbg->outscratchpad, cryptlen);
+		memzero_explicit(drbg->outscratchpad, cryptlen);
 
 		outlen -= cryptlen;
 		outbuf += cryptlen;
@@ -1866,7 +1848,6 @@ static int drbg_kcapi_sym_ctr(struct drbg_state *drbg,
 	ret = 0;
 
 out:
-	memzero_explicit(drbg->outscratchpad, DRBG_OUTSCRATCHLEN);
 	return ret;
 }
 #endif /* CONFIG_CRYPTO_DRBG_CTR */
@@ -2138,7 +2119,7 @@ static void __exit drbg_exit(void)
 	crypto_unregister_rngs(drbg_algs, (ARRAY_SIZE(drbg_cores) * 2));
 }
 
-module_init(drbg_init);
+subsys_initcall(drbg_init);
 module_exit(drbg_exit);
 #ifndef CRYPTO_DRBG_HASH_STRING
 #define CRYPTO_DRBG_HASH_STRING ""

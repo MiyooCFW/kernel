@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file contains functions used in USB interface module.
  */
@@ -162,9 +163,9 @@ static void if_usb_setup_firmware(struct lbs_private *priv)
 	}
 }
 
-static void if_usb_fw_timeo(unsigned long priv)
+static void if_usb_fw_timeo(struct timer_list *t)
 {
-	struct if_usb_card *cardp = (void *)priv;
+	struct if_usb_card *cardp = from_timer(cardp, t, fw_timeout);
 
 	if (cardp->fwdnldover) {
 		lbs_deb_usb("Download complete, no event. Assuming success\n");
@@ -206,7 +207,7 @@ static int if_usb_probe(struct usb_interface *intf,
 	if (!cardp)
 		goto error;
 
-	setup_timer(&cardp->fw_timeout, if_usb_fw_timeo, (unsigned long)cardp);
+	timer_setup(&cardp->fw_timeout, if_usb_fw_timeo, 0);
 	init_waitqueue_head(&cardp->fw_wq);
 
 	cardp->udev = udev;
@@ -255,8 +256,11 @@ static int if_usb_probe(struct usb_interface *intf,
 		goto dealloc;
 	}
 
-	if (!(priv = lbs_add_card(cardp, &intf->dev)))
+	priv = lbs_add_card(cardp, &intf->dev);
+	if (IS_ERR(priv)) {
+		r = PTR_ERR(priv);
 		goto err_add_card;
+	}
 
 	cardp->priv = priv;
 
@@ -368,7 +372,7 @@ static int if_usb_send_fw_pkt(struct if_usb_card *cardp)
 			     cardp->fwseqnum, cardp->totalbytes);
 	} else if (fwdata->hdr.dnldcmd == cpu_to_le32(FW_HAS_LAST_BLOCK)) {
 		lbs_deb_usb2(&cardp->udev->dev, "Host has finished FW downloading\n");
-		lbs_deb_usb2(&cardp->udev->dev, "Donwloading FW JUMP BLOCK\n");
+		lbs_deb_usb2(&cardp->udev->dev, "Downloading FW JUMP BLOCK\n");
 
 		cardp->fwfinalblk = 1;
 	}
@@ -616,6 +620,7 @@ static inline void process_cmdrequest(int recvlength, uint8_t *recvbuff,
 				      struct if_usb_card *cardp,
 				      struct lbs_private *priv)
 {
+	unsigned long flags;
 	u8 i;
 
 	if (recvlength > LBS_CMD_BUFFER_SIZE) {
@@ -625,19 +630,17 @@ static inline void process_cmdrequest(int recvlength, uint8_t *recvbuff,
 		return;
 	}
 
-	BUG_ON(!in_interrupt());
-
-	spin_lock(&priv->driver_lock);
+	spin_lock_irqsave(&priv->driver_lock, flags);
 
 	i = (priv->resp_idx == 0) ? 1 : 0;
 	BUG_ON(priv->resp_len[i]);
 	priv->resp_len[i] = (recvlength - MESSAGE_HEADER_LEN);
 	memcpy(priv->resp_buf[i], recvbuff + MESSAGE_HEADER_LEN,
 		priv->resp_len[i]);
-	kfree_skb(skb);
+	dev_kfree_skb_irq(skb);
 	lbs_notify_command_response(priv, i);
 
-	spin_unlock(&priv->driver_lock);
+	spin_unlock_irqrestore(&priv->driver_lock, flags);
 
 	lbs_deb_usbd(&cardp->udev->dev,
 		    "Wake up main thread to handle cmd response\n");

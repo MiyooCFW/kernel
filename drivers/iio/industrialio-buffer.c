@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* The industrial I/O core
  *
  * Copyright (c) 2008 Jonathan Cameron
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
  * Handling of buffer allocation / resizing.
- *
  *
  * Things to look at here.
  * - Better memory allocation techniques?
@@ -166,10 +162,10 @@ ssize_t iio_buffer_read_first_n_outer(struct file *filp, char __user *buf,
  * @wait:	Poll table structure pointer for which the driver adds
  *		a wait queue
  *
- * Return: (POLLIN | POLLRDNORM) if data is available for reading
+ * Return: (EPOLLIN | EPOLLRDNORM) if data is available for reading
  *	   or 0 for other cases
  */
-unsigned int iio_buffer_poll(struct file *filp,
+__poll_t iio_buffer_poll(struct file *filp,
 			     struct poll_table_struct *wait)
 {
 	struct iio_dev *indio_dev = filp->private_data;
@@ -180,7 +176,7 @@ unsigned int iio_buffer_poll(struct file *filp,
 
 	poll_wait(filp, &rb->pollq, wait);
 	if (iio_buffer_ready(indio_dev, rb, rb->watermark, 0))
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 	return 0;
 }
 
@@ -343,12 +339,12 @@ static int iio_scan_mask_set(struct iio_dev *indio_dev,
 	}
 	bitmap_copy(buffer->scan_mask, trialmask, indio_dev->masklength);
 
-	kfree(trialmask);
+	bitmap_free(trialmask);
 
 	return 0;
 
 err_invalid_mask:
-	kfree(trialmask);
+	bitmap_free(trialmask);
 	return -EINVAL;
 }
 
@@ -669,7 +665,7 @@ static void iio_free_scan_mask(struct iio_dev *indio_dev,
 {
 	/* If the mask is dynamically allocated free it, otherwise do nothing */
 	if (!indio_dev->available_scan_masks)
-		kfree(mask);
+		bitmap_free(mask);
 }
 
 struct iio_device_config {
@@ -739,8 +735,7 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 	}
 
 	/* What scan mask do we actually have? */
-	compound_mask = kcalloc(BITS_TO_LONGS(indio_dev->masklength),
-				sizeof(long), GFP_KERNEL);
+	compound_mask = bitmap_zalloc(indio_dev->masklength, GFP_KERNEL);
 	if (compound_mask == NULL)
 		return -ENOMEM;
 
@@ -765,7 +760,7 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 				    indio_dev->masklength,
 				    compound_mask,
 				    strict_scanmask);
-		kfree(compound_mask);
+		bitmap_free(compound_mask);
 		if (scan_mask == NULL)
 			return -EINVAL;
 	} else {
@@ -1201,6 +1196,18 @@ out:
 	return ret ? ret : len;
 }
 
+static ssize_t iio_dma_show_data_available(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	size_t bytes;
+
+	bytes = iio_buffer_data_available(indio_dev->buffer);
+
+	return sprintf(buf, "%zu\n", bytes);
+}
+
 static DEVICE_ATTR(length, S_IRUGO | S_IWUSR, iio_buffer_read_length,
 		   iio_buffer_write_length);
 static struct device_attribute dev_attr_length_ro = __ATTR(length,
@@ -1211,11 +1218,14 @@ static DEVICE_ATTR(watermark, S_IRUGO | S_IWUSR,
 		   iio_buffer_show_watermark, iio_buffer_store_watermark);
 static struct device_attribute dev_attr_watermark_ro = __ATTR(watermark,
 	S_IRUGO, iio_buffer_show_watermark, NULL);
+static DEVICE_ATTR(data_available, S_IRUGO,
+		iio_dma_show_data_available, NULL);
 
 static struct attribute *iio_buffer_attrs[] = {
 	&dev_attr_length.attr,
 	&dev_attr_enable.attr,
 	&dev_attr_watermark.attr,
+	&dev_attr_data_available.attr,
 };
 
 int iio_buffer_alloc_sysfs_and_mask(struct iio_dev *indio_dev)
@@ -1291,9 +1301,8 @@ int iio_buffer_alloc_sysfs_and_mask(struct iio_dev *indio_dev)
 					channels[i].scan_index;
 		}
 		if (indio_dev->masklength && buffer->scan_mask == NULL) {
-			buffer->scan_mask = kcalloc(BITS_TO_LONGS(indio_dev->masklength),
-						    sizeof(*buffer->scan_mask),
-						    GFP_KERNEL);
+			buffer->scan_mask = bitmap_zalloc(indio_dev->masklength,
+							  GFP_KERNEL);
 			if (buffer->scan_mask == NULL) {
 				ret = -ENOMEM;
 				goto error_cleanup_dynamic;
@@ -1322,7 +1331,7 @@ int iio_buffer_alloc_sysfs_and_mask(struct iio_dev *indio_dev)
 	return 0;
 
 error_free_scan_mask:
-	kfree(buffer->scan_mask);
+	bitmap_free(buffer->scan_mask);
 error_cleanup_dynamic:
 	iio_free_chan_devattr_list(&buffer->scan_el_dev_attr_list);
 	kfree(indio_dev->buffer->buffer_group.attrs);
@@ -1335,7 +1344,7 @@ void iio_buffer_free_sysfs_and_mask(struct iio_dev *indio_dev)
 	if (!indio_dev->buffer)
 		return;
 
-	kfree(indio_dev->buffer->scan_mask);
+	bitmap_free(indio_dev->buffer->scan_mask);
 	kfree(indio_dev->buffer->buffer_group.attrs);
 	kfree(indio_dev->buffer->scan_el_group.attrs);
 	iio_free_chan_devattr_list(&indio_dev->buffer->scan_el_dev_attr_list);
@@ -1384,7 +1393,7 @@ static int iio_push_to_buffer(struct iio_buffer *buffer, const void *data)
 	 * We can't just test for watermark to decide if we wake the poll queue
 	 * because read may request less samples than the watermark.
 	 */
-	wake_up_interruptible_poll(&buffer->pollq, POLLIN | POLLRDNORM);
+	wake_up_interruptible_poll(&buffer->pollq, EPOLLIN | EPOLLRDNORM);
 	return 0;
 }
 

@@ -11,7 +11,6 @@
 #include <asm/system_misc.h>
 
 #ifdef CONFIG_ARM_PSCI
-#define SMCCC_ARCH_WORKAROUND_RET_UNAFFECTED	1
 static int __maybe_unused spectre_v2_get_cpu_fw_mitigation_state(void)
 {
 	struct arm_smccc_res res;
@@ -135,6 +134,11 @@ static void cpu_v7_spectre_v2_init(void)
 	case ARM_CPU_PART_BRAHMA_B15:
 		state = SPECTRE_MITIGATED;
 		method = SPECTRE_V2_METHOD_ICIALLU;
+		break;
+
+	case ARM_CPU_PART_BRAHMA_B53:
+		/* Requires no workaround */
+		state = SPECTRE_UNAFFECTED;
 		break;
 
 	default:

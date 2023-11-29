@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * (c) 2017 Stefano Stabellini <stefano@aporeto.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/inet.h>
@@ -135,20 +126,16 @@ static bool pvcalls_conn_back_read(void *opaque)
 	masked_cons = pvcalls_mask(cons, array_size);
 
 	memset(&msg, 0, sizeof(msg));
-	msg.msg_iter.type = ITER_KVEC|WRITE;
-	msg.msg_iter.count = wanted;
 	if (masked_prod < masked_cons) {
 		vec[0].iov_base = data->in + masked_prod;
 		vec[0].iov_len = wanted;
-		msg.msg_iter.kvec = vec;
-		msg.msg_iter.nr_segs = 1;
+		iov_iter_kvec(&msg.msg_iter, READ, vec, 1, wanted);
 	} else {
 		vec[0].iov_base = data->in + masked_prod;
 		vec[0].iov_len = array_size - masked_prod;
 		vec[1].iov_base = data->in;
 		vec[1].iov_len = wanted - vec[0].iov_len;
-		msg.msg_iter.kvec = vec;
-		msg.msg_iter.nr_segs = 2;
+		iov_iter_kvec(&msg.msg_iter, READ, vec, 2, wanted);
 	}
 
 	atomic_set(&map->read, 0);
@@ -198,20 +185,16 @@ static bool pvcalls_conn_back_write(struct sock_mapping *map)
 
 	memset(&msg, 0, sizeof(msg));
 	msg.msg_flags |= MSG_DONTWAIT;
-	msg.msg_iter.type = ITER_KVEC|READ;
-	msg.msg_iter.count = size;
 	if (pvcalls_mask(prod, array_size) > pvcalls_mask(cons, array_size)) {
 		vec[0].iov_base = data->out + pvcalls_mask(cons, array_size);
 		vec[0].iov_len = size;
-		msg.msg_iter.kvec = vec;
-		msg.msg_iter.nr_segs = 1;
+		iov_iter_kvec(&msg.msg_iter, WRITE, vec, 1, size);
 	} else {
 		vec[0].iov_base = data->out + pvcalls_mask(cons, array_size);
 		vec[0].iov_len = array_size - pvcalls_mask(cons, array_size);
 		vec[1].iov_base = data->out;
 		vec[1].iov_len = size - vec[0].iov_len;
-		msg.msg_iter.kvec = vec;
-		msg.msg_iter.nr_segs = 2;
+		iov_iter_kvec(&msg.msg_iter, WRITE, vec, 2, size);
 	}
 
 	atomic_set(&map->write, 0);
@@ -565,7 +548,7 @@ static void __pvcalls_back_accept(struct work_struct *work)
 	ret = inet_accept(mappass->sock, sock, O_NONBLOCK, true);
 	if (ret == -EAGAIN) {
 		sock_release(sock);
-		goto out_error;
+		return;
 	}
 
 	map = pvcalls_new_active_socket(fedata,
@@ -1253,3 +1236,7 @@ static void __exit pvcalls_back_fin(void)
 }
 
 module_exit(pvcalls_back_fin);
+
+MODULE_DESCRIPTION("Xen PV Calls backend driver");
+MODULE_AUTHOR("Stefano Stabellini <sstabellini@kernel.org>");
+MODULE_LICENSE("GPL");

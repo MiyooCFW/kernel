@@ -51,6 +51,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/xarray.h>
 #include <rdma/ib_addr.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/opa_smi.h>
@@ -97,7 +98,7 @@ const char opa_vnic_driver_version[] = DRV_VERSION;
  * @class_port_info: Class port info information.
  * @tid: Transaction id
  * @port_num: OPA port number
- * @vport_idr: vnic ports idr
+ * @vports: vnic ports
  * @event_handler: ib event handler
  * @lock: adapter interface lock
  */
@@ -107,7 +108,7 @@ struct opa_vnic_vema_port {
 	struct opa_class_port_info      class_port_info;
 	u64                             tid;
 	u8                              port_num;
-	struct idr                      vport_idr;
+	struct xarray                   vports;
 	struct ib_event_handler         event_handler;
 
 	/* Lock to query/update network adapter */
@@ -148,7 +149,7 @@ vema_get_vport_adapter(struct opa_vnic_vema_mad *recvd_mad,
 {
 	u8 vport_num = vema_get_vport_num(recvd_mad);
 
-	return idr_find(&port->vport_idr, vport_num);
+	return xa_load(&port->vports, vport_num);
 }
 
 /**
@@ -186,6 +187,7 @@ static inline void vema_get_pod_values(struct opa_veswport_info *port_info)
 		cpu_to_be16(OPA_VNIC_MAX_SMAC_LIMIT);
 	port_info->vport.oper_state = OPA_VNIC_STATE_DROP_ALL;
 	port_info->vport.config_state = OPA_VNIC_STATE_DROP_ALL;
+	port_info->vesw.eth_mtu = cpu_to_be16(ETH_DATA_LEN);
 }
 
 /**
@@ -206,8 +208,7 @@ static struct opa_vnic_adapter *vema_add_vport(struct opa_vnic_vema_port *port,
 		int rc;
 
 		adapter->cport = cport;
-		rc = idr_alloc(&port->vport_idr, adapter, vport_num,
-			       vport_num + 1, GFP_NOWAIT);
+		rc = xa_insert(&port->vports, vport_num, adapter, GFP_KERNEL);
 		if (rc < 0) {
 			opa_vnic_rem_netdev(adapter);
 			adapter = ERR_PTR(rc);
@@ -605,7 +606,7 @@ static void vema_set(struct opa_vnic_vema_port *port,
 static void vema_send(struct ib_mad_agent *mad_agent,
 		      struct ib_mad_send_wc *mad_wc)
 {
-	rdma_destroy_ah(mad_wc->send_buf->ah);
+	rdma_destroy_ah(mad_wc->send_buf->ah, RDMA_DESTROY_AH_SLEEPABLE);
 	ib_free_send_mad(mad_wc->send_buf);
 }
 
@@ -679,7 +680,7 @@ static void vema_recv(struct ib_mad_agent *mad_agent,
 	ib_free_send_mad(rsp);
 
 err_rsp:
-	rdma_destroy_ah(ah);
+	rdma_destroy_ah(ah, RDMA_DESTROY_AH_SLEEPABLE);
 free_recv_mad:
 	ib_free_recv_mad(mad_wc);
 }
@@ -709,7 +710,7 @@ vema_get_port(struct opa_vnic_ctrl_port *cport, u8 port_num)
 
 /**
  * opa_vnic_vema_send_trap -- This function sends a trap to the EM
- * @cport: pointer to vnic control port
+ * @adapter: pointer to vnic adapter
  * @data: pointer to trap data filled by calling function
  * @lid:  issuers lid (encap_slid from vesw_port_info)
  *
@@ -776,7 +777,7 @@ void opa_vnic_vema_send_trap(struct opa_vnic_adapter *adapter,
 	}
 
 	rdma_ah_set_dlid(&ah_attr, trap_lid);
-	ah = rdma_create_ah(port->mad_agent->qp->pd, &ah_attr);
+	ah = rdma_create_ah(port->mad_agent->qp->pd, &ah_attr, 0);
 	if (IS_ERR(ah)) {
 		c_err("%s:Couldn't create new AH = %p\n", __func__, ah);
 		c_err("%s:dlid = %d, sl = %d, port = %d\n", __func__,
@@ -847,33 +848,9 @@ void opa_vnic_vema_send_trap(struct opa_vnic_adapter *adapter,
 	}
 
 err_sndbuf:
-	rdma_destroy_ah(ah);
+	rdma_destroy_ah(ah, 0);
 err_exit:
 	v_err("Aborting trap\n");
-}
-
-static int vema_rem_vport(int id, void *p, void *data)
-{
-	struct opa_vnic_adapter *adapter = p;
-
-	opa_vnic_rem_netdev(adapter);
-	return 0;
-}
-
-static int vema_enable_vport(int id, void *p, void *data)
-{
-	struct opa_vnic_adapter *adapter = p;
-
-	netif_carrier_on(adapter->netdev);
-	return 0;
-}
-
-static int vema_disable_vport(int id, void *p, void *data)
-{
-	struct opa_vnic_adapter *adapter = p;
-
-	netif_carrier_off(adapter->netdev);
-	return 0;
 }
 
 static void opa_vnic_event(struct ib_event_handler *handler,
@@ -882,17 +859,26 @@ static void opa_vnic_event(struct ib_event_handler *handler,
 	struct opa_vnic_vema_port *port =
 		container_of(handler, struct opa_vnic_vema_port, event_handler);
 	struct opa_vnic_ctrl_port *cport = port->cport;
+	struct opa_vnic_adapter *adapter;
+	unsigned long index;
 
 	if (record->element.port_num != port->port_num)
 		return;
 
 	c_dbg("OPA_VNIC received event %d on device %s port %d\n",
-	      record->event, record->device->name, record->element.port_num);
+	      record->event, dev_name(&record->device->dev),
+	      record->element.port_num);
 
-	if (record->event == IB_EVENT_PORT_ERR)
-		idr_for_each(&port->vport_idr, vema_disable_vport, NULL);
-	if (record->event == IB_EVENT_PORT_ACTIVE)
-		idr_for_each(&port->vport_idr, vema_enable_vport, NULL);
+	if (record->event != IB_EVENT_PORT_ERR &&
+	    record->event != IB_EVENT_PORT_ACTIVE)
+		return;
+
+	xa_for_each(&port->vports, index, adapter) {
+		if (record->event == IB_EVENT_PORT_ACTIVE)
+			netif_carrier_on(adapter->netdev);
+		else
+			netif_carrier_off(adapter->netdev);
+	}
 }
 
 /**
@@ -903,6 +889,8 @@ static void opa_vnic_event(struct ib_event_handler *handler,
  */
 static void vema_unregister(struct opa_vnic_ctrl_port *cport)
 {
+	struct opa_vnic_adapter *adapter;
+	unsigned long index;
 	int i;
 
 	for (i = 1; i <= cport->num_ports; i++) {
@@ -913,13 +901,14 @@ static void vema_unregister(struct opa_vnic_ctrl_port *cport)
 
 		/* Lock ensures no MAD is being processed */
 		mutex_lock(&port->lock);
-		idr_for_each(&port->vport_idr, vema_rem_vport, NULL);
+		xa_for_each(&port->vports, index, adapter)
+			opa_vnic_rem_netdev(adapter);
 		mutex_unlock(&port->lock);
 
 		ib_unregister_mad_agent(port->mad_agent);
 		port->mad_agent = NULL;
 		mutex_destroy(&port->lock);
-		idr_destroy(&port->vport_idr);
+		xa_destroy(&port->vports);
 		ib_unregister_event_handler(&port->event_handler);
 	}
 }
@@ -956,7 +945,7 @@ static int vema_register(struct opa_vnic_ctrl_port *cport)
 				      cport->ibdev, opa_vnic_event);
 		ib_register_event_handler(&port->event_handler);
 
-		idr_init(&port->vport_idr);
+		xa_init(&port->vports);
 		mutex_init(&port->lock);
 		port->mad_agent = ib_register_mad_agent(cport->ibdev, i,
 							IB_QPT_GSI, &reg_req,
@@ -967,7 +956,6 @@ static int vema_register(struct opa_vnic_ctrl_port *cport)
 			ret = PTR_ERR(port->mad_agent);
 			port->mad_agent = NULL;
 			mutex_destroy(&port->lock);
-			idr_destroy(&port->vport_idr);
 			vema_unregister(cport);
 			return ret;
 		}

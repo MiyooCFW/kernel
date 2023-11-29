@@ -1,26 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Serial Attached SCSI (SAS) class internal header file
  *
  * Copyright (C) 2005 Adaptec, Inc.  All rights reserved.
  * Copyright (C) 2005 Luben Tuikov <luben_tuikov@adaptec.com>
- *
- * This file is licensed under GPLv2.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
- * USA
- *
  */
 
 #ifndef _SAS_INTERNAL_H_
@@ -32,9 +15,13 @@
 #include <scsi/libsas.h>
 #include <scsi/sas_ata.h>
 
-#define sas_printk(fmt, ...) printk(KERN_NOTICE "sas: " fmt, ## __VA_ARGS__)
+#ifdef pr_fmt
+#undef pr_fmt
+#endif
 
-#define SAS_DPRINTK(fmt, ...) printk(KERN_DEBUG "sas: " fmt, ## __VA_ARGS__)
+#define SAS_FMT "sas: "
+
+#define pr_fmt(fmt) SAS_FMT fmt
 
 #define TO_SAS_TASK(_scsi_cmd)  ((void *)(_scsi_cmd)->host_scribble)
 #define ASSIGN_SAS_TASK(_sc, _t) do { (_sc)->host_scribble = (void *) _t; } while (0)
@@ -60,6 +47,9 @@ int sas_show_oob_mode(enum sas_oob_mode oob_mode, char *buf);
 
 int  sas_register_phys(struct sas_ha_struct *sas_ha);
 void sas_unregister_phys(struct sas_ha_struct *sas_ha);
+
+struct asd_sas_event *sas_alloc_event(struct asd_sas_phy *phy);
+void sas_free_event(struct asd_sas_event *event);
 
 int  sas_register_ports(struct sas_ha_struct *sas_ha);
 void sas_unregister_ports(struct sas_ha_struct *sas_ha);
@@ -98,6 +88,10 @@ int sas_try_ata_reset(struct asd_sas_phy *phy);
 void sas_hae_reset(struct work_struct *work);
 
 void sas_free_device(struct kref *kref);
+void sas_destruct_devices(struct asd_sas_port *port);
+
+extern const work_func_t sas_phy_event_fns[PHY_NUM_EVENTS];
+extern const work_func_t sas_port_event_fns[PORT_NUM_EVENTS];
 
 #ifdef CONFIG_SCSI_SAS_HOST_SMP
 extern void sas_smp_host_handler(struct bsg_job *job, struct Scsi_Host *shost);
@@ -113,10 +107,10 @@ static inline void sas_smp_host_handler(struct bsg_job *job,
 
 static inline void sas_fail_probe(struct domain_device *dev, const char *func, int err)
 {
-	SAS_DPRINTK("%s: for %s device %16llx returned %d\n",
-		    func, dev->parent ? "exp-attached" :
-					    "direct-attached",
-		    SAS_ADDR(dev->sas_addr), err);
+	pr_warn("%s: for %s device %16llx returned %d\n",
+		func, dev->parent ? "exp-attached" :
+		"direct-attached",
+		SAS_ADDR(dev->sas_addr), err);
 	sas_unregister_dev(dev->port, dev);
 }
 

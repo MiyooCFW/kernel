@@ -28,6 +28,7 @@ struct pt_regs;
  * @core_internal_state__do_not_mess_with_it: core internal status information
  * @depth:		disable-depth, for nested irq_disable() calls
  * @wake_depth:		enable depth, for multiple irq_set_irq_wake() callers
+ * @tot_count:		stats field for non-percpu irqs
  * @irq_count:		stats field to detect stalled irqs
  * @last_unhandled:	aging timer for unhandled count
  * @irqs_unhandled:	stats field for spurious unhandled interrupts
@@ -95,6 +96,7 @@ struct irq_desc {
 #endif
 #ifdef CONFIG_GENERIC_IRQ_DEBUGFS
 	struct dentry		*debugfs_file;
+	const char		*dev_name;
 #endif
 #ifdef CONFIG_SPARSE_IRQ
 	struct rcu_head		rcu;
@@ -145,11 +147,6 @@ static inline void *irq_desc_get_handler_data(struct irq_desc *desc)
 	return desc->irq_common_data.handler_data;
 }
 
-static inline struct msi_desc *irq_desc_get_msi_desc(struct irq_desc *desc)
-{
-	return desc->irq_common_data.msi_desc;
-}
-
 /*
  * Architectures call this to let the generic IRQ layer
  * handle an interrupt.
@@ -176,6 +173,11 @@ static inline int handle_domain_irq(struct irq_domain *domain,
 {
 	return __handle_domain_irq(domain, hwirq, true, regs);
 }
+
+#ifdef CONFIG_IRQ_DOMAIN
+int handle_domain_nmi(struct irq_domain *domain, unsigned int hwirq,
+		      struct pt_regs *regs);
+#endif
 #endif
 
 /* Test to see if a driver has successfully requested an irq */
@@ -230,7 +232,7 @@ irq_set_chip_handler_name_locked(struct irq_data *data, struct irq_chip *chip,
 	data->chip = chip;
 }
 
-static inline int irq_balancing_disabled(unsigned int irq)
+static inline bool irq_balancing_disabled(unsigned int irq)
 {
 	struct irq_desc *desc;
 
@@ -238,7 +240,7 @@ static inline int irq_balancing_disabled(unsigned int irq)
 	return desc->status_use_accessors & IRQ_NO_BALANCING_MASK;
 }
 
-static inline int irq_is_percpu(unsigned int irq)
+static inline bool irq_is_percpu(unsigned int irq)
 {
 	struct irq_desc *desc;
 
@@ -246,13 +248,24 @@ static inline int irq_is_percpu(unsigned int irq)
 	return desc->status_use_accessors & IRQ_PER_CPU;
 }
 
+static inline bool irq_is_percpu_devid(unsigned int irq)
+{
+	struct irq_desc *desc;
+
+	desc = irq_to_desc(irq);
+	return desc->status_use_accessors & IRQ_PER_CPU_DEVID;
+}
+
 static inline void
-irq_set_lockdep_class(unsigned int irq, struct lock_class_key *class)
+irq_set_lockdep_class(unsigned int irq, struct lock_class_key *lock_class,
+		      struct lock_class_key *request_class)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
 
-	if (desc)
-		lockdep_set_class(&desc->lock, class);
+	if (desc) {
+		lockdep_set_class(&desc->lock, lock_class);
+		lockdep_set_class(&desc->request_mutex, request_class);
+	}
 }
 
 #ifdef CONFIG_IRQ_PREFLOW_FASTEOI

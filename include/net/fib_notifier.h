@@ -2,13 +2,15 @@
 #define __NET_FIB_NOTIFIER_H
 
 #include <linux/types.h>
-#include <linux/module.h>
 #include <linux/notifier.h>
 #include <net/net_namespace.h>
+
+struct module;
 
 struct fib_notifier_info {
 	struct net *net;
 	int family;
+	struct netlink_ext_ack  *extack;
 };
 
 enum fib_event_type {
@@ -20,6 +22,8 @@ enum fib_event_type {
 	FIB_EVENT_RULE_DEL,
 	FIB_EVENT_NH_ADD,
 	FIB_EVENT_NH_DEL,
+	FIB_EVENT_VIF_ADD,
+	FIB_EVENT_VIF_DEL,
 };
 
 struct fib_notifier_ops {

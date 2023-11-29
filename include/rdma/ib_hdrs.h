@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2016 Intel Corporation.
+ * Copyright(c) 2016 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -100,6 +100,8 @@ struct ib_atomic_eth {
 	__be64 compare_data; /* potentially unaligned */
 } __packed;
 
+#include <rdma/tid_rdma_defs.h>
+
 union ib_ehdrs {
 	struct {
 		__be32 deth[2];
@@ -117,6 +119,16 @@ union ib_ehdrs {
 	__be32 aeth;
 	__be32 ieth;
 	struct ib_atomic_eth atomic_eth;
+	/* TID RDMA headers */
+	union {
+		struct tid_rdma_read_req r_req;
+		struct tid_rdma_read_resp r_rsp;
+		struct tid_rdma_write_req w_req;
+		struct tid_rdma_write_resp w_rsp;
+		struct tid_rdma_write_data w_data;
+		struct tid_rdma_resync resync;
+		struct tid_rdma_ack ack;
+	} tid_rdma;
 }  __packed;
 
 struct ib_other_headers {
@@ -313,16 +325,14 @@ static inline u32 ib_bth_get_qpn(struct ib_other_headers *ohdr)
 	return (u32)((be32_to_cpu(ohdr->bth[1])) & IB_QPN_MASK);
 }
 
-static inline u8 ib_bth_get_becn(struct ib_other_headers *ohdr)
+static inline bool ib_bth_get_becn(struct ib_other_headers *ohdr)
 {
-	return (u8)((be32_to_cpu(ohdr->bth[1]) >> IB_BECN_SHIFT) &
-		     IB_BECN_MASK);
+	return (ohdr->bth[1]) & cpu_to_be32(IB_BECN_SMASK);
 }
 
-static inline u8 ib_bth_get_fecn(struct ib_other_headers *ohdr)
+static inline bool ib_bth_get_fecn(struct ib_other_headers *ohdr)
 {
-	return (u8)((be32_to_cpu(ohdr->bth[1]) >> IB_FECN_SHIFT) &
-		    IB_FECN_MASK);
+	return (ohdr->bth[1]) & cpu_to_be32(IB_FECN_SMASK);
 }
 
 static inline u8 ib_bth_get_tver(struct ib_other_headers *ohdr)
@@ -331,4 +341,13 @@ static inline u8 ib_bth_get_tver(struct ib_other_headers *ohdr)
 		    IB_BTH_TVER_MASK);
 }
 
+static inline bool ib_bth_is_solicited(struct ib_other_headers *ohdr)
+{
+	return ohdr->bth[0] & cpu_to_be32(IB_BTH_SOLICITED);
+}
+
+static inline bool ib_bth_is_migration(struct ib_other_headers *ohdr)
+{
+	return ohdr->bth[0] & cpu_to_be32(IB_BTH_MIG_REQ);
+}
 #endif                          /* IB_HDRS_H */

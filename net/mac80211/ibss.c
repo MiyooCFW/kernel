@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * IBSS mode implementation
  * Copyright 2003-2008, Jouni Malinen <j@w1.fi>
@@ -8,10 +9,7 @@
  * Copyright 2009, Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright(c) 2016 Intel Deutschland GmbH
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * Copyright(c) 2018-2019 Intel Corporation
  */
 
 #include <linux/delay.h>
@@ -1074,7 +1072,9 @@ static void ieee80211_update_sta_info(struct ieee80211_sub_if_data *sdata,
 			struct ieee80211_vht_cap cap_ie;
 			struct ieee80211_sta_vht_cap cap = sta->sta.vht_cap;
 
-			ieee80211_chandef_vht_oper(elems->vht_operation,
+			ieee80211_chandef_vht_oper(&local->hw,
+						   elems->vht_operation,
+						   elems->ht_operation,
 						   &chandef);
 			memcpy(&cap_ie, elems->vht_cap_elem, sizeof(cap_ie));
 			ieee80211_vht_cap_ie_to_sta_vht_cap(sdata, sband,
@@ -1126,8 +1126,7 @@ static void ieee80211_rx_bss_info(struct ieee80211_sub_if_data *sdata,
 
 	ieee80211_update_sta_info(sdata, mgmt, len, rx_status, elems, channel);
 
-	bss = ieee80211_bss_info_update(local, rx_status, mgmt, len, elems,
-					channel);
+	bss = ieee80211_bss_info_update(local, rx_status, mgmt, len, channel);
 	if (!bss)
 		return;
 
@@ -1257,6 +1256,7 @@ void ieee80211_ibss_rx_no_sta(struct ieee80211_sub_if_data *sdata,
 
 static void ieee80211_ibss_sta_expire(struct ieee80211_sub_if_data *sdata)
 {
+	struct ieee80211_if_ibss *ifibss = &sdata->u.ibss;
 	struct ieee80211_local *local = sdata->local;
 	struct sta_info *sta, *tmp;
 	unsigned long exp_time = IEEE80211_IBSS_INACTIVITY_LIMIT;
@@ -1273,10 +1273,17 @@ static void ieee80211_ibss_sta_expire(struct ieee80211_sub_if_data *sdata)
 		if (time_is_before_jiffies(last_active + exp_time) ||
 		    (time_is_before_jiffies(last_active + exp_rsn) &&
 		     sta->sta_state != IEEE80211_STA_AUTHORIZED)) {
+			u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
+
 			sta_dbg(sta->sdata, "expiring inactive %sSTA %pM\n",
 				sta->sta_state != IEEE80211_STA_AUTHORIZED ?
 				"not authorized " : "", sta->sta.addr);
 
+			ieee80211_send_deauth_disassoc(sdata, sta->sta.addr,
+						       ifibss->bssid,
+						       IEEE80211_STYPE_DEAUTH,
+						       WLAN_REASON_DEAUTH_LEAVING,
+						       true, frame_buf);
 			WARN_ON(__sta_info_destroy(sta));
 		}
 	}
@@ -1606,7 +1613,7 @@ void ieee80211_rx_mgmt_probe_beacon(struct ieee80211_sub_if_data *sdata,
 		return;
 
 	ieee802_11_parse_elems(mgmt->u.probe_resp.variable, len - baselen,
-			       false, &elems);
+			       false, &elems, mgmt->bssid, NULL);
 
 	ieee80211_rx_bss_info(sdata, mgmt, len, rx_status, &elems);
 }
@@ -1656,7 +1663,7 @@ void ieee80211_ibss_rx_queued_mgmt(struct ieee80211_sub_if_data *sdata,
 
 			ieee802_11_parse_elems(
 				mgmt->u.action.u.chan_switch.variable,
-				ies_len, true, &elems);
+				ies_len, true, &elems, mgmt->bssid, NULL);
 
 			if (elems.parse_error)
 				break;
@@ -1715,10 +1722,10 @@ void ieee80211_ibss_work(struct ieee80211_sub_if_data *sdata)
 	sdata_unlock(sdata);
 }
 
-static void ieee80211_ibss_timer(unsigned long data)
+static void ieee80211_ibss_timer(struct timer_list *t)
 {
 	struct ieee80211_sub_if_data *sdata =
-		(struct ieee80211_sub_if_data *) data;
+		from_timer(sdata, t, u.ibss.timer);
 
 	ieee80211_queue_work(&sdata->local->hw, &sdata->work);
 }
@@ -1727,8 +1734,7 @@ void ieee80211_ibss_setup_sdata(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_if_ibss *ifibss = &sdata->u.ibss;
 
-	setup_timer(&ifibss->timer, ieee80211_ibss_timer,
-		    (unsigned long) sdata);
+	timer_setup(&ifibss->timer, ieee80211_ibss_timer, 0);
 	INIT_LIST_HEAD(&ifibss->incomplete_stations);
 	spin_lock_init(&ifibss->incomplete_lock);
 	INIT_WORK(&ifibss->csa_connection_drop_work,
@@ -1844,11 +1850,12 @@ int ieee80211_ibss_join(struct ieee80211_sub_if_data *sdata,
 		  IEEE80211_HT_OP_MODE_PROTECTION_NONHT_MIXED
 		| IEEE80211_HT_PARAM_RIFS_MODE;
 
-	changed |= BSS_CHANGED_HT;
+	changed |= BSS_CHANGED_HT | BSS_CHANGED_MCAST_RATE;
 	ieee80211_bss_info_change_notify(sdata, changed);
 
 	sdata->smps_mode = IEEE80211_SMPS_OFF;
 	sdata->needed_rx_chains = local->rx_chains;
+	sdata->control_port_over_nl80211 = params->control_port_over_nl80211;
 
 	ieee80211_queue_work(&local->hw, &sdata->work);
 

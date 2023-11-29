@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *			Linux MegaRAID device driver
  *
  * Copyright (c) 2003-2004  LSI Logic Corporation.
- *
- *	   This program is free software; you can redistribute it and/or
- *	   modify it under the terms of the GNU General Public License
- *	   as published by the Free Software Foundation; either version
- *	   2 of the License, or (at your option) any later version.
  *
  * FILE		: megaraid_mm.c
  * Version	: v2.20.2.7 (Jul 16 2006)
@@ -35,7 +31,7 @@ static int kioc_to_mimd(uioc_t *, mimd_t __user *);
 static int handle_drvrcmd(void __user *, uint8_t, int *);
 static int lld_ioctl(mraid_mmadp_t *, uioc_t *);
 static void ioctl_done(uioc_t *);
-static void lld_timedout(unsigned long);
+static void lld_timedout(struct timer_list *);
 static void hinfo_to_cinfo(mraid_hba_info_t *, mcontroller_t *);
 static mraid_mmadp_t *mraid_mm_get_adapter(mimd_t __user *, int *);
 static uioc_t *mraid_mm_alloc_kioc(mraid_mmadp_t *);
@@ -690,8 +686,7 @@ static int
 lld_ioctl(mraid_mmadp_t *adp, uioc_t *kioc)
 {
 	int			rval;
-	struct timer_list	timer;
-	struct timer_list	*tp = NULL;
+	struct uioc_timeout	timeout = { };
 
 	kioc->status	= -ENODATA;
 	rval		= adp->issue_uioc(adp->drvr_data, kioc, IOCTL_ISSUE);
@@ -702,14 +697,12 @@ lld_ioctl(mraid_mmadp_t *adp, uioc_t *kioc)
 	 * Start the timer
 	 */
 	if (adp->timeout > 0) {
-		tp		= &timer;
-		init_timer(tp);
+		timeout.uioc = kioc;
+		timer_setup_on_stack(&timeout.timer, lld_timedout, 0);
 
-		tp->function	= lld_timedout;
-		tp->data	= (unsigned long)kioc;
-		tp->expires	= jiffies + adp->timeout * HZ;
+		timeout.timer.expires	= jiffies + adp->timeout * HZ;
 
-		add_timer(tp);
+		add_timer(&timeout.timer);
 	}
 
 	/*
@@ -717,8 +710,9 @@ lld_ioctl(mraid_mmadp_t *adp, uioc_t *kioc)
 	 * call, the ioctl either completed successfully or timedout.
 	 */
 	wait_event(wait_q, (kioc->status != -ENODATA));
-	if (tp) {
-		del_timer_sync(tp);
+	if (timeout.timer.function) {
+		del_timer_sync(&timeout.timer);
+		destroy_timer_on_stack(&timeout.timer);
 	}
 
 	/*
@@ -792,12 +786,13 @@ ioctl_done(uioc_t *kioc)
 
 /**
  * lld_timedout	- callback from the expired timer
- * @ptr		: ioctl packet that timed out
+ * @t		: timer that timed out
  */
 static void
-lld_timedout(unsigned long ptr)
+lld_timedout(struct timer_list *t)
 {
-	uioc_t *kioc	= (uioc_t *)ptr;
+	struct uioc_timeout *timeout = from_timer(timeout, t, timer);
+	uioc_t *kioc	= timeout->uioc;
 
 	kioc->status 	= -ETIME;
 	kioc->timedout	= 1;
@@ -945,10 +940,12 @@ mraid_mm_register_adp(mraid_mmadp_t *lld_adp)
 	 * Allocate single blocks of memory for all required kiocs,
 	 * mailboxes and passthru structures.
 	 */
-	adapter->kioc_list	= kmalloc(sizeof(uioc_t) * lld_adp->max_kioc,
-						GFP_KERNEL);
-	adapter->mbox_list	= kmalloc(sizeof(mbox64_t) * lld_adp->max_kioc,
-						GFP_KERNEL);
+	adapter->kioc_list	= kmalloc_array(lld_adp->max_kioc,
+						  sizeof(uioc_t),
+						  GFP_KERNEL);
+	adapter->mbox_list	= kmalloc_array(lld_adp->max_kioc,
+						  sizeof(mbox64_t),
+						  GFP_KERNEL);
 	adapter->pthru_dma_pool = dma_pool_create("megaraid mm pthru pool",
 						&adapter->pdev->dev,
 						sizeof(mraid_passthru_t),
@@ -1025,8 +1022,7 @@ memalloc_error:
 	kfree(adapter->kioc_list);
 	kfree(adapter->mbox_list);
 
-	if (adapter->pthru_dma_pool)
-		dma_pool_destroy(adapter->pthru_dma_pool);
+	dma_pool_destroy(adapter->pthru_dma_pool);
 
 	kfree(adapter);
 

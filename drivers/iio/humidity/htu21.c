@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * htu21.c - Support for Measurement-Specialties
  *           htu21 temperature & humidity sensor
  *	     and humidity part of MS8607 sensor
  *
  * Copyright (c) 2014 Measurement-Specialties
- *
- * Licensed under the GPL-2.
  *
  * (7-bit I2C slave address 0x40)
  *
@@ -175,7 +174,6 @@ static const struct iio_info htu21_info = {
 	.read_raw = htu21_read_raw,
 	.write_raw = htu21_write_raw,
 	.attrs = &htu21_attribute_group,
-	.driver_module = THIS_MODULE,
 };
 
 static int htu21_probe(struct i2c_client *client,

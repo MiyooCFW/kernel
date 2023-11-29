@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ST SPEAr ADC driver
  *
  * Copyright 2012 Stefan Roese <sr@denx.de>
- *
- * Licensed under the GPL-2.
  */
 
 #include <linux/module.h>
@@ -254,7 +253,6 @@ static int spear_adc_configure(struct spear_adc_state *st)
 static const struct iio_info spear_adc_info = {
 	.read_raw = &spear_adc_read_raw,
 	.write_raw = &spear_adc_write_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static int spear_adc_probe(struct platform_device *pdev)
@@ -303,7 +301,6 @@ static int spear_adc_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq <= 0) {
-		dev_err(dev, "failed getting interrupt resource\n");
 		ret = -EINVAL;
 		goto errout2;
 	}

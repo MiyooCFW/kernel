@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  hosts.c Copyright (C) 1992 Drew Eckhardt
  *          Copyright (C) 1993, 1994, 1995 Eric Youngdale
@@ -41,6 +42,12 @@
 #include "scsi_priv.h"
 #include "scsi_logging.h"
 
+
+static int shost_eh_deadline = -1;
+
+module_param_named(eh_deadline, shost_eh_deadline, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(eh_deadline,
+		 "SCSI EH timeout in seconds (should be between 0 and 2^31-1)");
 
 static DEFINE_IDA(host_index_ida);
 
@@ -148,7 +155,6 @@ int scsi_host_set_state(struct Scsi_Host *shost, enum scsi_host_state state)
 					     scsi_host_state_name(state)));
 	return -EINVAL;
 }
-EXPORT_SYMBOL(scsi_host_set_state);
 
 /**
  * scsi_remove_host - remove a scsi host
@@ -173,6 +179,7 @@ void scsi_remove_host(struct Scsi_Host *shost)
 	scsi_forget_host(shost);
 	mutex_unlock(&shost->scan_mutex);
 	scsi_proc_host_rm(shost);
+	scsi_proc_hostdir_rm(shost->hostt);
 
 	spin_lock_irqsave(shost->host_lock, flags);
 	if (scsi_host_set_state(shost, SHOST_DEL))
@@ -221,18 +228,9 @@ int scsi_add_host_with_dma(struct Scsi_Host *shost, struct device *dev,
 	if (error)
 		goto fail;
 
-	if (shost_use_blk_mq(shost)) {
-		error = scsi_mq_setup_tags(shost);
-		if (error)
-			goto fail;
-	} else {
-		shost->bqt = blk_init_tags(shost->can_queue,
-				shost->hostt->tag_alloc_policy);
-		if (!shost->bqt) {
-			error = -ENOMEM;
-			goto fail;
-		}
-	}
+	error = scsi_mq_setup_tags(shost);
+	if (error)
+		goto fail;
 
 	if (!shost->shost_gendev.parent)
 		shost->shost_gendev.parent = dev ? dev : &platform_bus;
@@ -281,23 +279,22 @@ int scsi_add_host_with_dma(struct Scsi_Host *shost, struct device *dev,
 					shost->work_q_name);
 		if (!shost->work_q) {
 			error = -EINVAL;
-			goto out_free_shost_data;
+			goto out_del_dev;
 		}
 	}
 
 	error = scsi_sysfs_add_host(shost);
 	if (error)
-		goto out_destroy_host;
+		goto out_del_dev;
 
 	scsi_proc_host_add(shost);
 	scsi_autopm_put_host(shost);
 	return error;
 
- out_destroy_host:
-	if (shost->work_q)
-		destroy_workqueue(shost->work_q);
- out_free_shost_data:
-	kfree(shost->shost_data);
+	/*
+	 * Any host allocation in this function will be freed in
+	 * scsi_host_dev_release().
+	 */
  out_del_dev:
 	device_del(&shost->shost_dev);
  out_del_gendev:
@@ -312,8 +309,6 @@ int scsi_add_host_with_dma(struct Scsi_Host *shost, struct device *dev,
 	pm_runtime_disable(&shost->shost_gendev);
 	pm_runtime_set_suspended(&shost->shost_gendev);
 	pm_runtime_put_noidle(&shost->shost_gendev);
-	if (shost_use_blk_mq(shost))
-		scsi_mq_destroy_tags(shost);
  fail:
 	return error;
 }
@@ -324,9 +319,7 @@ static void scsi_host_dev_release(struct device *dev)
 	struct Scsi_Host *shost = dev_to_shost(dev);
 	struct device *parent = dev->parent;
 
-	scsi_proc_hostdir_rm(shost->hostt);
-
-	/* Wait for functions invoked through call_rcu(&shost->rcu, ...) */
+	/* Wait for functions invoked through call_rcu(&scmd->rcu, ...) */
 	rcu_barrier();
 
 	if (shost->tmf_work_q)
@@ -347,13 +340,8 @@ static void scsi_host_dev_release(struct device *dev)
 		kfree(dev_name(&shost->shost_dev));
 	}
 
-	if (shost_use_blk_mq(shost)) {
-		if (shost->tag_set.tags)
-			scsi_mq_destroy_tags(shost);
-	} else {
-		if (shost->bqt)
-			blk_free_tags(shost->bqt);
-	}
+	if (shost->tag_set.tags)
+		scsi_mq_destroy_tags(shost);
 
 	kfree(shost->shost_data);
 
@@ -363,12 +351,6 @@ static void scsi_host_dev_release(struct device *dev)
 		put_device(parent);
 	kfree(shost);
 }
-
-static int shost_eh_deadline = -1;
-
-module_param_named(eh_deadline, shost_eh_deadline, int, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(eh_deadline,
-		 "SCSI EH timeout in seconds (should be between 0 and 2^31-1)");
 
 static struct device_type scsi_host_type = {
 	.name =		"scsi_host",
@@ -442,7 +424,6 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	shost->sg_prot_tablesize = sht->sg_prot_tablesize;
 	shost->cmd_per_lun = sht->cmd_per_lun;
 	shost->unchecked_isa_dma = sht->unchecked_isa_dma;
-	shost->use_clustering = sht->use_clustering;
 	shost->no_write_same = sht->no_write_same;
 
 	if (shost_eh_deadline == -1 || !sht->eh_host_reset_handler)
@@ -475,6 +456,11 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	else
 		shost->max_sectors = SCSI_DEFAULT_MAX_SECTORS;
 
+	if (sht->max_segment_size)
+		shost->max_segment_size = sht->max_segment_size;
+	else
+		shost->max_segment_size = BLK_MAX_SEGMENT_SIZE;
+
 	/*
 	 * assume a 4GB boundary, if not set
 	 */
@@ -483,8 +469,8 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	else
 		shost->dma_boundary = 0xffffffff;
 
-	shost->use_blk_mq = scsi_use_blk_mq;
-	shost->use_blk_mq = scsi_use_blk_mq || shost->hostt->force_blk_mq;
+	if (sht->virt_boundary_mask)
+		shost->virt_boundary_mask = sht->virt_boundary_mask;
 
 	device_initialize(&shost->shost_gendev);
 	dev_set_name(&shost->shost_gendev, "host%d", shost->host_no);
@@ -528,29 +514,6 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	return NULL;
 }
 EXPORT_SYMBOL(scsi_host_alloc);
-
-struct Scsi_Host *scsi_register(struct scsi_host_template *sht, int privsize)
-{
-	struct Scsi_Host *shost = scsi_host_alloc(sht, privsize);
-
-	if (!sht->detect) {
-		printk(KERN_WARNING "scsi_register() called on new-style "
-				    "template for driver %s\n", sht->name);
-		dump_stack();
-	}
-
-	if (shost)
-		list_add_tail(&shost->sht_legacy_list, &sht->legacy_hosts);
-	return shost;
-}
-EXPORT_SYMBOL(scsi_register);
-
-void scsi_unregister(struct Scsi_Host *shost)
-{
-	list_del(&shost->sht_legacy_list);
-	scsi_host_put(shost);
-}
-EXPORT_SYMBOL(scsi_unregister);
 
 static int __scsi_host_match(struct device *dev, const void *data)
 {
@@ -599,6 +562,16 @@ struct Scsi_Host *scsi_host_get(struct Scsi_Host *shost)
 	return shost;
 }
 EXPORT_SYMBOL(scsi_host_get);
+
+/**
+ * scsi_host_busy - Return the host busy counter
+ * @shost:	Pointer to Scsi_Host to inc.
+ **/
+int scsi_host_busy(struct Scsi_Host *shost)
+{
+	return atomic_read(&shost->host_busy);
+}
+EXPORT_SYMBOL(scsi_host_busy);
 
 /**
  * scsi_host_put - dec a Scsi_Host ref count

@@ -22,7 +22,6 @@
 static const char * const suniv_board_dt_compat[] = {
 	"allwinner,suniv",
 	"allwinner,suniv-f1c100s",
-	"allwinner,suniv-f1c500s",
 	NULL,
 };
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  Driver for CPM (SCC/SMC) serial ports; core driver
  *
@@ -12,21 +13,6 @@
  *            (C) 2004 Intracom, S.A.
  *            (C) 2005-2006 MontaVista Software, Inc.
  *		Vitaly Bordug <vbordug@ru.mvista.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
  */
 
 #include <linux/module.h>
@@ -38,7 +24,7 @@
 #include <linux/console.h>
 #include <linux/sysrq.h>
 #include <linux/device.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/dma-mapping.h>
 #include <linux/fs_uart_pd.h>
 #include <linux/of_address.h>
@@ -590,8 +576,6 @@ static void cpm_uart_set_termios(struct uart_port *port,
 	/*
 	 * Set up parity check flag
 	 */
-#define RELEVANT_IFLAG(iflag) (iflag & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
-
 	port->read_status_mask = (BD_SC_EMPTY | BD_SC_OV);
 	if (termios->c_iflag & INPCK)
 		port->read_status_mask |= BD_SC_FR | BD_SC_PR;
@@ -1174,8 +1158,8 @@ static int cpm_uart_init_port(struct device_node *np,
 	if (!pinfo->clk) {
 		data = of_get_property(np, "fsl,cpm-brg", &len);
 		if (!data || len != 4) {
-			printk(KERN_ERR "CPM UART %s has no/invalid "
-			                "fsl,cpm-brg property.\n", np->name);
+			printk(KERN_ERR "CPM UART %pOFn has no/invalid "
+			                "fsl,cpm-brg property.\n", np);
 			return -EINVAL;
 		}
 		pinfo->brg = *data;
@@ -1183,8 +1167,8 @@ static int cpm_uart_init_port(struct device_node *np,
 
 	data = of_get_property(np, "fsl,cpm-command", &len);
 	if (!data || len != 4) {
-		printk(KERN_ERR "CPM UART %s has no/invalid "
-		                "fsl,cpm-command property.\n", np->name);
+		printk(KERN_ERR "CPM UART %pOFn has no/invalid "
+		                "fsl,cpm-command property.\n", np);
 		return -EINVAL;
 	}
 	pinfo->command = *data;

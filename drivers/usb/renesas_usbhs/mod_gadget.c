@@ -1,18 +1,10 @@
+// SPDX-License-Identifier: GPL-1.0+
 /*
  * Renesas USB driver
  *
  * Copyright (C) 2011 Renesas Solutions Corp.
+ * Copyright (C) 2019 Renesas Electronics Corporation
  * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
- *
  */
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
@@ -273,7 +265,7 @@ static int usbhsg_recip_handler_std_set_device(struct usbhs_priv *priv,
 	case USB_DEVICE_TEST_MODE:
 		usbhsg_recip_handler_std_control_done(priv, uep, ctrl);
 		udelay(100);
-		usbhs_sys_set_test_mode(priv, le16_to_cpu(ctrl->wIndex >> 8));
+		usbhs_sys_set_test_mode(priv, le16_to_cpu(ctrl->wIndex) >> 8);
 		break;
 	default:
 		usbhsg_recip_handler_std_control_done(priv, uep, ctrl);
@@ -323,7 +315,7 @@ static void __usbhsg_recip_send_status(struct usbhsg_gpriv *gpriv,
 	struct usbhs_pipe *pipe = usbhsg_uep_to_pipe(dcp);
 	struct device *dev = usbhsg_gpriv_to_dev(gpriv);
 	struct usb_request *req;
-	unsigned short *buf;
+	__le16 *buf;
 
 	/* alloc new usb_request for recip */
 	req = usb_ep_alloc_request(&dcp->ep, GFP_ATOMIC);
@@ -517,6 +509,7 @@ static int usbhsg_irq_ctrl_stage(struct usbhs_priv *priv,
 	case READ_STATUS_STAGE:
 	case WRITE_STATUS_STAGE:
 		usbhs_dcp_control_transfer_done(pipe);
+		/* fall through */
 	default:
 		return ret;
 	}
@@ -940,8 +933,8 @@ static void usbhs_mod_phy_mode(struct usbhs_priv *priv)
 {
 	struct usbhs_mod_info *info = &priv->mod_info;
 
-	info->irq_vbus		= NULL;
-	priv->pfunc.get_vbus	= usbhsm_phy_get_vbus;
+	info->irq_vbus = NULL;
+	info->get_vbus = usbhsm_phy_get_vbus;
 
 	usbhs_irq_callback_update(priv, NULL);
 }
@@ -1049,7 +1042,7 @@ static int usbhsg_vbus_session(struct usb_gadget *gadget, int is_active)
 
 	gpriv->vbus_active = !!is_active;
 
-	renesas_usbhs_call_notify_hotplug(pdev);
+	usbhsc_schedule_notify_hotplug(pdev);
 
 	return 0;
 }
@@ -1095,7 +1088,7 @@ int usbhs_mod_gadget_probe(struct usbhs_priv *priv)
 	if (!gpriv)
 		return -ENOMEM;
 
-	uep = kzalloc(sizeof(struct usbhsg_uep) * pipe_size, GFP_KERNEL);
+	uep = kcalloc(pipe_size, sizeof(struct usbhsg_uep), GFP_KERNEL);
 	if (!uep) {
 		ret = -ENOMEM;
 		goto usbhs_mod_gadget_probe_err_gpriv;

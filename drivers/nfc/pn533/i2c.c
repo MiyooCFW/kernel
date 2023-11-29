@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for NXP PN533 NFC Chip - I2C transport layer
  *
  * Copyright (C) 2011 Instituto Nokia de Tecnologia
  * Copyright (C) 2012-2013 Tieto Poland
  * Copyright (C) 2016 HALE electronic
- *
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/device.h>
@@ -264,7 +251,7 @@ static const struct of_device_id of_pn533_i2c_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_pn533_i2c_match);
 
-static struct i2c_device_id pn533_i2c_id_table[] = {
+static const struct i2c_device_id pn533_i2c_id_table[] = {
 	{ PN533_I2C_DRIVER_NAME, 0 },
 	{}
 };

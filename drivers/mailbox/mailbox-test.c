@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2015 ST Microelectronics
  *
  * Author: Lee Jones <lee.jones@linaro.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/debugfs.h>
@@ -32,7 +28,6 @@
 				 (MBOX_MAX_MSG_LEN / MBOX_BYTES_PER_LINE))
 
 static bool mbox_data_ready;
-static struct dentry *root_debugfs_dir;
 
 struct mbox_test_device {
 	struct device		*dev;
@@ -47,6 +42,7 @@ struct mbox_test_device {
 	struct mutex		mutex;
 	wait_queue_head_t	waitq;
 	struct fasync_struct	*async_queue;
+	struct dentry		*root_debugfs_dir;
 };
 
 static ssize_t mbox_test_signal_write(struct file *filp,
@@ -243,7 +239,7 @@ kfree_err:
 	return ret;
 }
 
-static unsigned int
+static __poll_t
 mbox_test_message_poll(struct file *filp, struct poll_table_struct *wait)
 {
 	struct mbox_test_device *tdev = filp->private_data;
@@ -251,7 +247,7 @@ mbox_test_message_poll(struct file *filp, struct poll_table_struct *wait)
 	poll_wait(filp, &tdev->waitq, wait);
 
 	if (mbox_test_message_data_ready(tdev))
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 	return 0;
 }
 
@@ -270,16 +266,16 @@ static int mbox_test_add_debugfs(struct platform_device *pdev,
 	if (!debugfs_initialized())
 		return 0;
 
-	root_debugfs_dir = debugfs_create_dir("mailbox", NULL);
-	if (!root_debugfs_dir) {
+	tdev->root_debugfs_dir = debugfs_create_dir(dev_name(&pdev->dev), NULL);
+	if (!tdev->root_debugfs_dir) {
 		dev_err(&pdev->dev, "Failed to create Mailbox debugfs\n");
 		return -EINVAL;
 	}
 
-	debugfs_create_file("message", 0600, root_debugfs_dir,
+	debugfs_create_file("message", 0600, tdev->root_debugfs_dir,
 			    tdev, &mbox_test_message_ops);
 
-	debugfs_create_file("signal", 0200, root_debugfs_dir,
+	debugfs_create_file("signal", 0200, tdev->root_debugfs_dir,
 			    tdev, &mbox_test_signal_ops);
 
 	return 0;
@@ -427,7 +423,7 @@ static int mbox_test_remove(struct platform_device *pdev)
 {
 	struct mbox_test_device *tdev = platform_get_drvdata(pdev);
 
-	debugfs_remove_recursive(root_debugfs_dir);
+	debugfs_remove_recursive(tdev->root_debugfs_dir);
 
 	if (tdev->tx_channel)
 		mbox_free_channel(tdev->tx_channel);

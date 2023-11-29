@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/sched/sch_choke.c	CHOKE scheduler
  *
  * Copyright (c) 2011 Stephen Hemminger <shemminger@vyatta.com>
  * Copyright (c) 2011 Eric Dumazet <eric.dumazet@gmail.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
  */
 
 #include <linux/module.h>
@@ -345,7 +341,8 @@ static void choke_free(void *addr)
 	kvfree(addr);
 }
 
-static int choke_change(struct Qdisc *sch, struct nlattr *opt)
+static int choke_change(struct Qdisc *sch, struct nlattr *opt,
+			struct netlink_ext_ack *extack)
 {
 	struct choke_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_CHOKE_MAX + 1];
@@ -359,7 +356,8 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt)
 	if (opt == NULL)
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_CHOKE_MAX, opt, choke_policy, NULL);
+	err = nla_parse_nested_deprecated(tb, TCA_CHOKE_MAX, opt,
+					  choke_policy, NULL);
 	if (err < 0)
 		return err;
 
@@ -433,9 +431,10 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt)
 	return 0;
 }
 
-static int choke_init(struct Qdisc *sch, struct nlattr *opt)
+static int choke_init(struct Qdisc *sch, struct nlattr *opt,
+		      struct netlink_ext_ack *extack)
 {
-	return choke_change(sch, opt);
+	return choke_change(sch, opt, extack);
 }
 
 static int choke_dump(struct Qdisc *sch, struct sk_buff *skb)
@@ -452,7 +451,7 @@ static int choke_dump(struct Qdisc *sch, struct sk_buff *skb)
 		.Scell_log	= q->parms.Scell_log,
 	};
 
-	opts = nla_nest_start(skb, TCA_OPTIONS);
+	opts = nla_nest_start_noflag(skb, TCA_OPTIONS);
 	if (opts == NULL)
 		goto nla_put_failure;
 

@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2017, 2019-2021 Linaro Limited
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 #include <linux/anon_inodes.h>
 #include <linux/device.h>
@@ -22,38 +13,50 @@
 
 static void tee_shm_release(struct tee_device *teedev, struct tee_shm *shm)
 {
-	struct tee_shm_pool_mgr *poolm;
+	if (shm->flags & TEE_SHM_POOL) {
+		struct tee_shm_pool_mgr *poolm;
 
-	if (shm->flags & TEE_SHM_DMA_BUF)
-		poolm = &teedev->pool->dma_buf_mgr;
-	else
-		poolm = &teedev->pool->private_mgr;
+		if (shm->flags & TEE_SHM_DMA_BUF)
+			poolm = teedev->pool->dma_buf_mgr;
+		else
+			poolm = teedev->pool->private_mgr;
 
-	poolm->ops->free(poolm, shm);
+		poolm->ops->free(poolm, shm);
+	} else if (shm->flags & TEE_SHM_REGISTER) {
+		size_t n;
+		int rc = teedev->desc->ops->shm_unregister(shm->ctx, shm);
+
+		if (rc)
+			dev_err(teedev->dev.parent,
+				"unregister shm %p failed: %d", shm, rc);
+
+		for (n = 0; n < shm->num_pages; n++)
+			put_page(shm->pages[n]);
+
+		kfree(shm->pages);
+	}
+
+	if (shm->ctx)
+		teedev_ctx_put(shm->ctx);
+
 	kfree(shm);
 
 	tee_device_put(teedev);
 }
 
-/**
- * tee_shm_alloc() - Allocate shared memory
- * @ctx:	Context that allocates the shared memory
- * @size:	Requested size of shared memory
- * @flags:	Flags setting properties for the requested shared memory.
- *
- * Memory allocated as global shared memory is automatically freed when the
- * TEE file pointer is closed. The @flags field uses the bits defined by
- * TEE_SHM_* in <linux/tee_drv.h>. TEE_SHM_MAPPED must currently always be
- * set. If TEE_SHM_DMA_BUF global shared memory will be allocated and
- * associated with a dma-buf handle, else driver private memory.
- */
-struct tee_shm *tee_shm_alloc(struct tee_context *ctx, size_t size, u32 flags)
+static struct tee_shm *__tee_shm_alloc(struct tee_context *ctx,
+				       struct tee_device *teedev,
+				       size_t size, u32 flags)
 {
-	struct tee_device *teedev = ctx->teedev;
 	struct tee_shm_pool_mgr *poolm = NULL;
 	struct tee_shm *shm;
 	void *ret;
 	int rc;
+
+	if (ctx && ctx->teedev != teedev) {
+		dev_err(teedev->dev.parent, "ctx and teedev mismatch\n");
+		return ERR_PTR(-EINVAL);
+	}
 
 	if (!(flags & TEE_SHM_MAPPED)) {
 		dev_err(teedev->dev.parent,
@@ -61,7 +64,7 @@ struct tee_shm *tee_shm_alloc(struct tee_context *ctx, size_t size, u32 flags)
 		return ERR_PTR(-EINVAL);
 	}
 
-	if ((flags & ~(TEE_SHM_MAPPED | TEE_SHM_DMA_BUF))) {
+	if ((flags & ~(TEE_SHM_MAPPED | TEE_SHM_DMA_BUF | TEE_SHM_PRIV))) {
 		dev_err(teedev->dev.parent, "invalid shm flags 0x%x", flags);
 		return ERR_PTR(-EINVAL);
 	}
@@ -82,13 +85,13 @@ struct tee_shm *tee_shm_alloc(struct tee_context *ctx, size_t size, u32 flags)
 	}
 
 	refcount_set(&shm->refcount, 1);
-	shm->flags = flags;
+	shm->flags = flags | TEE_SHM_POOL;
 	shm->teedev = teedev;
 	shm->ctx = ctx;
 	if (flags & TEE_SHM_DMA_BUF)
-		poolm = &teedev->pool->dma_buf_mgr;
+		poolm = teedev->pool->dma_buf_mgr;
 	else
-		poolm = &teedev->pool->private_mgr;
+		poolm = teedev->pool->private_mgr;
 
 	rc = poolm->ops->alloc(poolm, shm, size);
 	if (rc) {
@@ -104,9 +107,12 @@ struct tee_shm *tee_shm_alloc(struct tee_context *ctx, size_t size, u32 flags)
 		goto err_pool_free;
 	}
 
-	mutex_lock(&teedev->mutex);
-	list_add_tail(&shm->link, &ctx->list_shm);
-	mutex_unlock(&teedev->mutex);
+	if (ctx) {
+		teedev_ctx_get(ctx);
+		mutex_lock(&teedev->mutex);
+		list_add_tail(&shm->link, &ctx->list_shm);
+		mutex_unlock(&teedev->mutex);
+	}
 
 	return shm;
 err_pool_free:
@@ -117,7 +123,148 @@ err_dev_put:
 	tee_device_put(teedev);
 	return ret;
 }
+
+/**
+ * tee_shm_alloc() - Allocate shared memory
+ * @ctx:	Context that allocates the shared memory
+ * @size:	Requested size of shared memory
+ * @flags:	Flags setting properties for the requested shared memory.
+ *
+ * Memory allocated as global shared memory is automatically freed when the
+ * TEE file pointer is closed. The @flags field uses the bits defined by
+ * TEE_SHM_* in <linux/tee_drv.h>. TEE_SHM_MAPPED must currently always be
+ * set. If TEE_SHM_DMA_BUF global shared memory will be allocated and
+ * associated with a dma-buf handle, else driver private memory.
+ */
+struct tee_shm *tee_shm_alloc(struct tee_context *ctx, size_t size, u32 flags)
+{
+	return __tee_shm_alloc(ctx, ctx->teedev, size, flags);
+}
 EXPORT_SYMBOL_GPL(tee_shm_alloc);
+
+struct tee_shm *tee_shm_priv_alloc(struct tee_device *teedev, size_t size)
+{
+	return __tee_shm_alloc(NULL, teedev, size, TEE_SHM_MAPPED);
+}
+EXPORT_SYMBOL_GPL(tee_shm_priv_alloc);
+
+/**
+ * tee_shm_alloc_kernel_buf() - Allocate shared memory for kernel buffer
+ * @ctx:	Context that allocates the shared memory
+ * @size:	Requested size of shared memory
+ *
+ * The returned memory registered in secure world and is suitable to be
+ * passed as a memory buffer in parameter argument to
+ * tee_client_invoke_func(). The memory allocated is later freed with a
+ * call to tee_shm_free().
+ *
+ * @returns a pointer to 'struct tee_shm'
+ */
+struct tee_shm *tee_shm_alloc_kernel_buf(struct tee_context *ctx, size_t size)
+{
+	return tee_shm_alloc(ctx, size, TEE_SHM_MAPPED);
+}
+EXPORT_SYMBOL_GPL(tee_shm_alloc_kernel_buf);
+
+struct tee_shm *tee_shm_register(struct tee_context *ctx, unsigned long addr,
+				 size_t length, u32 flags)
+{
+	struct tee_device *teedev = ctx->teedev;
+	const u32 req_flags = TEE_SHM_DMA_BUF | TEE_SHM_USER_MAPPED;
+	struct tee_shm *shm;
+	void *ret;
+	int rc;
+	int num_pages;
+	unsigned long start;
+
+	if (flags != req_flags)
+		return ERR_PTR(-ENOTSUPP);
+
+	if (!tee_device_get(teedev))
+		return ERR_PTR(-EINVAL);
+
+	if (!teedev->desc->ops->shm_register ||
+	    !teedev->desc->ops->shm_unregister) {
+		tee_device_put(teedev);
+		return ERR_PTR(-ENOTSUPP);
+	}
+
+	teedev_ctx_get(ctx);
+
+	shm = kzalloc(sizeof(*shm), GFP_KERNEL);
+	if (!shm) {
+		ret = ERR_PTR(-ENOMEM);
+		goto err;
+	}
+
+	refcount_set(&shm->refcount, 1);
+	shm->flags = flags | TEE_SHM_REGISTER;
+	shm->teedev = teedev;
+	shm->ctx = ctx;
+	shm->id = -1;
+	addr = untagged_addr(addr);
+	start = rounddown(addr, PAGE_SIZE);
+	shm->offset = addr - start;
+	shm->size = length;
+	num_pages = (roundup(addr + length, PAGE_SIZE) - start) / PAGE_SIZE;
+	shm->pages = kcalloc(num_pages, sizeof(*shm->pages), GFP_KERNEL);
+	if (!shm->pages) {
+		ret = ERR_PTR(-ENOMEM);
+		goto err;
+	}
+
+	rc = get_user_pages_fast(start, num_pages, FOLL_WRITE, shm->pages);
+	if (rc > 0)
+		shm->num_pages = rc;
+	if (rc != num_pages) {
+		if (rc >= 0)
+			rc = -ENOMEM;
+		ret = ERR_PTR(rc);
+		goto err;
+	}
+
+	mutex_lock(&teedev->mutex);
+	shm->id = idr_alloc(&teedev->idr, shm, 1, 0, GFP_KERNEL);
+	mutex_unlock(&teedev->mutex);
+
+	if (shm->id < 0) {
+		ret = ERR_PTR(shm->id);
+		goto err;
+	}
+
+	rc = teedev->desc->ops->shm_register(ctx, shm, shm->pages,
+					     shm->num_pages, start);
+	if (rc) {
+		ret = ERR_PTR(rc);
+		goto err;
+	}
+
+	mutex_lock(&teedev->mutex);
+	list_add_tail(&shm->link, &ctx->list_shm);
+	mutex_unlock(&teedev->mutex);
+
+	return shm;
+err:
+	if (shm) {
+		size_t n;
+
+		if (shm->id >= 0) {
+			mutex_lock(&teedev->mutex);
+			idr_remove(&teedev->idr, shm->id);
+			mutex_unlock(&teedev->mutex);
+		}
+		if (shm->pages) {
+			for (n = 0; n < shm->num_pages; n++)
+				put_page(shm->pages[n]);
+			kfree(shm->pages);
+		}
+	}
+	kfree(shm);
+	teedev_ctx_put(ctx);
+	tee_device_put(teedev);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(tee_shm_register);
 
 static int tee_shm_fop_release(struct inode *inode, struct file *filp)
 {
@@ -129,6 +276,10 @@ static int tee_shm_fop_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct tee_shm *shm = filp->private_data;
 	size_t size = vma->vm_end - vma->vm_start;
+
+	/* Refuse sharing shared memory provided by application */
+	if (shm->flags & TEE_SHM_USER_MAPPED)
+		return -EINVAL;
 
 	/* check for overflowing the buffer's size */
 	if (vma->vm_pgoff + vma_pages(vma) > shm->size >> PAGE_SHIFT)
@@ -151,10 +302,9 @@ static const struct file_operations tee_shm_fops = {
  */
 int tee_shm_get_fd(struct tee_shm *shm)
 {
-	u32 req_flags = TEE_SHM_MAPPED | TEE_SHM_DMA_BUF;
 	int fd;
 
-	if ((shm->flags & req_flags) != req_flags)
+	if (!(shm->flags & TEE_SHM_DMA_BUF))
 		return -EINVAL;
 
 	/* matched by tee_shm_put() in tee_shm_op_release() */
@@ -184,6 +334,8 @@ EXPORT_SYMBOL_GPL(tee_shm_free);
  */
 int tee_shm_va2pa(struct tee_shm *shm, void *va, phys_addr_t *pa)
 {
+	if (!(shm->flags & TEE_SHM_MAPPED))
+		return -EINVAL;
 	/* Check that we're in the range of the shm */
 	if ((char *)va < (char *)shm->kaddr)
 		return -EINVAL;
@@ -204,6 +356,8 @@ EXPORT_SYMBOL_GPL(tee_shm_va2pa);
  */
 int tee_shm_pa2va(struct tee_shm *shm, phys_addr_t pa, void **va)
 {
+	if (!(shm->flags & TEE_SHM_MAPPED))
+		return -EINVAL;
 	/* Check that we're in the range of the shm */
 	if (pa < shm->paddr)
 		return -EINVAL;
@@ -230,6 +384,8 @@ EXPORT_SYMBOL_GPL(tee_shm_pa2va);
  */
 void *tee_shm_get_va(struct tee_shm *shm, size_t offs)
 {
+	if (!(shm->flags & TEE_SHM_MAPPED))
+		return ERR_PTR(-EINVAL);
 	if (offs >= shm->size)
 		return ERR_PTR(-EINVAL);
 	return (char *)shm->kaddr + offs;
@@ -287,17 +443,6 @@ struct tee_shm *tee_shm_get_from_id(struct tee_context *ctx, int id)
 EXPORT_SYMBOL_GPL(tee_shm_get_from_id);
 
 /**
- * tee_shm_get_id() - Get id of a shared memory object
- * @shm:	Shared memory handle
- * @returns id
- */
-int tee_shm_get_id(struct tee_shm *shm)
-{
-	return shm->id;
-}
-EXPORT_SYMBOL_GPL(tee_shm_get_id);
-
-/**
  * tee_shm_put() - Decrease reference count on a shared memory handle
  * @shm:	Shared memory handle
  */
@@ -310,10 +455,11 @@ void tee_shm_put(struct tee_shm *shm)
 	if (refcount_dec_and_test(&shm->refcount)) {
 		/*
 		 * refcount has reached 0, we must now remove it from the
-		 * IDR before releasing the mutex.  This will guarantee
-		 * that the refcount_inc() in tee_shm_get_from_id() never
-		 * starts from 0.
+		 * IDR before releasing the mutex. This will guarantee that
+		 * the refcount_inc() in tee_shm_get_from_id() never starts
+		 * from 0.
 		 */
+		idr_remove(&teedev->idr, shm->id);
 		if (shm->ctx)
 			list_del(&shm->link);
 		do_release = true;

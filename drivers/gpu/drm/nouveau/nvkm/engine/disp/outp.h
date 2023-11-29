@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVKM_DISP_OUTP_H__
 #define __NVKM_DISP_OUTP_H__
 #include <engine/disp.h>
@@ -13,10 +13,10 @@ struct nvkm_outp {
 	struct dcb_output info;
 
 	struct nvkm_i2c_bus *i2c;
-	int or;
 
 	struct list_head head;
 	struct nvkm_conn *conn;
+	bool identity;
 
 	/* Assembly state. */
 #define NVKM_OUTP_PRIV 1

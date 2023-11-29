@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OMAP2+ DMA driver
  *
@@ -15,10 +16,6 @@
  * Copyright (C) 2010 Texas Instruments Incorporated - http://www.ti.com/
  * Converted DMA library into platform driver
  *	- G, Manjunath Kondaiah <manjugk@ti.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/err.h>
@@ -223,7 +220,7 @@ static struct omap_system_dma_plat_info dma_plat_info __initdata = {
 	.dma_read	= dma_read,
 };
 
-static struct platform_device_info omap_dma_dev_info = {
+static struct platform_device_info omap_dma_dev_info __initdata = {
 	.name = "omap-dma-engine",
 	.id = -1,
 	.dma_mask = DMA_BIT_MASK(32),

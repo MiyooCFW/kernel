@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This is the DECtalk PC speakup driver
  *
@@ -14,16 +15,6 @@
  *      Copyright (c) 2003 David Borowski <david575@golden.net>
  *
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 #include <linux/jiffies.h>
 #include <linux/sched.h>
@@ -272,7 +263,7 @@ static int dt_wait_dma(void)
 	if (!dt_waitbit(STAT_dma_ready))
 		return 0;
 	while (--timeout > 0) {
-		if ((dt_getstatus()&STAT_dma_state) == state)
+		if ((dt_getstatus() & STAT_dma_state) == state)
 			return 1;
 		udelay(50);
 	}
@@ -311,12 +302,12 @@ static void synth_flush(struct spk_synth *synth)
 	while (dt_ctrl(CTRL_flush)) {
 		if (--timeout == 0)
 			break;
-udelay(50);
+		udelay(50);
 	}
 	for (timeout = 0; timeout < 10; timeout++) {
 		if (dt_waitbit(STAT_dma_ready))
 			break;
-udelay(50);
+		udelay(50);
 	}
 	outb_p(DMA_sync, speakup_info.port_tts + 4);
 	outb_p(0, speakup_info.port_tts + 4);
@@ -324,7 +315,7 @@ udelay(50);
 	for (timeout = 0; timeout < 10; timeout++) {
 		if (!(dt_getstatus() & STAT_flushing))
 			break;
-udelay(50);
+		udelay(50);
 	}
 	dma_state = dt_getstatus() & STAT_dma_state;
 	dma_state ^= STAT_dma_state;
@@ -358,7 +349,7 @@ static int testkernel(void)
 		return 0;
 	else if (dt_stat == 0x0dec)
 		pr_warn("dec_pc at 0x%x, software not loaded\n",
-				speakup_info.port_tts);
+			speakup_info.port_tts);
 	status = -3;
 oops:	synth_release_region(speakup_info.port_tts, SYNTH_IO_EXTENT);
 	speakup_info.port_tts = 0;
@@ -421,11 +412,11 @@ static void do_catch_up(struct spk_synth *synth)
 				if (!in_escape)
 					dt_sendchar(PROCSPEECH);
 				spin_lock_irqsave(&speakup_info.spinlock,
-							flags);
+						  flags);
 				jiffy_delta_val = jiffy_delta->u.n.value;
 				delay_time_val = delay_time->u.n.value;
 				spin_unlock_irqrestore(&speakup_info.spinlock,
-							flags);
+						       flags);
 				schedule_timeout(msecs_to_jiffies
 						 (delay_time_val));
 				jiff_max = jiffies + jiffy_delta_val;

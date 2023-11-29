@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Network device driver for Cell Processor-Based Blade and Celleb platform
  *
@@ -6,20 +7,6 @@
  *
  * Authors : Utz Bacher <utz.bacher@de.ibm.com>
  *           Jens Osterkamp <Jens.Osterkamp@de.ibm.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/compiler.h>
@@ -801,6 +788,7 @@ spider_net_release_tx_chain(struct spider_net_card *card, int brutal)
 			/* fallthrough, if we release the descriptors
 			 * brutally (then we don't care about
 			 * SPIDER_NET_DESCR_CARDOWNED) */
+			/* Fall through */
 
 		case SPIDER_NET_DESCR_RESPONSE_ERROR:
 		case SPIDER_NET_DESCR_PROTECTION_ERROR:
@@ -912,8 +900,9 @@ spider_net_xmit(struct sk_buff *skb, struct net_device *netdev)
  * packets, including updating the queue tail pointer.
  */
 static void
-spider_net_cleanup_tx_ring(struct spider_net_card *card)
+spider_net_cleanup_tx_ring(struct timer_list *t)
 {
+	struct spider_net_card *card = from_timer(card, t, tx_timer);
 	if ((spider_net_release_tx_chain(card, 0) != 0) &&
 	    (card->netdev->flags & IFF_UP)) {
 		spider_net_kick_tx_dma(card);
@@ -1265,7 +1254,7 @@ static int spider_net_poll(struct napi_struct *napi, int budget)
 	spider_net_refill_rx_chain(card);
 	spider_net_enable_rxdmac(card);
 
-	spider_net_cleanup_tx_ring(card);
+	spider_net_cleanup_tx_ring(&card->tx_timer);
 
 	/* if all packets are in the stack, enable interrupts and return 0 */
 	/* if not, return 1 */
@@ -1977,9 +1966,9 @@ init_firmware_failed:
  * @data: used for pointer to card structure
  *
  */
-static void spider_net_link_phy(unsigned long data)
+static void spider_net_link_phy(struct timer_list *t)
 {
-	struct spider_net_card *card = (struct spider_net_card *)data;
+	struct spider_net_card *card = from_timer(card, t, aneg_timer);
 	struct mii_phy *phy = &card->phy;
 
 	/* if link didn't come up after SPIDER_NET_ANEG_TIMEOUT tries, setup phy again */
@@ -2256,16 +2245,11 @@ spider_net_setup_netdev(struct spider_net_card *card)
 
 	pci_set_drvdata(card->pdev, netdev);
 
-	init_timer(&card->tx_timer);
-	card->tx_timer.function =
-		(void (*)(unsigned long)) spider_net_cleanup_tx_ring;
-	card->tx_timer.data = (unsigned long) card;
+	timer_setup(&card->tx_timer, spider_net_cleanup_tx_ring, 0);
 	netdev->irq = card->pdev->irq;
 
 	card->aneg_count = 0;
-	init_timer(&card->aneg_timer);
-	card->aneg_timer.function = spider_net_link_phy;
-	card->aneg_timer.data = (unsigned long) card;
+	timer_setup(&card->aneg_timer, spider_net_link_phy, 0);
 
 	netif_napi_add(netdev, &card->napi,
 		       spider_net_poll, SPIDER_NET_NAPI_WEIGHT);
@@ -2327,11 +2311,9 @@ spider_net_alloc_card(void)
 {
 	struct net_device *netdev;
 	struct spider_net_card *card;
-	size_t alloc_size;
 
-	alloc_size = sizeof(struct spider_net_card) +
-	   (tx_descriptors + rx_descriptors) * sizeof(struct spider_net_descr);
-	netdev = alloc_etherdev(alloc_size);
+	netdev = alloc_etherdev(struct_size(card, darray,
+					    tx_descriptors + rx_descriptors));
 	if (!netdev)
 		return NULL;
 

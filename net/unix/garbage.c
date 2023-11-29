@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * NET3:	Garbage Collector For AF_UNIX sockets
  *
  * Garbage Collector:
  *	Copyright (C) Barak A. Pearlmutter.
- *	Released under the GPL version 2 or later.
  *
  * Chopped about by Alan Cox 22/3/96 to make it fit the AF_UNIX socket problem.
  * If it doesn't work blame me, it worked when Barak sent it.
@@ -23,11 +23,6 @@
  *  Future optimizations:
  *
  *  - don't just push entire root set; process in place
- *
- *	This program is free software; you can redistribute it and/or
- *	modify it under the terms of the GNU General Public License
- *	as published by the Free Software Foundation; either version
- *	2 of the License, or (at your option) any later version.
  *
  *  Fixes:
  *	Alan Cox	07 Sept	1997	Vmalloc internal stack as needed.
@@ -209,6 +204,7 @@ void wait_for_unix_gc(void)
 /* The external entry point: unix_gc() */
 void unix_gc(void)
 {
+	struct sk_buff *next_skb, *skb;
 	struct unix_sock *u;
 	struct unix_sock *next;
 	struct sk_buff_head hitlist;
@@ -302,10 +298,29 @@ void unix_gc(void)
 
 	spin_unlock(&unix_gc_lock);
 
+	/* We need io_uring to clean its registered files, ignore all io_uring
+	 * originated skbs. It's fine as io_uring doesn't keep references to
+	 * other io_uring instances and so killing all other files in the cycle
+	 * will put all io_uring references forcing it to go through normal
+	 * release.path eventually putting registered files.
+	 */
+	skb_queue_walk_safe(&hitlist, skb, next_skb) {
+		if (skb->scm_io_uring) {
+			__skb_unlink(skb, &hitlist);
+			skb_queue_tail(&skb->sk->sk_receive_queue, skb);
+		}
+	}
+
 	/* Here we are. Hitlist is filled. Die. */
 	__skb_queue_purge(&hitlist);
 
 	spin_lock(&unix_gc_lock);
+
+	/* There could be io_uring registered files, just push them back to
+	 * the inflight list
+	 */
+	list_for_each_entry_safe(u, next, &gc_candidates, link)
+		list_move_tail(&u->link, &gc_inflight_list);
 
 	/* All candidates should have been detached by now. */
 	BUG_ON(!list_empty(&gc_candidates));

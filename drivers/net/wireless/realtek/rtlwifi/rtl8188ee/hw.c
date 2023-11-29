@@ -1,27 +1,5 @@
-/******************************************************************************
- *
- * Copyright(c) 2009-2013  Realtek Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * The full GNU General Public License is included in this distribution in the
- * file called LICENSE.
- *
- * Contact Information:
- * wlanfae <wlanfae@realtek.com>
- * Realtek Corporation, No. 2, Innovation Road II, Hsinchu Science Park,
- * Hsinchu 300, Taiwan.
- *
- * Larry Finger <Larry.Finger@lwfinger.net>
- *
- *****************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2009-2013  Realtek Corporation.*/
 
 #include "../wifi.h"
 #include "../efuse.h"
@@ -99,6 +77,7 @@ static void _rtl88ee_return_beacon_queue_skb(struct ieee80211_hw *hw)
 
 		pci_unmap_single(rtlpci->pdev,
 				 rtlpriv->cfg->ops->get_desc(
+				 hw,
 				 (u8 *)entry, true, HW_DESC_TXBUFF_ADDR),
 				 skb->len, PCI_DMA_TODEVICE);
 		kfree_skb(skb);
@@ -252,9 +231,12 @@ static void _rtl88ee_set_fw_ps_rf_off_low_power(struct ieee80211_hw *hw)
 	rpwm_val |= FW_PS_STATE_RF_OFF_LOW_PWR_88E;
 	_rtl88ee_set_fw_clock_off(hw, rpwm_val);
 }
-void rtl88ee_fw_clk_off_timer_callback(unsigned long data)
+
+void rtl88ee_fw_clk_off_timer_callback(struct timer_list *t)
 {
-	struct ieee80211_hw *hw = (struct ieee80211_hw *)data;
+	struct rtl_priv *rtlpriv = from_timer(rtlpriv, t,
+					      works.fw_clockoff_timer);
+	struct ieee80211_hw *hw = rtlpriv->hw;
 
 	_rtl88ee_set_fw_ps_rf_off_low_power(hw);
 }
@@ -947,12 +929,8 @@ static bool _rtl88ee_init_mac(struct ieee80211_hw *hw)
 static void _rtl88ee_hw_configure(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	u8 reg_bw_opmode;
-	u32 reg_ratr, reg_prsr;
+	u32 reg_prsr;
 
-	reg_bw_opmode = BW_OPMODE_20MHZ;
-	reg_ratr = RATE_ALL_CCK | RATE_ALL_OFDM_AG |
-	    RATE_ALL_OFDM_1SS | RATE_ALL_OFDM_2SS;
 	reg_prsr = RATE_ALL_CCK | RATE_ALL_OFDM_AG;
 
 	rtl_write_dword(rtlpriv, REG_RRSR, reg_prsr);
@@ -1061,7 +1039,7 @@ int rtl88ee_hw_init(struct ieee80211_hw *hw)
 	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
 	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
 	struct rtl_efuse *rtlefuse = rtl_efuse(rtl_priv(hw));
-	bool rtstatus = true;
+	bool rtstatus;
 	int err = 0;
 	u8 tmp_u1b, u1byte;
 	unsigned long flags;
@@ -1468,16 +1446,16 @@ void rtl88ee_card_disable(struct ieee80211_hw *hw)
 }
 
 void rtl88ee_interrupt_recognized(struct ieee80211_hw *hw,
-				  u32 *p_inta, u32 *p_intb)
+				  struct rtl_int *intvec)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
 
-	*p_inta = rtl_read_dword(rtlpriv, ISR) & rtlpci->irq_mask[0];
-	rtl_write_dword(rtlpriv, ISR, *p_inta);
+	intvec->inta = rtl_read_dword(rtlpriv, ISR) & rtlpci->irq_mask[0];
+	rtl_write_dword(rtlpriv, ISR, intvec->inta);
 
-	*p_intb = rtl_read_dword(rtlpriv, REG_HISRE) & rtlpci->irq_mask[1];
-	rtl_write_dword(rtlpriv, REG_HISRE, *p_intb);
+	intvec->intb = rtl_read_dword(rtlpriv, REG_HISRE) & rtlpci->irq_mask[1];
+	rtl_write_dword(rtlpriv, REG_HISRE, intvec->intb);
 
 }
 
@@ -2076,7 +2054,7 @@ static void rtl88ee_update_hal_rate_table(struct ieee80211_hw *hw,
 }
 
 static void rtl88ee_update_hal_rate_mask(struct ieee80211_hw *hw,
-		struct ieee80211_sta *sta, u8 rssi_level)
+		struct ieee80211_sta *sta, u8 rssi_level, bool update_bw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
@@ -2207,12 +2185,12 @@ static void rtl88ee_update_hal_rate_mask(struct ieee80211_hw *hw,
 }
 
 void rtl88ee_update_hal_rate_tbl(struct ieee80211_hw *hw,
-		struct ieee80211_sta *sta, u8 rssi_level)
+		struct ieee80211_sta *sta, u8 rssi_level, bool update_bw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 
 	if (rtlpriv->dm.useramask)
-		rtl88ee_update_hal_rate_mask(hw, sta, rssi_level);
+		rtl88ee_update_hal_rate_mask(hw, sta, rssi_level, update_bw);
 	else
 		rtl88ee_update_hal_rate_table(hw, sta);
 }
@@ -2235,7 +2213,7 @@ bool rtl88ee_gpio_radio_on_off_checking(struct ieee80211_hw *hw, u8 *valid)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
-	enum rf_pwrstate e_rfpowerstate_toset, cur_rfstate;
+	enum rf_pwrstate e_rfpowerstate_toset;
 	u32 u4tmp;
 	bool b_actuallyset = false;
 
@@ -2253,8 +2231,6 @@ bool rtl88ee_gpio_radio_on_off_checking(struct ieee80211_hw *hw, u8 *valid)
 		ppsc->rfchange_inprogress = true;
 		spin_unlock(&rtlpriv->locks.rf_ps_lock);
 	}
-
-	cur_rfstate = ppsc->rfpwr_state;
 
 	u4tmp = rtl_read_dword(rtlpriv, REG_GPIO_OUTPUT);
 	e_rfpowerstate_toset = (u4tmp & BIT(31)) ? ERFON : ERFOFF;

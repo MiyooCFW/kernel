@@ -1,21 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  pm.h - Power management interface
  *
  *  Copyright (C) 2000 Andrew Henroid
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #ifndef _LINUX_PM_H
@@ -26,6 +13,7 @@
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 #include <linux/timer.h>
+#include <linux/hrtimer.h>
 #include <linux/completion.h>
 
 /*
@@ -283,7 +271,7 @@ typedef struct pm_message {
  * actions to be performed by a device driver's callbacks generally depend on
  * the platform and subsystem the device belongs to.
  *
- * Refer to Documentation/power/runtime_pm.txt for more information about the
+ * Refer to Documentation/power/runtime_pm.rst for more information about the
  * role of the @runtime_suspend(), @runtime_resume() and @runtime_idle()
  * callbacks in device runtime power management.
  */
@@ -550,6 +538,38 @@ struct pm_subsys_data {
 #endif
 };
 
+/*
+ * Driver flags to control system suspend/resume behavior.
+ *
+ * These flags can be set by device drivers at the probe time.  They need not be
+ * cleared by the drivers as the driver core will take care of that.
+ *
+ * NEVER_SKIP: Do not skip all system suspend/resume callbacks for the device.
+ * SMART_PREPARE: Check the return value of the driver's ->prepare callback.
+ * SMART_SUSPEND: No need to resume the device from runtime suspend.
+ * LEAVE_SUSPENDED: Avoid resuming the device during system resume if possible.
+ *
+ * Setting SMART_PREPARE instructs bus types and PM domains which may want
+ * system suspend/resume callbacks to be skipped for the device to return 0 from
+ * their ->prepare callbacks if the driver's ->prepare callback returns 0 (in
+ * other words, the system suspend/resume callbacks can only be skipped for the
+ * device if its driver doesn't object against that).  This flag has no effect
+ * if NEVER_SKIP is set.
+ *
+ * Setting SMART_SUSPEND instructs bus types and PM domains which may want to
+ * runtime resume the device upfront during system suspend that doing so is not
+ * necessary from the driver's perspective.  It also may cause them to skip
+ * invocations of the ->suspend_late and ->suspend_noirq callbacks provided by
+ * the driver if they decide to leave the device in runtime suspend.
+ *
+ * Setting LEAVE_SUSPENDED informs the PM core and middle-layer code that the
+ * driver prefers the device to be left in suspend after system resume.
+ */
+#define DPM_FLAG_NEVER_SKIP		BIT(0)
+#define DPM_FLAG_SMART_PREPARE		BIT(1)
+#define DPM_FLAG_SMART_SUSPEND		BIT(2)
+#define DPM_FLAG_LEAVE_SUSPENDED	BIT(3)
+
 struct dev_pm_info {
 	pm_message_t		power_state;
 	unsigned int		can_wakeup:1;
@@ -559,8 +579,10 @@ struct dev_pm_info {
 	bool			is_suspended:1;	/* Ditto */
 	bool			is_noirq_suspended:1;
 	bool			is_late_suspended:1;
+	bool			no_pm:1;
 	bool			early_init:1;	/* Owned by the PM core */
 	bool			direct_complete:1;	/* Owned by the PM core */
+	u32			driver_flags;
 	spinlock_t		lock;
 #ifdef CONFIG_PM_SLEEP
 	struct list_head	entry;
@@ -569,12 +591,14 @@ struct dev_pm_info {
 	bool			wakeup_path:1;
 	bool			syscore:1;
 	bool			no_pm_callbacks:1;	/* Owned by the PM core */
+	unsigned int		must_resume:1;	/* Owned by the PM core */
+	unsigned int		may_skip_resume:1;	/* Set by subsystems */
 #else
 	unsigned int		should_wakeup:1;
 #endif
 #ifdef CONFIG_PM
-	struct timer_list	suspend_timer;
-	unsigned long		timer_expires;
+	struct hrtimer		suspend_timer;
+	u64			timer_expires;
 	struct work_struct	work;
 	wait_queue_head_t	wait_queue;
 	struct wake_irq		*wakeirq;
@@ -584,6 +608,7 @@ struct dev_pm_info {
 	unsigned int		idle_notification:1;
 	unsigned int		request_pending:1;
 	unsigned int		deferred_resume:1;
+	unsigned int		needs_force_resume:1;
 	unsigned int		runtime_auto:1;
 	bool			ignore_children:1;
 	unsigned int		no_callbacks:1;
@@ -596,17 +621,16 @@ struct dev_pm_info {
 	enum rpm_status		runtime_status;
 	int			runtime_error;
 	int			autosuspend_delay;
-	unsigned long		last_busy;
-	unsigned long		active_jiffies;
-	unsigned long		suspended_jiffies;
-	unsigned long		accounting_timestamp;
+	u64			last_busy;
+	u64			active_time;
+	u64			suspended_time;
+	u64			accounting_timestamp;
 #endif
 	struct pm_subsys_data	*subsys_data;  /* Owned by the subsystem. */
 	void (*set_latency_tolerance)(struct device *, s32);
 	struct dev_pm_qos	*qos;
 };
 
-extern void update_pm_runtime_accounting(struct device *dev);
 extern int dev_pm_get_subsys_data(struct device *dev);
 extern void dev_pm_put_subsys_data(struct device *dev);
 
@@ -689,8 +713,6 @@ struct dev_pm_domain {
 extern void device_pm_lock(void);
 extern void dpm_resume_start(pm_message_t state);
 extern void dpm_resume_end(pm_message_t state);
-extern void dpm_noirq_resume_devices(pm_message_t state);
-extern void dpm_noirq_end(void);
 extern void dpm_resume_noirq(pm_message_t state);
 extern void dpm_resume_early(pm_message_t state);
 extern void dpm_resume(pm_message_t state);
@@ -699,8 +721,6 @@ extern void dpm_complete(pm_message_t state);
 extern void device_pm_unlock(void);
 extern int dpm_suspend_end(pm_message_t state);
 extern int dpm_suspend_start(pm_message_t state);
-extern void dpm_noirq_begin(void);
-extern int dpm_noirq_suspend_devices(pm_message_t state);
 extern int dpm_suspend_noirq(pm_message_t state);
 extern int dpm_suspend_late(pm_message_t state);
 extern int dpm_suspend(pm_message_t state);
@@ -736,7 +756,9 @@ extern int pm_generic_poweroff_noirq(struct device *dev);
 extern int pm_generic_poweroff_late(struct device *dev);
 extern int pm_generic_poweroff(struct device *dev);
 extern void pm_generic_complete(struct device *dev);
-extern void pm_complete_with_resume_check(struct device *dev);
+
+extern bool dev_pm_may_skip_resume(struct device *dev);
+extern bool dev_pm_smart_suspend_and_suspended(struct device *dev);
 
 #else /* !CONFIG_PM_SLEEP */
 

@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * File: mac.c
  *
@@ -139,27 +129,26 @@ void vnt_mac_set_keyentry(struct vnt_private *priv, u16 key_ctl, u32 entry_idx,
 			(u8 *)&set_key);
 }
 
-void vnt_mac_reg_bits_off(struct vnt_private *priv, u8 reg_ofs, u8 bits)
+int vnt_mac_reg_bits_off(struct vnt_private *priv, u8 reg_ofs, u8 bits)
 {
 	u8 data[2];
 
 	data[0] = 0;
 	data[1] = bits;
 
-	vnt_control_out(priv, MESSAGE_TYPE_WRITE_MASK,
-			reg_ofs, MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data),
-			data);
+	return vnt_control_out(priv, MESSAGE_TYPE_WRITE_MASK, reg_ofs,
+			       MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data), data);
 }
 
-void vnt_mac_reg_bits_on(struct vnt_private *priv, u8 reg_ofs, u8 bits)
+int vnt_mac_reg_bits_on(struct vnt_private *priv, u8 reg_ofs, u8 bits)
 {
 	u8 data[2];
 
 	data[0] = bits;
 	data[1] = bits;
 
-	vnt_control_out(priv, MESSAGE_TYPE_WRITE_MASK, reg_ofs,
-			MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data), data);
+	return vnt_control_out(priv, MESSAGE_TYPE_WRITE_MASK, reg_ofs,
+			       MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data), data);
 }
 
 void vnt_mac_write_word(struct vnt_private *priv, u8 reg_ofs, u16 word)
@@ -234,13 +223,13 @@ void vnt_mac_set_beacon_interval(struct vnt_private *priv, u16 interval)
 			MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data), data);
 }
 
-void vnt_mac_set_led(struct vnt_private *priv, u8 state, u8 led)
+int vnt_mac_set_led(struct vnt_private *priv, u8 state, u8 led)
 {
 	u8 data[2];
 
 	data[0] = led;
 	data[1] = state;
 
-	vnt_control_out(priv, MESSAGE_TYPE_WRITE_MASK, MAC_REG_PAPEDELAY,
-			MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data), data);
+	return vnt_control_out(priv, MESSAGE_TYPE_WRITE_MASK, MAC_REG_PAPEDELAY,
+			       MESSAGE_REQUEST_MACREG, ARRAY_SIZE(data), data);
 }

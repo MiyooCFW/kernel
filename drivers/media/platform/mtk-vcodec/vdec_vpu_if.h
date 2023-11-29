@@ -1,15 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2016 MediaTek Inc.
  * Author: PC Chen <pc.chen@mediatek.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #ifndef _VDEC_VPU_IF_H_
@@ -26,7 +18,7 @@
  * @inst_addr	: VPU decoder instance address
  * @signaled    : 1 - Host has received ack message from VPU, 0 - not received
  * @ctx         : context for v4l2 layer integration
- * @dev	        : platform device of VPU
+ * @dev		: platform device of VPU
  * @wq          : wait queue to wait VPU message ack
  * @handler     : ipi handler for each decoder
  */
@@ -62,7 +54,7 @@ int vpu_dec_start(struct vdec_vpu_inst *vpu, uint32_t *data, unsigned int len);
 /**
  * vpu_dec_end - end decoding, basically the function will be invoked once
  *               when HW decoding done interrupt received successfully. The
- *               decoder in VPU will continute to do referene frame management
+ *               decoder in VPU will continue to do reference frame management
  *               and check if there is a new decoded frame available to display.
  *
  * @vpu : instance for vdec_vpu_inst

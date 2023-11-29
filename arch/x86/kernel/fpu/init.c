@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * x86 FPU boot time init code:
  */
@@ -138,9 +139,6 @@ static void __init fpu__init_system_generic(void)
 unsigned int fpu_kernel_xstate_size;
 EXPORT_SYMBOL_GPL(fpu_kernel_xstate_size);
 
-/* Get alignment of the TYPE. */
-#define TYPE_ALIGN(TYPE) offsetof(struct { char x; TYPE test; }, test)
-
 /*
  * Enforce that 'MEMBER' is the last field of 'TYPE'.
  *
@@ -148,8 +146,8 @@ EXPORT_SYMBOL_GPL(fpu_kernel_xstate_size);
  * because that's how C aligns structs.
  */
 #define CHECK_MEMBER_AT_END_OF(TYPE, MEMBER) \
-	BUILD_BUG_ON(sizeof(TYPE) != ALIGN(offsetofend(TYPE, MEMBER), \
-					   TYPE_ALIGN(TYPE)))
+	BUILD_BUG_ON(sizeof(TYPE) !=         \
+		     ALIGN(offsetofend(TYPE, MEMBER), _Alignof(TYPE)))
 
 /*
  * We append the 'struct fpu' to the task_struct:
@@ -203,12 +201,6 @@ static void __init fpu__init_system_xstate_size_legacy(void)
 	 */
 
 	if (!boot_cpu_has(X86_FEATURE_FPU)) {
-		/*
-		 * Disable xsave as we do not support it if i387
-		 * emulation is enabled.
-		 */
-		setup_clear_cpu_cap(X86_FEATURE_XSAVE);
-		setup_clear_cpu_cap(X86_FEATURE_XSAVEOPT);
 		fpu_kernel_xstate_size = sizeof(struct swregs_state);
 	} else {
 		if (boot_cpu_has(X86_FEATURE_FXSR))
@@ -239,8 +231,6 @@ static void __init fpu__init_system_ctx_switch(void)
 
 	WARN_ON_FPU(!on_boot_cpu);
 	on_boot_cpu = 0;
-
-	WARN_ON_FPU(current->thread.fpu.initialized);
 }
 
 /*
@@ -253,17 +243,20 @@ static void __init fpu__init_parse_early_param(void)
 	char *argptr = arg;
 	int arglen, res, bit;
 
+#ifdef CONFIG_X86_32
 	if (cmdline_find_option_bool(boot_command_line, "no387"))
+#ifdef CONFIG_MATH_EMULATION
 		setup_clear_cpu_cap(X86_FEATURE_FPU);
+#else
+		pr_err("Option 'no387' required CONFIG_MATH_EMULATION enabled.\n");
+#endif
 
-	if (cmdline_find_option_bool(boot_command_line, "nofxsr")) {
+	if (cmdline_find_option_bool(boot_command_line, "nofxsr"))
 		setup_clear_cpu_cap(X86_FEATURE_FXSR);
-		setup_clear_cpu_cap(X86_FEATURE_FXSR_OPT);
-		setup_clear_cpu_cap(X86_FEATURE_XMM);
-	}
+#endif
 
 	if (cmdline_find_option_bool(boot_command_line, "noxsave"))
-		fpu__xstate_clear_all_cpu_caps();
+		setup_clear_cpu_cap(X86_FEATURE_XSAVE);
 
 	if (cmdline_find_option_bool(boot_command_line, "noxsaveopt"))
 		setup_clear_cpu_cap(X86_FEATURE_XSAVEOPT);

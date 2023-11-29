@@ -838,8 +838,11 @@ static int lpc18xx_pconf_get_pin(struct pinctrl_dev *pctldev, unsigned param,
 		*arg = (reg & LPC18XX_SCU_PIN_EHD_MASK) >> LPC18XX_SCU_PIN_EHD_POS;
 		switch (*arg) {
 		case 3: *arg += 5;
+			/* fall through */
 		case 2: *arg += 5;
+			/* fall through */
 		case 1: *arg += 3;
+			/* fall through */
 		case 0: *arg += 4;
 		}
 		break;
@@ -1054,8 +1057,11 @@ static int lpc18xx_pconf_set_pin(struct pinctrl_dev *pctldev, unsigned param,
 
 		switch (param_val) {
 		case 20: param_val -= 5;
+			 /* fall through */
 		case 14: param_val -= 5;
+			 /* fall through */
 		case  8: param_val -= 3;
+			 /* fall through */
 		case  4: param_val -= 4;
 			 break;
 		default:
@@ -1302,8 +1308,9 @@ static int lpc18xx_create_group_func_map(struct device *dev,
 		}
 
 		scu->func[func].ngroups = ngroups;
-		scu->func[func].groups = devm_kzalloc(dev, ngroups *
-						      sizeof(char *), GFP_KERNEL);
+		scu->func[func].groups = devm_kcalloc(dev,
+						      ngroups, sizeof(char *),
+						      GFP_KERNEL);
 		if (!scu->func[func].groups)
 			return -ENOMEM;
 

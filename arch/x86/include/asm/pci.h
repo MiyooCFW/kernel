@@ -7,6 +7,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/scatterlist.h>
+#include <linux/numa.h>
 #include <asm/io.h>
 #include <asm/pat.h>
 #include <asm/x86_init.h>
@@ -89,10 +90,8 @@ extern unsigned long pci_mem_start;
 #define PCIBIOS_MIN_CARDBUS_IO	0x4000
 
 extern int pcibios_enabled;
-void pcibios_config_init(void);
 void pcibios_scan_root(int bus);
 
-void pcibios_set_master(struct pci_dev *dev);
 struct irq_routing_table *pcibios_get_irq_routing_table(void);
 int pcibios_set_irq_routing(struct pci_dev *dev, int pin, int irq);
 
@@ -119,9 +118,6 @@ void native_restore_msi_irqs(struct pci_dev *dev);
 #define native_setup_msi_irqs		NULL
 #define native_teardown_msi_irq		NULL
 #endif
-
-#define PCI_DMA_BUS_IS_PHYS (dma_ops->is_phys)
-
 #endif  /* __KERNEL__ */
 
 #ifdef CONFIG_X86_64
@@ -146,7 +142,7 @@ cpumask_of_pcibus(const struct pci_bus *bus)
 	int node;
 
 	node = __pcibus_to_node(bus);
-	return (node == -1) ? cpu_online_mask :
+	return (node == NUMA_NO_NODE) ? cpu_online_mask :
 			      cpumask_of_node(node);
 }
 #endif

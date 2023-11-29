@@ -2,9 +2,11 @@
 #ifndef _LINUX_STRING_HELPERS_H_
 #define _LINUX_STRING_HELPERS_H_
 
+#include <linux/ctype.h>
 #include <linux/types.h>
 
 struct file;
+struct task_struct;
 
 /* Descriptions of the types of units to
  * print in */
@@ -53,6 +55,9 @@ static inline int string_unescape_any_inplace(char *buf)
 int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 		unsigned int flags, const char *only);
 
+int string_escape_mem_ascii(const char *src, size_t isz, char *dst,
+					size_t osz);
+
 static inline int string_escape_mem_any_np(const char *src, size_t isz,
 		char *dst, size_t osz, const char *only)
 {
@@ -69,6 +74,20 @@ static inline int string_escape_str_any_np(const char *src, char *dst,
 		size_t sz, const char *only)
 {
 	return string_escape_str(src, dst, sz, ESCAPE_ANY_NP, only);
+}
+
+static inline void string_upper(char *dst, const char *src)
+{
+	do {
+		*dst++ = toupper(*src);
+	} while (*src++);
+}
+
+static inline void string_lower(char *dst, const char *src)
+{
+	do {
+		*dst++ = tolower(*src);
+	} while (*src++);
 }
 
 char *kstrdup_quotable(const char *src, gfp_t gfp);

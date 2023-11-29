@@ -1,22 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Faraday FTMAC100 10/100 Ethernet
  *
  * (C) Copyright 2009-2011 Faraday Technology
  * Po-Yu Chuang <ratbert@faraday-tech.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #define pr_fmt(fmt)	KBUILD_MODNAME ": " fmt
@@ -29,6 +16,7 @@
 #include <linux/io.h>
 #include <linux/mii.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/netdevice.h>
 #include <linux/platform_device.h>
 
@@ -402,6 +390,7 @@ static bool ftmac100_rx_packet(struct ftmac100 *priv, int *processed)
 	struct page *page;
 	dma_addr_t map;
 	int length;
+	bool ret;
 
 	rxdes = ftmac100_rx_locate_first_segment(priv);
 	if (!rxdes)
@@ -416,8 +405,8 @@ static bool ftmac100_rx_packet(struct ftmac100 *priv, int *processed)
 	 * It is impossible to get multi-segment packets
 	 * because we always provide big enough receive buffers.
 	 */
-	if (unlikely(!ftmac100_rxdes_last_segment(rxdes)))
-		BUG();
+	ret = ftmac100_rxdes_last_segment(rxdes);
+	BUG_ON(!ret);
 
 	/* start processing */
 	skb = netdev_alloc_skb_ip_align(netdev, 128);
@@ -732,10 +721,9 @@ static int ftmac100_alloc_buffers(struct ftmac100 *priv)
 {
 	int i;
 
-	priv->descs = dma_zalloc_coherent(priv->dev,
-					  sizeof(struct ftmac100_descs),
-					  &priv->descs_dma_addr,
-					  GFP_KERNEL);
+	priv->descs = dma_alloc_coherent(priv->dev,
+					 sizeof(struct ftmac100_descs),
+					 &priv->descs_dma_addr, GFP_KERNEL);
 	if (!priv->descs)
 		return -ENOMEM;
 

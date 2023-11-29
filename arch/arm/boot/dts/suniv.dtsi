@@ -89,7 +89,7 @@
 		};
 
 		tcon0: tcon0@1c0c000 {
-			compatible = "allwinner,suniv-f1c500s-tcon0";
+			compatible = "allwinner,suniv-f1c100s-tcon0";
 			reg = <0x01c0c000 0x1000>;
 			interrupts = <29>;
 			clocks = <&ccu CLK_BUS_LCD>, <&ccu CLK_TCON>;
@@ -199,14 +199,14 @@
 		};
     
 		codec: codec@1c22000 {
-			compatible = "allwinner,suniv-f1c500s-codec";
+			compatible = "allwinner,suniv-f1c100s-codec";
 			clocks = <&ccu CLK_BUS_CODEC>, <&ccu CLK_CODEC>;
 			interrupts = <18>;
 			status = "disabled";
 		};
 		
     battery: battery@1c23400 {
-			compatible = "allwinner,suniv-f1c500s-battery";
+			compatible = "allwinner,suniv-f1c100s-battery";
 			reg = <0x01c23400 0x400>;
 		};
 

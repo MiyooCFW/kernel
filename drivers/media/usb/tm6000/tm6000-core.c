@@ -1,20 +1,10 @@
-/*
- *  tm6000-core.c - driver for TM5600/TM6000/TM6010 USB video capture devices
- *
- *  Copyright (C) 2006-2007 Mauro Carvalho Chehab <mchehab@infradead.org>
- *
- *  Copyright (C) 2007 Michel Ludwig <michel.ludwig@gmail.com>
- *      - DVB-T support
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation version 2
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0
+// tm6000-core.c - driver for TM5600/TM6000/TM6010 USB video capture devices
+//
+// Copyright (c) 2006-2007 Mauro Carvalho Chehab <mchehab@kernel.org>
+//
+// Copyright (c) 2007 Michel Ludwig <michel.ludwig@gmail.com>
+//     - DVB-T support
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -678,7 +668,7 @@ int tm6000_set_audio_rinput(struct tm6000_core *dev)
 			areg_f0 = 0x04;
 			break;
 		default:
-			printk(KERN_INFO "%s: audio input dosn't support\n",
+			printk(KERN_INFO "%s: audio input doesn't support\n",
 				dev->name);
 			return 0;
 			break;
@@ -700,7 +690,7 @@ int tm6000_set_audio_rinput(struct tm6000_core *dev)
 			areg_eb = 0x04;
 			break;
 		default:
-			printk(KERN_INFO "%s: audio input dosn't support\n",
+			printk(KERN_INFO "%s: audio input doesn't support\n",
 				dev->name);
 			return 0;
 			break;

@@ -225,7 +225,7 @@ static int suniv_pwm_calculate(struct suniv_pwm_chip *suniv_pwm, struct pwm_stat
   return 0;
 }
 
-static int suniv_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm, struct pwm_state *state)
+static int suniv_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm, const struct pwm_state *state)
 {
   int ret;
   u32 ctrl;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Host AP (software wireless LAN access point) driver for
  * Intersil Prism2/2.5/3.
@@ -5,11 +6,6 @@
  * Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
  * <j@w1.fi>
  * Copyright (c) 2002-2005, Jouni Malinen <j@w1.fi>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation. See README and COPYING for
- * more details.
  *
  * FIX:
  * - there is currently no way of associating TX packets to correct wds device
@@ -150,13 +146,6 @@ static int prism2_get_ram_size(local_info_t *local);
  * present */
 #define HFA384X_MAGIC 0x8A32
 #endif
-
-
-static u16 hfa384x_read_reg(struct net_device *dev, u16 reg)
-{
-	return HFA384X_INW(reg);
-}
-
 
 static void hfa384x_read_regs(struct net_device *dev,
 			      struct hfa384x_regs *regs)
@@ -2794,9 +2783,9 @@ static void prism2_check_sta_fw_version(local_info_t *local)
 }
 
 
-static void hostap_passive_scan(unsigned long data)
+static void hostap_passive_scan(struct timer_list *t)
 {
-	local_info_t *local = (local_info_t *) data;
+	local_info_t *local = from_timer(local, t, passive_scan_timer);
 	struct net_device *dev = local->dev;
 	u16 chan;
 
@@ -2869,10 +2858,10 @@ static void handle_comms_qual_update(struct work_struct *work)
  * used to monitor that local->last_tick_timer is being updated. If not,
  * interrupt busy-loop is assumed and driver tries to recover by masking out
  * some events. */
-static void hostap_tick_timer(unsigned long data)
+static void hostap_tick_timer(struct timer_list *t)
 {
 	static unsigned long last_inquire = 0;
-	local_info_t *local = (local_info_t *) data;
+	local_info_t *local = from_timer(local, t, tick_timer);
 	local->last_tick_timer = jiffies;
 
 	/* Inquire CommTallies every 10 seconds to keep the statistics updated
@@ -2897,7 +2886,12 @@ static void hostap_tick_timer(unsigned long data)
 }
 
 
-#ifndef PRISM2_NO_PROCFS_DEBUG
+#if !defined(PRISM2_NO_PROCFS_DEBUG) && defined(CONFIG_PROC_FS)
+static u16 hfa384x_read_reg(struct net_device *dev, u16 reg)
+{
+	return HFA384X_INW(reg);
+}
+
 static int prism2_registers_proc_show(struct seq_file *m, void *v)
 {
 	local_info_t *local = m->private;
@@ -2951,21 +2945,7 @@ static int prism2_registers_proc_show(struct seq_file *m, void *v)
 
 	return 0;
 }
-
-static int prism2_registers_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, prism2_registers_proc_show, PDE_DATA(inode));
-}
-
-static const struct file_operations prism2_registers_proc_fops = {
-	.open		= prism2_registers_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-#endif /* PRISM2_NO_PROCFS_DEBUG */
-
+#endif
 
 struct set_tim_data {
 	struct list_head list;
@@ -3059,30 +3039,6 @@ static void prism2_clear_set_tim_queue(local_info_t *local)
 		list_del(&entry->list);
 		kfree(entry);
 	}
-}
-
-
-/*
- * HostAP uses two layers of net devices, where the inner
- * layer gets called all the time from the outer layer.
- * This is a natural nesting, which needs a split lock type.
- */
-static struct lock_class_key hostap_netdev_xmit_lock_key;
-static struct lock_class_key hostap_netdev_addr_lock_key;
-
-static void prism2_set_lockdep_class_one(struct net_device *dev,
-					 struct netdev_queue *txq,
-					 void *_unused)
-{
-	lockdep_set_class(&txq->_xmit_lock,
-			  &hostap_netdev_xmit_lock_key);
-}
-
-static void prism2_set_lockdep_class(struct net_device *dev)
-{
-	lockdep_set_class(&dev->addr_list_lock,
-			  &hostap_netdev_addr_lock_key);
-	netdev_for_each_tx_queue(dev, prism2_set_lockdep_class_one, NULL);
 }
 
 static struct net_device *
@@ -3225,13 +3181,8 @@ while (0)
 
 	lib80211_crypt_info_init(&local->crypt_info, dev->name, &local->lock);
 
-	init_timer(&local->passive_scan_timer);
-	local->passive_scan_timer.data = (unsigned long) local;
-	local->passive_scan_timer.function = hostap_passive_scan;
-
-	init_timer(&local->tick_timer);
-	local->tick_timer.data = (unsigned long) local;
-	local->tick_timer.function = hostap_tick_timer;
+	timer_setup(&local->passive_scan_timer, hostap_passive_scan, 0);
+	timer_setup(&local->tick_timer, hostap_tick_timer, 0);
 	local->tick_timer.expires = jiffies + 2 * HZ;
 	add_timer(&local->tick_timer);
 
@@ -3248,7 +3199,6 @@ while (0)
 	if (ret >= 0)
 		ret = register_netdevice(dev);
 
-	prism2_set_lockdep_class(dev);
 	rtnl_unlock();
 	if (ret < 0) {
 		printk(KERN_WARNING "%s: register netdevice failed!\n",
@@ -3284,8 +3234,8 @@ static int hostap_hw_ready(struct net_device *dev)
 		}
 		hostap_init_proc(local);
 #ifndef PRISM2_NO_PROCFS_DEBUG
-		proc_create_data("registers", 0, local->proc,
-				 &prism2_registers_proc_fops, local);
+		proc_create_single_data("registers", 0, local->proc,
+				 prism2_registers_proc_show, local);
 #endif /* PRISM2_NO_PROCFS_DEBUG */
 		hostap_init_ap_proc(local);
 		return 0;

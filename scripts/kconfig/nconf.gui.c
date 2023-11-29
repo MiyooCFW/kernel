@@ -1,11 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2008 Nir Tzachar <nir.tzachar@gmail.com?
- * Released under the terms of the GNU GPL v2.0.
+ * Copyright (C) 2008 Nir Tzachar <nir.tzachar@gmail.com>
  *
  * Derived from menuconfig.
- *
  */
 #include "nconf.h"
+#include "lkc.h"
 
 /* a list of all the different widgets we use */
 attributes_t attributes[ATTR_MAX+1] = {0};
@@ -374,7 +374,7 @@ int dialog_inputbox(WINDOW *main_window,
 
 	if (strlen(init)+1 > *result_len) {
 		*result_len = strlen(init)+1;
-		*resultp = result = realloc(result, *result_len);
+		*resultp = result = xrealloc(result, *result_len);
 	}
 
 	/* find the widest line of msg: */

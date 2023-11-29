@@ -119,8 +119,8 @@ static int rds_ib_map_fmr(struct rds_ib_device *rds_ibdev,
 	page_cnt = 0;
 
 	for (i = 0; i < sg_dma_len; ++i) {
-		unsigned int dma_len = ib_sg_dma_len(dev, &scat[i]);
-		u64 dma_addr = ib_sg_dma_address(dev, &scat[i]);
+		unsigned int dma_len = sg_dma_len(&scat[i]);
+		u64 dma_addr = sg_dma_address(&scat[i]);
 
 		if (dma_addr & ~PAGE_MASK) {
 			if (i > 0) {
@@ -150,8 +150,8 @@ static int rds_ib_map_fmr(struct rds_ib_device *rds_ibdev,
 		return -EINVAL;
 	}
 
-	dma_pages = kmalloc_node(sizeof(u64) * page_cnt, GFP_ATOMIC,
-				 rdsibdev_to_node(rds_ibdev));
+	dma_pages = kmalloc_array_node(sizeof(u64), page_cnt, GFP_ATOMIC,
+				       rdsibdev_to_node(rds_ibdev));
 	if (!dma_pages) {
 		ib_dma_unmap_sg(dev, sg, nents, DMA_BIDIRECTIONAL);
 		return -ENOMEM;
@@ -159,8 +159,8 @@ static int rds_ib_map_fmr(struct rds_ib_device *rds_ibdev,
 
 	page_cnt = 0;
 	for (i = 0; i < sg_dma_len; ++i) {
-		unsigned int dma_len = ib_sg_dma_len(dev, &scat[i]);
-		u64 dma_addr = ib_sg_dma_address(dev, &scat[i]);
+		unsigned int dma_len = sg_dma_len(&scat[i]);
+		u64 dma_addr = sg_dma_address(&scat[i]);
 
 		for (j = 0; j < dma_len; j += PAGE_SIZE)
 			dma_pages[page_cnt++] =

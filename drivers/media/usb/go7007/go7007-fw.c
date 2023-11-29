@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2005-2006 Micronas USA Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License (Version 2) as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 /*
@@ -1514,7 +1506,10 @@ static noinline_for_stack int do_special(struct go7007 *go, u16 type,
 		case V4L2_PIX_FMT_MPEG4:
 			return gen_mpeg4hdr_to_package(go, code, space,
 								framelen);
+		default:
+			break;
 		}
+		break;
 	case SPECIAL_BRC_CTRL:
 		return brctrl_to_package(go, code, space, framelen);
 	case SPECIAL_CONFIG:
@@ -1576,7 +1571,7 @@ int go7007_construct_fw_image(struct go7007 *go, u8 **fw, int *fwlen)
 			GO7007_FW_NAME);
 		return -1;
 	}
-	code = kzalloc(codespace * 2, GFP_KERNEL);
+	code = kcalloc(codespace, 2, GFP_KERNEL);
 	if (code == NULL)
 		goto fw_failed;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #define pr_fmt(fmt) "IPsec: " fmt
 
 #include <crypto/aead.h>
@@ -31,8 +32,6 @@ struct esp_output_extra {
 };
 
 #define ESP_SKB_CB(__skb) ((struct esp_skb_cb *)&((__skb)->cb[0]))
-
-static u32 esp4_get_mtu(struct xfrm_state *x, int mtu);
 
 /*
  * Allocate an AEAD request structure with extra space for SG and IV.
@@ -121,14 +120,35 @@ static void esp_ssg_unref(struct xfrm_state *x, void *tmp)
 static void esp_output_done(struct crypto_async_request *base, int err)
 {
 	struct sk_buff *skb = base->data;
+	struct xfrm_offload *xo = xfrm_offload(skb);
 	void *tmp;
-	struct dst_entry *dst = skb_dst(skb);
-	struct xfrm_state *x = dst->xfrm;
+	struct xfrm_state *x;
+
+	if (xo && (xo->flags & XFRM_DEV_RESUME)) {
+		struct sec_path *sp = skb_sec_path(skb);
+
+		x = sp->xvec[sp->len - 1];
+	} else {
+		x = skb_dst(skb)->xfrm;
+	}
 
 	tmp = ESP_SKB_CB(skb)->tmp;
 	esp_ssg_unref(x, tmp);
 	kfree(tmp);
-	xfrm_output_resume(skb, err);
+
+	if (xo && (xo->flags & XFRM_DEV_RESUME)) {
+		if (err) {
+			XFRM_INC_STATS(xs_net(x), LINUX_MIB_XFRMOUTSTATEPROTOERROR);
+			kfree_skb(skb);
+			return;
+		}
+
+		skb_push(skb, skb->data - skb_mac_header(skb));
+		secpath_reset(skb);
+		xfrm_dev_resume(skb);
+	} else {
+		xfrm_output_resume(skb, err);
+	}
 }
 
 /* Move ESP header back into place. */
@@ -441,7 +461,7 @@ int esp_output_tail(struct xfrm_state *x, struct sk_buff *skb, struct esp_info *
 	case -EINPROGRESS:
 		goto error;
 
-	case -EBUSY:
+	case -ENOSPC:
 		err = NET_XMIT_DROP;
 		break;
 
@@ -483,7 +503,7 @@ static int esp_output(struct xfrm_state *x, struct sk_buff *skb)
 		struct xfrm_dst *dst = (struct xfrm_dst *)skb_dst(skb);
 		u32 padto;
 
-		padto = min(x->tfcpad, esp4_get_mtu(x, dst->child_mtu_cached));
+		padto = min(x->tfcpad, xfrm_state_mtu(x, dst->child_mtu_cached));
 		if (skb->len < padto)
 			esp.tfclen = padto - skb->len;
 	}
@@ -647,7 +667,7 @@ static void esp_input_restore_header(struct sk_buff *skb)
 static void esp_input_set_header(struct sk_buff *skb, __be32 *seqhi)
 {
 	struct xfrm_state *x = xfrm_input_state(skb);
-	struct ip_esp_hdr *esph = (struct ip_esp_hdr *)skb->data;
+	struct ip_esp_hdr *esph;
 
 	/* For ESN we move the header forward by 4 bytes to
 	 * accomodate the high bits.  We will move it back after
@@ -676,12 +696,11 @@ static void esp_input_done_esn(struct crypto_async_request *base, int err)
  */
 static int esp_input(struct xfrm_state *x, struct sk_buff *skb)
 {
-	struct ip_esp_hdr *esph;
 	struct crypto_aead *aead = x->data;
 	struct aead_request *req;
 	struct sk_buff *trailer;
 	int ivlen = crypto_aead_ivsize(aead);
-	int elen = skb->len - sizeof(*esph) - ivlen;
+	int elen = skb->len - sizeof(struct ip_esp_hdr) - ivlen;
 	int nfrags;
 	int assoclen;
 	int seqhilen;
@@ -691,13 +710,13 @@ static int esp_input(struct xfrm_state *x, struct sk_buff *skb)
 	struct scatterlist *sg;
 	int err = -EINVAL;
 
-	if (!pskb_may_pull(skb, sizeof(*esph) + ivlen))
+	if (!pskb_may_pull(skb, sizeof(struct ip_esp_hdr) + ivlen))
 		goto out;
 
 	if (elen <= 0)
 		goto out;
 
-	assoclen = sizeof(*esph);
+	assoclen = sizeof(struct ip_esp_hdr);
 	seqhilen = 0;
 
 	if (x->props.flags & XFRM_STATE_ESN) {
@@ -768,28 +787,6 @@ out:
 	return err;
 }
 
-static u32 esp4_get_mtu(struct xfrm_state *x, int mtu)
-{
-	struct crypto_aead *aead = x->data;
-	u32 blksize = ALIGN(crypto_aead_blocksize(aead), 4);
-	unsigned int net_adj;
-
-	switch (x->props.mode) {
-	case XFRM_MODE_TRANSPORT:
-	case XFRM_MODE_BEET:
-		net_adj = sizeof(struct iphdr);
-		break;
-	case XFRM_MODE_TUNNEL:
-		net_adj = 0;
-		break;
-	default:
-		BUG();
-	}
-
-	return ((mtu - x->props.header_len - crypto_aead_authsize(aead) -
-		 net_adj) & ~(blksize - 1)) + net_adj - 2;
-}
-
 static int esp4_err(struct sk_buff *skb, u32 info)
 {
 	struct net *net = dev_net(skb->dev);
@@ -813,9 +810,9 @@ static int esp4_err(struct sk_buff *skb, u32 info)
 		return 0;
 
 	if (icmp_hdr(skb)->type == ICMP_DEST_UNREACH)
-		ipv4_update_pmtu(skb, net, info, 0, 0, IPPROTO_ESP, 0);
+		ipv4_update_pmtu(skb, net, info, 0, IPPROTO_ESP);
 	else
-		ipv4_redirect(skb, net, 0, 0, IPPROTO_ESP, 0);
+		ipv4_redirect(skb, net, 0, IPPROTO_ESP);
 	xfrm_state_put(x);
 
 	return 0;
@@ -836,17 +833,13 @@ static int esp_init_aead(struct xfrm_state *x)
 	char aead_name[CRYPTO_MAX_ALG_NAME];
 	struct crypto_aead *aead;
 	int err;
-	u32 mask = 0;
 
 	err = -ENAMETOOLONG;
 	if (snprintf(aead_name, CRYPTO_MAX_ALG_NAME, "%s(%s)",
 		     x->geniv, x->aead->alg_name) >= CRYPTO_MAX_ALG_NAME)
 		goto error;
 
-	if (x->xso.offload_handle)
-		mask |= CRYPTO_ALG_ASYNC;
-
-	aead = crypto_alloc_aead(aead_name, 0, mask);
+	aead = crypto_alloc_aead(aead_name, 0, 0);
 	err = PTR_ERR(aead);
 	if (IS_ERR(aead))
 		goto error;
@@ -876,7 +869,6 @@ static int esp_init_authenc(struct xfrm_state *x)
 	char authenc_name[CRYPTO_MAX_ALG_NAME];
 	unsigned int keylen;
 	int err;
-	u32 mask = 0;
 
 	err = -EINVAL;
 	if (!x->ealg)
@@ -902,10 +894,7 @@ static int esp_init_authenc(struct xfrm_state *x)
 			goto error;
 	}
 
-	if (x->xso.offload_handle)
-		mask |= CRYPTO_ALG_ASYNC;
-
-	aead = crypto_alloc_aead(authenc_name, 0, mask);
+	aead = crypto_alloc_aead(authenc_name, 0, 0);
 	err = PTR_ERR(aead);
 	if (IS_ERR(aead))
 		goto error;
@@ -992,6 +981,7 @@ static int esp_init_state(struct xfrm_state *x)
 
 		switch (encap->encap_type) {
 		default:
+			err = -EINVAL;
 			goto error;
 		case UDP_ENCAP_ESPINUDP:
 			x->props.header_len += sizeof(struct udphdr);
@@ -1022,7 +1012,6 @@ static const struct xfrm_type esp_type =
 	.flags		= XFRM_TYPE_REPLAY_PROT,
 	.init_state	= esp_init_state,
 	.destructor	= esp_destroy,
-	.get_mtu	= esp4_get_mtu,
 	.input		= esp_input,
 	.output		= esp_output,
 };
@@ -1053,8 +1042,7 @@ static void __exit esp4_fini(void)
 {
 	if (xfrm4_protocol_deregister(&esp4_protocol, IPPROTO_ESP) < 0)
 		pr_info("%s: can't remove protocol\n", __func__);
-	if (xfrm_unregister_type(&esp_type, AF_INET) < 0)
-		pr_info("%s: can't remove xfrm type\n", __func__);
+	xfrm_unregister_type(&esp_type, AF_INET);
 }
 
 module_init(esp4_init);

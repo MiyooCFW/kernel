@@ -1,9 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * cs_internal.h -- definitions internal to the PCMCIA core modules
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * The initial developer of the original code is David A. Hinds
  * <dahinds@users.sourceforge.net>.  Portions created by David A. Hinds
@@ -11,7 +8,6 @@
  *
  * (C) 1999		David A. Hinds
  * (C) 2003 - 2010	Dominik Brodowski
- *
  *
  * This file contains definitions _only_ needed by the PCMCIA core modules.
  * It must not be included by PCMCIA socket drivers or by PCMCIA device
@@ -153,7 +149,7 @@ void pcmcia_cleanup_irq(struct pcmcia_socket *s);
 int pcmcia_setup_irq(struct pcmcia_device *p_dev);
 
 /* cistpl.c */
-extern struct bin_attribute pccard_cis_attr;
+extern const struct bin_attribute pccard_cis_attr;
 
 int pcmcia_read_cis_mem(struct pcmcia_socket *s, int attr,
 			u_int addr, u_int len, void *ptr);

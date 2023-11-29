@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Hauppauge HD PVR USB driver
  *
  * Copyright (C) 2001-2004 Greg Kroah-Hartman (greg@kroah.com)
  * Copyright (C) 2008      Janne Grunau (j@jannau.net)
  * Copyright (C) 2008      John Poet
- *
- *	This program is free software; you can redistribute it and/or
- *	modify it under the terms of the GNU General Public License as
- *	published by the Free Software Foundation, version 2.
- *
  */
 
 #include <linux/kernel.h>
@@ -366,16 +362,9 @@ static int hdpvr_probe(struct usb_interface *interface,
 		goto error_free_buffers;
 	}
 
-	client = hdpvr_register_ir_rx_i2c(dev);
+	client = hdpvr_register_ir_i2c(dev);
 	if (!client) {
-		v4l2_err(&dev->v4l2_dev, "i2c IR RX device register failed\n");
-		retval = -ENODEV;
-		goto reg_fail;
-	}
-
-	client = hdpvr_register_ir_tx_i2c(dev);
-	if (!client) {
-		v4l2_err(&dev->v4l2_dev, "i2c IR TX device register failed\n");
+		v4l2_err(&dev->v4l2_dev, "i2c IR device register failed\n");
 		retval = -ENODEV;
 		goto reg_fail;
 	}

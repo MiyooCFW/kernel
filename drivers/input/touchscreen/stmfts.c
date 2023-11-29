@@ -1,13 +1,8 @@
-/*
- * Copyright (c) 2017 Samsung Electronics Co., Ltd.
- * Author: Andi Shyti <andi.shyti@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * STMicroelectronics FTS Touchscreen device driver
- */
+// SPDX-License-Identifier: GPL-2.0
+// STMicroelectronics FTS Touchscreen device driver
+//
+// Copyright (c) 2017 Samsung Electronics Co., Ltd.
+// Copyright (c) 2017 Andi Shyti <andi@etezian.org>
 
 #include <linux/delay.h>
 #include <linux/i2c.h>
@@ -342,13 +337,15 @@ static int stmfts_input_open(struct input_dev *dev)
 	struct stmfts_data *sdata = input_get_drvdata(dev);
 	int err;
 
-	err = pm_runtime_get_sync(&sdata->client->dev);
-	if (err < 0)
-		goto out;
+	err = pm_runtime_resume_and_get(&sdata->client->dev);
+	if (err)
+		return err;
 
 	err = i2c_smbus_write_byte(sdata->client, STMFTS_MS_MT_SENSE_ON);
-	if (err)
-		goto out;
+	if (err) {
+		pm_runtime_put_sync(&sdata->client->dev);
+		return err;
+	}
 
 	mutex_lock(&sdata->mutex);
 	sdata->running = true;
@@ -371,9 +368,7 @@ static int stmfts_input_open(struct input_dev *dev)
 				 "failed to enable touchkey\n");
 	}
 
-out:
-	pm_runtime_put_noidle(&sdata->client->dev);
-	return err;
+	return 0;
 }
 
 static void stmfts_input_close(struct input_dev *dev)
@@ -734,12 +729,12 @@ static int stmfts_probe(struct i2c_client *client,
 		}
 	}
 
-	err = sysfs_create_group(&sdata->client->dev.kobj,
-				 &stmfts_attribute_group);
+	err = devm_device_add_group(&client->dev, &stmfts_attribute_group);
 	if (err)
 		return err;
 
 	pm_runtime_enable(&client->dev);
+	device_enable_async_suspend(&client->dev);
 
 	return 0;
 }
@@ -747,7 +742,6 @@ static int stmfts_probe(struct i2c_client *client,
 static int stmfts_remove(struct i2c_client *client)
 {
 	pm_runtime_disable(&client->dev);
-	sysfs_remove_group(&client->dev.kobj, &stmfts_attribute_group);
 
 	return 0;
 }
@@ -816,6 +810,7 @@ static struct i2c_driver stmfts_driver = {
 		.name = STMFTS_DEV_NAME,
 		.of_match_table = of_match_ptr(stmfts_of_match),
 		.pm = &stmfts_pm_ops,
+		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = stmfts_probe,
 	.remove = stmfts_remove,

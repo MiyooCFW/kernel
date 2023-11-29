@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Provide TDMA helper functions used by cipher and hash algorithm
  * implementations.
@@ -7,10 +8,6 @@
  *
  * This work is based on an initial version written by
  * Sebastian Andrzej Siewior < sebastian at breakpoint dot cc >
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
  */
 
 #include "cesa.h"
@@ -304,10 +301,7 @@ int mv_cesa_dma_add_dummy_launch(struct mv_cesa_tdma_chain *chain, gfp_t flags)
 	struct mv_cesa_tdma_desc *tdma;
 
 	tdma = mv_cesa_dma_add_desc(chain, flags);
-	if (IS_ERR(tdma))
-		return PTR_ERR(tdma);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(tdma);
 }
 
 int mv_cesa_dma_add_dummy_end(struct mv_cesa_tdma_chain *chain, gfp_t flags)

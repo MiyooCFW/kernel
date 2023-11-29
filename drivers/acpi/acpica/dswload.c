@@ -1,45 +1,11 @@
+// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
 /******************************************************************************
  *
  * Module Name: dswload - Dispatcher first pass namespace load callbacks
  *
+ * Copyright (C) 2000 - 2019, Intel Corp.
+ *
  *****************************************************************************/
-
-/*
- * Copyright (C) 2000 - 2017, Intel Corp.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions, and the following disclaimer,
- *    without modification.
- * 2. Redistributions in binary form must reproduce at minimum a disclaimer
- *    substantially similar to the "NO WARRANTY" disclaimer below
- *    ("Disclaimer") and any redistribution must be conditioned upon
- *    including a substantially similar Disclaimer requirement for further
- *    binary redistribution.
- * 3. Neither the names of the above-listed copyright holders nor the names
- *    of any contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * Alternatively, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2 as published by the Free
- * Software Foundation.
- *
- * NO WARRANTY
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDERS OR CONTRIBUTORS BE LIABLE FOR SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGES.
- */
 
 #include <acpi/acpi.h>
 #include "accommon.h"
@@ -48,7 +14,6 @@
 #include "acdispat.h"
 #include "acinterp.h"
 #include "acnamesp.h"
-
 #ifdef ACPI_ASL_COMPILER
 #include "acdisasm.h"
 #endif
@@ -107,12 +72,10 @@ acpi_ds_init_callbacks(struct acpi_walk_state *walk_state, u32 pass_number)
 
 		/* Execution pass */
 
-#ifndef ACPI_NO_METHOD_EXECUTION
 		walk_state->parse_flags |= ACPI_PARSE_EXECUTE |
 		    ACPI_PARSE_DELETE_TREE;
 		walk_state->descending_callback = acpi_ds_exec_begin_op;
 		walk_state->ascending_callback = acpi_ds_exec_end_op;
-#endif
 		break;
 
 	default:
@@ -147,7 +110,7 @@ acpi_ds_load1_begin_op(struct acpi_walk_state *walk_state,
 	char *path;
 	u32 flags;
 
-	ACPI_FUNCTION_TRACE(ds_load1_begin_op);
+	ACPI_FUNCTION_TRACE_PTR(ds_load1_begin_op, walk_state->op);
 
 	op = walk_state->op;
 	ACPI_DEBUG_PRINT((ACPI_DB_DISPATCH, "Op=%p State=%p\n", op,
@@ -207,7 +170,8 @@ acpi_ds_load1_begin_op(struct acpi_walk_state *walk_state,
 		}
 #endif
 		if (ACPI_FAILURE(status)) {
-			ACPI_ERROR_NAMESPACE(path, status);
+			ACPI_ERROR_NAMESPACE(walk_state->scope_info, path,
+					     status);
 			return_ACPI_STATUS(status);
 		}
 
@@ -375,7 +339,8 @@ acpi_ds_load1_begin_op(struct acpi_walk_state *walk_state,
 			}
 
 			if (ACPI_FAILURE(status)) {
-				ACPI_ERROR_NAMESPACE(path, status);
+				ACPI_ERROR_NAMESPACE(walk_state->scope_info,
+						     path, status);
 				return_ACPI_STATUS(status);
 			}
 		}
@@ -396,7 +361,7 @@ acpi_ds_load1_begin_op(struct acpi_walk_state *walk_state,
 
 	/* Initialize the op */
 
-#if (defined (ACPI_NO_METHOD_EXECUTION) || defined (ACPI_CONSTANT_EVAL_ONLY))
+#ifdef ACPI_CONSTANT_EVAL_ONLY
 	op->named.path = path;
 #endif
 
@@ -433,7 +398,6 @@ acpi_status acpi_ds_load1_end_op(struct acpi_walk_state *walk_state)
 	union acpi_parse_object *op;
 	acpi_object_type object_type;
 	acpi_status status = AE_OK;
-
 #ifdef ACPI_ASL_COMPILER
 	u8 param_count;
 #endif
@@ -475,7 +439,6 @@ acpi_status acpi_ds_load1_end_op(struct acpi_walk_state *walk_state)
 
 	object_type = walk_state->op_info->object_type;
 
-#ifndef ACPI_NO_METHOD_EXECUTION
 	if (walk_state->op_info->flags & AML_FIELD) {
 		/*
 		 * If we are executing a method, do not create any namespace objects
@@ -519,7 +482,6 @@ acpi_status acpi_ds_load1_end_op(struct acpi_walk_state *walk_state)
 			}
 		}
 	}
-#endif
 
 	if (op->common.aml_opcode == AML_NAME_OP) {
 

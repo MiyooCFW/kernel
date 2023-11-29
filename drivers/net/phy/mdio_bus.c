@@ -1,14 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /* MDIO Bus interface
  *
  * Author: Andy Fleming
  *
  * Copyright (c) 2004 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
- *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -29,6 +24,7 @@
 #include <linux/of_gpio.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/reset.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
 #include <linux/mm.h>
@@ -39,17 +35,66 @@
 #include <linux/io.h>
 #include <linux/uaccess.h>
 
-#include <asm/irq.h>
-
 #define CREATE_TRACE_POINTS
 #include <trace/events/mdio.h>
 
 #include "mdio-boardinfo.h"
 
+static int mdiobus_register_gpiod(struct mdio_device *mdiodev)
+{
+	int error;
+
+	/* Deassert the optional reset signal */
+	mdiodev->reset_gpio = gpiod_get_optional(&mdiodev->dev,
+						 "reset", GPIOD_OUT_LOW);
+	error = PTR_ERR_OR_ZERO(mdiodev->reset_gpio);
+	if (error)
+		return error;
+
+	if (mdiodev->reset_gpio)
+		gpiod_set_consumer_name(mdiodev->reset_gpio, "PHY reset");
+
+	return 0;
+}
+
+static int mdiobus_register_reset(struct mdio_device *mdiodev)
+{
+	struct reset_control *reset = NULL;
+
+	if (mdiodev->dev.of_node)
+		reset = of_reset_control_get_exclusive(mdiodev->dev.of_node,
+						       "phy");
+	if (IS_ERR(reset)) {
+		if (PTR_ERR(reset) == -ENOENT || PTR_ERR(reset) == -ENOTSUPP)
+			reset = NULL;
+		else
+			return PTR_ERR(reset);
+	}
+
+	mdiodev->reset_ctrl = reset;
+
+	return 0;
+}
+
 int mdiobus_register_device(struct mdio_device *mdiodev)
 {
+	int err;
+
 	if (mdiodev->bus->mdio_map[mdiodev->addr])
 		return -EBUSY;
+
+	if (mdiodev->flags & MDIO_DEVICE_FLAG_PHY) {
+		err = mdiobus_register_gpiod(mdiodev);
+		if (err)
+			return err;
+
+		err = mdiobus_register_reset(mdiodev);
+		if (err)
+			return err;
+
+		/* Assert the reset signal */
+		mdio_device_reset(mdiodev, 1);
+	}
 
 	mdiodev->bus->mdio_map[mdiodev->addr] = mdiodev;
 
@@ -61,6 +106,8 @@ int mdiobus_unregister_device(struct mdio_device *mdiodev)
 {
 	if (mdiodev->bus->mdio_map[mdiodev->addr] != mdiodev)
 		return -EINVAL;
+
+	reset_control_put(mdiodev->reset_ctrl);
 
 	mdiodev->bus->mdio_map[mdiodev->addr] = NULL;
 
@@ -219,11 +266,6 @@ static struct class mdio_bus_class = {
 };
 
 #if IS_ENABLED(CONFIG_OF_MDIO)
-/* Helper function for of_mdio_find_bus */
-static int of_mdio_bus_match(struct device *dev, const void *mdio_bus_np)
-{
-	return dev->of_node == mdio_bus_np;
-}
 /**
  * of_mdio_find_bus - Given an mii_bus node, find the mii_bus.
  * @mdio_bus_np: Pointer to the mii_bus.
@@ -244,9 +286,7 @@ struct mii_bus *of_mdio_find_bus(struct device_node *mdio_bus_np)
 	if (!mdio_bus_np)
 		return NULL;
 
-	d = class_find_device(&mdio_bus_class, NULL,  mdio_bus_np,
-			      of_mdio_bus_match);
-
+	d = class_find_device_by_of_node(&mdio_bus_class, mdio_bus_np);
 	return d ? to_mii_bus(d) : NULL;
 }
 EXPORT_SYMBOL(of_mdio_find_bus);
@@ -275,6 +315,7 @@ static void of_mdiobus_link_mdiodev(struct mii_bus *bus,
 
 		if (addr == mdiodev->addr) {
 			dev->of_node = child;
+			dev->fwnode = of_fwnode_handle(child);
 			return;
 		}
 	}
@@ -433,6 +474,9 @@ void mdiobus_unregister(struct mii_bus *bus)
 		if (!mdiodev)
 			continue;
 
+		if (mdiodev->reset_gpio)
+			gpiod_put(mdiodev->reset_gpio);
+
 		mdiodev->device_remove(mdiodev);
 		mdiodev->device_free(mdiodev);
 	}
@@ -506,6 +550,55 @@ struct phy_device *mdiobus_scan(struct mii_bus *bus, int addr)
 EXPORT_SYMBOL(mdiobus_scan);
 
 /**
+ * __mdiobus_read - Unlocked version of the mdiobus_read function
+ * @bus: the mii_bus struct
+ * @addr: the phy address
+ * @regnum: register number to read
+ *
+ * Read a MDIO bus register. Caller must hold the mdio bus lock.
+ *
+ * NOTE: MUST NOT be called from interrupt context.
+ */
+int __mdiobus_read(struct mii_bus *bus, int addr, u32 regnum)
+{
+	int retval;
+
+	WARN_ON_ONCE(!mutex_is_locked(&bus->mdio_lock));
+
+	retval = bus->read(bus, addr, regnum);
+
+	trace_mdio_access(bus, 1, addr, regnum, retval, retval);
+
+	return retval;
+}
+EXPORT_SYMBOL(__mdiobus_read);
+
+/**
+ * __mdiobus_write - Unlocked version of the mdiobus_write function
+ * @bus: the mii_bus struct
+ * @addr: the phy address
+ * @regnum: register number to write
+ * @val: value to write to @regnum
+ *
+ * Write a MDIO bus register. Caller must hold the mdio bus lock.
+ *
+ * NOTE: MUST NOT be called from interrupt context.
+ */
+int __mdiobus_write(struct mii_bus *bus, int addr, u32 regnum, u16 val)
+{
+	int err;
+
+	WARN_ON_ONCE(!mutex_is_locked(&bus->mdio_lock));
+
+	err = bus->write(bus, addr, regnum, val);
+
+	trace_mdio_access(bus, 0, addr, regnum, val, err);
+
+	return err;
+}
+EXPORT_SYMBOL(__mdiobus_write);
+
+/**
  * mdiobus_read_nested - Nested version of the mdiobus_read function
  * @bus: the mii_bus struct
  * @addr: the phy address
@@ -525,10 +618,8 @@ int mdiobus_read_nested(struct mii_bus *bus, int addr, u32 regnum)
 	BUG_ON(in_interrupt());
 
 	mutex_lock_nested(&bus->mdio_lock, MDIO_MUTEX_NESTED);
-	retval = bus->read(bus, addr, regnum);
+	retval = __mdiobus_read(bus, addr, regnum);
 	mutex_unlock(&bus->mdio_lock);
-
-	trace_mdio_access(bus, 1, addr, regnum, retval, retval);
 
 	return retval;
 }
@@ -551,10 +642,8 @@ int mdiobus_read(struct mii_bus *bus, int addr, u32 regnum)
 	BUG_ON(in_interrupt());
 
 	mutex_lock(&bus->mdio_lock);
-	retval = bus->read(bus, addr, regnum);
+	retval = __mdiobus_read(bus, addr, regnum);
 	mutex_unlock(&bus->mdio_lock);
-
-	trace_mdio_access(bus, 1, addr, regnum, retval, retval);
 
 	return retval;
 }
@@ -581,10 +670,8 @@ int mdiobus_write_nested(struct mii_bus *bus, int addr, u32 regnum, u16 val)
 	BUG_ON(in_interrupt());
 
 	mutex_lock_nested(&bus->mdio_lock, MDIO_MUTEX_NESTED);
-	err = bus->write(bus, addr, regnum, val);
+	err = __mdiobus_write(bus, addr, regnum, val);
 	mutex_unlock(&bus->mdio_lock);
-
-	trace_mdio_access(bus, 0, addr, regnum, val, err);
 
 	return err;
 }
@@ -608,10 +695,8 @@ int mdiobus_write(struct mii_bus *bus, int addr, u32 regnum, u16 val)
 	BUG_ON(in_interrupt());
 
 	mutex_lock(&bus->mdio_lock);
-	err = bus->write(bus, addr, regnum, val);
+	err = __mdiobus_write(bus, addr, regnum, val);
 	mutex_unlock(&bus->mdio_lock);
-
-	trace_mdio_access(bus, 0, addr, regnum, val, err);
 
 	return err;
 }
@@ -653,58 +738,10 @@ static int mdio_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int mdio_bus_suspend(struct device *dev)
-{
-	struct mdio_device *mdio = to_mdio_device(dev);
-
-	if (mdio->pm_ops && mdio->pm_ops->suspend)
-		return mdio->pm_ops->suspend(dev);
-
-	return 0;
-}
-
-static int mdio_bus_resume(struct device *dev)
-{
-	struct mdio_device *mdio = to_mdio_device(dev);
-
-	if (mdio->pm_ops && mdio->pm_ops->resume)
-		return mdio->pm_ops->resume(dev);
-
-	return 0;
-}
-
-static int mdio_bus_restore(struct device *dev)
-{
-	struct mdio_device *mdio = to_mdio_device(dev);
-
-	if (mdio->pm_ops && mdio->pm_ops->restore)
-		return mdio->pm_ops->restore(dev);
-
-	return 0;
-}
-
-static const struct dev_pm_ops mdio_bus_pm_ops = {
-	.suspend = mdio_bus_suspend,
-	.resume = mdio_bus_resume,
-	.freeze = mdio_bus_suspend,
-	.thaw = mdio_bus_resume,
-	.restore = mdio_bus_restore,
-};
-
-#define MDIO_BUS_PM_OPS (&mdio_bus_pm_ops)
-
-#else
-
-#define MDIO_BUS_PM_OPS NULL
-
-#endif /* CONFIG_PM */
-
 struct bus_type mdio_bus_type = {
 	.name		= "mdio_bus",
 	.match		= mdio_bus_match,
 	.uevent		= mdio_uevent,
-	.pm		= MDIO_BUS_PM_OPS,
 };
 EXPORT_SYMBOL(mdio_bus_type);
 

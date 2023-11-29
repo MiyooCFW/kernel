@@ -454,6 +454,15 @@ fail:
 
 static inline __u32 xattr_hash(const char *msg, int len)
 {
+	/*
+	 * csum_partial() gives different results for little-endian and
+	 * big endian hosts. Images created on little-endian hosts and
+	 * mounted on big-endian hosts(and vice versa) will see csum mismatches
+	 * when trying to fetch xattrs. Treating the hash as __wsum_t would
+	 * lower the frequency of mismatch.  This is an endianness bug in
+	 * reiserfs.  The return statement would result in a sparse warning. Do
+	 * not fix the sparse warning so as to not hide a reminder of the bug.
+	 */
 	return csum_partial(msg, len, 0);
 }
 
@@ -462,10 +471,10 @@ int reiserfs_commit_write(struct file *f, struct page *page,
 
 static void update_ctime(struct inode *inode)
 {
-	struct timespec now = current_time(inode);
+	struct timespec64 now = current_time(inode);
 
 	if (inode_unhashed(inode) || !inode->i_nlink ||
-	    timespec_equal(&inode->i_ctime, &now))
+	    timespec64_equal(&inode->i_ctime, &now))
 		return;
 
 	inode->i_ctime = current_time(inode);
@@ -985,7 +994,7 @@ int reiserfs_lookup_privroot(struct super_block *s)
 
 /*
  * We need to take a copy of the mount flags since things like
- * MS_RDONLY don't get set until *after* we're called.
+ * SB_RDONLY don't get set until *after* we're called.
  * mount_flags != mount_options
  */
 int reiserfs_xattr_init(struct super_block *s, int mount_flags)
@@ -997,7 +1006,7 @@ int reiserfs_xattr_init(struct super_block *s, int mount_flags)
 	if (err)
 		goto error;
 
-	if (d_really_is_negative(privroot) && !(mount_flags & MS_RDONLY)) {
+	if (d_really_is_negative(privroot) && !(mount_flags & SB_RDONLY)) {
 		inode_lock(d_inode(s->s_root));
 		err = create_privroot(REISERFS_SB(s)->priv_root);
 		inode_unlock(d_inode(s->s_root));
@@ -1024,11 +1033,11 @@ error:
 		clear_bit(REISERFS_POSIXACL, &REISERFS_SB(s)->s_mount_opt);
 	}
 
-	/* The super_block MS_POSIXACL must mirror the (no)acl mount option. */
+	/* The super_block SB_POSIXACL must mirror the (no)acl mount option. */
 	if (reiserfs_posixacl(s))
-		s->s_flags |= MS_POSIXACL;
+		s->s_flags |= SB_POSIXACL;
 	else
-		s->s_flags &= ~MS_POSIXACL;
+		s->s_flags &= ~SB_POSIXACL;
 
 	return err;
 }

@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Block Translation Table
  * Copyright (c) 2014-2015, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 #include <linux/highmem.h>
 #include <linux/debugfs.h>
@@ -23,6 +15,7 @@
 #include <linux/ndctl.h>
 #include <linux/fs.h>
 #include <linux/nd.h>
+#include <linux/backing-dev.h>
 #include "btt.h"
 #include "nd.h"
 
@@ -761,6 +754,7 @@ static struct arena_info *alloc_arena(struct btt *btt, size_t size,
 		return NULL;
 	arena->nd_btt = btt->nd_btt;
 	arena->sector_size = btt->sector_size;
+	mutex_init(&arena->err_lock);
 
 	if (!size)
 		return arena;
@@ -899,7 +893,6 @@ static int discover_arenas(struct btt *btt)
 			goto out;
 		}
 
-		mutex_init(&arena->err_lock);
 		ret = btt_freelist_init(arena);
 		if (ret)
 			goto out;
@@ -1431,11 +1424,11 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 
 static int btt_do_bvec(struct btt *btt, struct bio_integrity_payload *bip,
 			struct page *page, unsigned int len, unsigned int off,
-			bool is_write, sector_t sector)
+			unsigned int op, sector_t sector)
 {
 	int ret;
 
-	if (!is_write) {
+	if (!op_is_write(op)) {
 		ret = btt_read_pg(btt, bip, page, off, sector, len);
 		flush_dcache_page(page);
 	} else {
@@ -1472,7 +1465,7 @@ static blk_qc_t btt_make_request(struct request_queue *q, struct bio *bio)
 		}
 
 		err = btt_do_bvec(btt, bip, bvec.bv_page, len, bvec.bv_offset,
-				  op_is_write(bio_op(bio)), iter.bi_sector);
+				  bio_op(bio), iter.bi_sector);
 		if (err) {
 			dev_err(&btt->nd_btt->dev,
 					"io error in %s sector %lld, len %d,\n",
@@ -1491,16 +1484,16 @@ static blk_qc_t btt_make_request(struct request_queue *q, struct bio *bio)
 }
 
 static int btt_rw_page(struct block_device *bdev, sector_t sector,
-		struct page *page, bool is_write)
+		struct page *page, unsigned int op)
 {
 	struct btt *btt = bdev->bd_disk->private_data;
 	int rc;
 	unsigned int len;
 
 	len = hpage_nr_pages(page) * PAGE_SIZE;
-	rc = btt_do_bvec(btt, NULL, page, len, 0, is_write, sector);
+	rc = btt_do_bvec(btt, NULL, page, len, 0, op, sector);
 	if (rc == 0)
-		page_endio(page, is_write, 0);
+		page_endio(page, op_is_write(op), 0);
 
 	return rc;
 }
@@ -1544,11 +1537,13 @@ static int btt_blk_init(struct btt *btt)
 	btt->btt_disk->private_data = btt;
 	btt->btt_disk->queue = btt->btt_queue;
 	btt->btt_disk->flags = GENHD_FL_EXT_DEVT;
+	btt->btt_disk->queue->backing_dev_info->capabilities |=
+			BDI_CAP_SYNCHRONOUS_IO;
 
 	blk_queue_make_request(btt->btt_queue, btt_make_request);
 	blk_queue_logical_block_size(btt->btt_queue, btt->sector_size);
 	blk_queue_max_hw_sectors(btt->btt_queue, UINT_MAX);
-	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, btt->btt_queue);
+	blk_queue_flag_set(QUEUE_FLAG_NONROT, btt->btt_queue);
 	btt->btt_queue->queuedata = btt;
 
 	if (btt_meta_size(btt)) {
@@ -1562,7 +1557,7 @@ static int btt_blk_init(struct btt *btt)
 		}
 	}
 	set_capacity(btt->btt_disk, btt->nlba * btt->sector_size >> 9);
-	device_add_disk(&btt->nd_btt->dev, btt->btt_disk);
+	device_add_disk(&btt->nd_btt->dev, btt->btt_disk, NULL);
 	btt->nd_btt->size = btt->nlba * (u64)btt->sector_size;
 	revalidate_disk(btt->btt_disk);
 

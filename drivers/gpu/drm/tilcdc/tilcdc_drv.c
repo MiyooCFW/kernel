@@ -1,34 +1,36 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2012 Texas Instruments
  * Author: Rob Clark <robdclark@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* LCDC DRM driver, based on da8xx-fb */
 
 #include <linux/component.h>
+#include <linux/mod_devicetable.h>
+#include <linux/module.h>
 #include <linux/pinctrl/consumer.h>
-#include <linux/suspend.h>
-#include <drm/drm_atomic.h>
+#include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
+
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_debugfs.h>
+#include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_irq.h>
+#include <drm/drm_mm.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
+
 
 #include "tilcdc_drv.h"
+#include "tilcdc_external.h"
+#include "tilcdc_panel.h"
 #include "tilcdc_regs.h"
 #include "tilcdc_tfp410.h"
-#include "tilcdc_panel.h"
-#include "tilcdc_external.h"
 
 static LIST_HEAD(module_list);
 
@@ -65,13 +67,7 @@ static struct of_device_id tilcdc_of_match[];
 static struct drm_framebuffer *tilcdc_fb_create(struct drm_device *dev,
 		struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd)
 {
-	return drm_fb_cma_create(dev, file_priv, mode_cmd);
-}
-
-static void tilcdc_fb_output_poll_changed(struct drm_device *dev)
-{
-	struct tilcdc_drm_private *priv = dev->dev_private;
-	drm_fbdev_cma_hotplug_event(priv->fbdev);
+	return drm_gem_fb_create(dev, file_priv, mode_cmd);
 }
 
 static int tilcdc_atomic_check(struct drm_device *dev,
@@ -145,7 +141,6 @@ static int tilcdc_commit(struct drm_device *dev,
 
 static const struct drm_mode_config_funcs mode_config_funcs = {
 	.fb_create = tilcdc_fb_create,
-	.output_poll_changed = tilcdc_fb_output_poll_changed,
 	.atomic_check = tilcdc_atomic_check,
 	.atomic_commit = tilcdc_commit,
 };
@@ -202,10 +197,6 @@ static void tilcdc_fini(struct drm_device *dev)
 		drm_dev_unregister(dev);
 
 	drm_kms_helper_poll_fini(dev);
-
-	if (priv->fbdev)
-		drm_fbdev_cma_fini(priv->fbdev);
-
 	drm_irq_uninstall(dev);
 	drm_mode_config_cleanup(dev);
 
@@ -224,7 +215,7 @@ static void tilcdc_fini(struct drm_device *dev)
 
 	pm_runtime_disable(dev->dev);
 
-	drm_dev_unref(dev);
+	drm_dev_put(dev);
 }
 
 static int tilcdc_init(struct drm_driver *ddrv, struct device *dev)
@@ -238,10 +229,8 @@ static int tilcdc_init(struct drm_driver *ddrv, struct device *dev)
 	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv) {
-		dev_err(dev, "failed to allocate private data\n");
+	if (!priv)
 		return -ENOMEM;
-	}
 
 	ddev = drm_dev_alloc(ddrv, dev);
 	if (IS_ERR(ddev))
@@ -385,7 +374,7 @@ static int tilcdc_init(struct drm_driver *ddrv, struct device *dev)
 	if (!priv->external_connector &&
 	    ((priv->num_encoders == 0) || (priv->num_connectors == 0))) {
 		dev_err(dev, "no encoders/connectors found\n");
-		ret = -ENXIO;
+		ret = -EPROBE_DEFER;
 		goto init_failed;
 	}
 
@@ -403,18 +392,13 @@ static int tilcdc_init(struct drm_driver *ddrv, struct device *dev)
 
 	drm_mode_config_reset(ddev);
 
-	priv->fbdev = drm_fbdev_cma_init(ddev, bpp,
-					 ddev->mode_config.num_connector);
-	if (IS_ERR(priv->fbdev)) {
-		ret = PTR_ERR(priv->fbdev);
-		goto init_failed;
-	}
-
 	drm_kms_helper_poll_init(ddev);
 
 	ret = drm_dev_register(ddev, 0);
 	if (ret)
 		goto init_failed;
+
+	drm_fbdev_generic_setup(ddev, bpp);
 
 	priv->is_registered = true;
 	return 0;
@@ -423,12 +407,6 @@ init_failed:
 	tilcdc_fini(ddev);
 
 	return ret;
-}
-
-static void tilcdc_lastclose(struct drm_device *dev)
-{
-	struct tilcdc_drm_private *priv = dev->dev_private;
-	drm_fbdev_cma_restore_mode(priv->fbdev);
 }
 
 static irqreturn_t tilcdc_irq(int irq, void *arg)
@@ -505,7 +483,6 @@ static int tilcdc_mm_show(struct seq_file *m, void *arg)
 static struct drm_info_list tilcdc_debugfs_list[] = {
 		{ "regs", tilcdc_regs_show, 0 },
 		{ "mm",   tilcdc_mm_show,   0 },
-		{ "fb",   drm_fb_cma_debugfs_show, 0 },
 };
 
 static int tilcdc_debugfs_init(struct drm_minor *minor)
@@ -534,18 +511,15 @@ static int tilcdc_debugfs_init(struct drm_minor *minor)
 DEFINE_DRM_GEM_CMA_FOPS(fops);
 
 static struct drm_driver tilcdc_driver = {
-	.driver_features    = (DRIVER_HAVE_IRQ | DRIVER_GEM | DRIVER_MODESET |
-			       DRIVER_PRIME | DRIVER_ATOMIC),
-	.lastclose          = tilcdc_lastclose,
+	.driver_features    = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 	.irq_handler        = tilcdc_irq,
 	.gem_free_object_unlocked = drm_gem_cma_free_object,
+	.gem_print_info     = drm_gem_cma_print_info,
 	.gem_vm_ops         = &drm_gem_cma_vm_ops,
 	.dumb_create        = drm_gem_cma_dumb_create,
 
 	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
-	.gem_prime_import	= drm_gem_prime_import,
-	.gem_prime_export	= drm_gem_prime_export,
 	.gem_prime_get_sg_table	= drm_gem_cma_prime_get_sg_table,
 	.gem_prime_import_sg_table = drm_gem_cma_prime_import_sg_table,
 	.gem_prime_vmap		= drm_gem_cma_prime_vmap,
@@ -570,29 +544,23 @@ static struct drm_driver tilcdc_driver = {
 static int tilcdc_pm_suspend(struct device *dev)
 {
 	struct drm_device *ddev = dev_get_drvdata(dev);
-	struct tilcdc_drm_private *priv = ddev->dev_private;
+	int ret = 0;
 
-	priv->saved_state = drm_atomic_helper_suspend(ddev);
+	ret = drm_mode_config_helper_suspend(ddev);
 
 	/* Select sleep pin state */
 	pinctrl_pm_select_sleep_state(dev);
 
-	return 0;
+	return ret;
 }
 
 static int tilcdc_pm_resume(struct device *dev)
 {
 	struct drm_device *ddev = dev_get_drvdata(dev);
-	struct tilcdc_drm_private *priv = ddev->dev_private;
-	int ret = 0;
 
 	/* Select default pin state */
 	pinctrl_pm_select_default_state(dev);
-
-	if (priv->saved_state)
-		ret = drm_atomic_helper_resume(ddev, priv->saved_state);
-
-	return ret;
+	return  drm_mode_config_helper_resume(ddev);
 }
 #endif
 

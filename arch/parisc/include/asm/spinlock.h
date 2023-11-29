@@ -30,14 +30,15 @@ static inline void arch_spin_lock_flags(arch_spinlock_t *x,
 			} else
 				cpu_relax();
 }
+#define arch_spin_lock_flags arch_spin_lock_flags
 
 static inline void arch_spin_unlock(arch_spinlock_t *x)
 {
 	volatile unsigned int *a;
 
 	a = __ldcw_align(x);
-	mb();
-	*a = 1;
+	/* Release with ordered store. */
+	__asm__ __volatile__("stw,ma %0,0(%1)" : : "r"(1), "r"(a) : "memory");
 }
 
 static inline int arch_spin_trylock(arch_spinlock_t *x)
@@ -164,26 +165,5 @@ static __inline__ int arch_write_trylock(arch_rwlock_t *rw)
 
 	return result;
 }
-
-/*
- * read_can_lock - would read_trylock() succeed?
- * @lock: the rwlock in question.
- */
-static __inline__ int arch_read_can_lock(arch_rwlock_t *rw)
-{
-	return rw->counter >= 0;
-}
-
-/*
- * write_can_lock - would write_trylock() succeed?
- * @lock: the rwlock in question.
- */
-static __inline__ int arch_write_can_lock(arch_rwlock_t *rw)
-{
-	return !rw->counter;
-}
-
-#define arch_read_lock_flags(lock, flags) arch_read_lock(lock)
-#define arch_write_lock_flags(lock, flags) arch_write_lock(lock)
 
 #endif /* __ASM_SPINLOCK_H */

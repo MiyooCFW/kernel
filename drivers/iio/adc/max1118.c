@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MAX1117/MAX1118/MAX1119 8-bit, dual-channel ADCs driver
  *
  * Copyright (c) 2017 Akinobu Mita <akinobu.mita@gmail.com>
- *
- * This file is subject to the terms and conditions of version 2 of
- * the GNU General Public License.  See the file COPYING in the main
- * directory of this archive for more details.
  *
  * Datasheet: https://datasheets.maximintegrated.com/en/ds/MAX1117-MAX1119.pdf
  *
@@ -160,7 +157,6 @@ static int max1118_read_raw(struct iio_dev *indio_dev,
 
 static const struct iio_info max1118_info = {
 	.read_raw = max1118_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static irqreturn_t max1118_trigger_handler(int irq, void *p)

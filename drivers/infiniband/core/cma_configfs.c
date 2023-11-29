@@ -33,7 +33,10 @@
 #include <linux/module.h>
 #include <linux/configfs.h>
 #include <rdma/ib_verbs.h>
+#include <rdma/rdma_cm.h>
+
 #include "core_priv.h"
+#include "cma_priv.h"
 
 struct cma_device;
 
@@ -65,7 +68,7 @@ static struct cma_dev_port_group *to_dev_port_group(struct config_item *item)
 
 static bool filter_by_name(struct ib_device *ib_dev, void *cookie)
 {
-	return !strcmp(ib_dev->name, cookie);
+	return !strcmp(dev_name(&ib_dev->dev), cookie);
 }
 
 static int cma_configfs_params_get(struct config_item *item,
@@ -186,7 +189,7 @@ static struct configfs_attribute *cma_configfs_attributes[] = {
 	NULL,
 };
 
-static struct config_item_type cma_port_group_type = {
+static const struct config_item_type cma_port_group_type = {
 	.ct_attrs	= cma_configfs_attributes,
 	.ct_owner	= THIS_MODULE
 };
@@ -263,7 +266,7 @@ static struct configfs_item_operations cma_ports_item_ops = {
 	.release = release_cma_ports_group
 };
 
-static struct config_item_type cma_ports_group_type = {
+static const struct config_item_type cma_ports_group_type = {
 	.ct_item_ops	= &cma_ports_item_ops,
 	.ct_owner	= THIS_MODULE
 };
@@ -272,7 +275,7 @@ static struct configfs_item_operations cma_device_item_ops = {
 	.release = release_cma_dev
 };
 
-static struct config_item_type cma_device_group_type = {
+static const struct config_item_type cma_device_group_type = {
 	.ct_item_ops	= &cma_device_item_ops,
 	.ct_owner	= THIS_MODULE
 };
@@ -295,7 +298,7 @@ static struct config_group *make_cma_dev(struct config_group *group,
 		goto fail;
 	}
 
-	strncpy(cma_dev_group->name, name, sizeof(cma_dev_group->name));
+	strlcpy(cma_dev_group->name, name, sizeof(cma_dev_group->name));
 
 	config_group_init_type_name(&cma_dev_group->ports_group, "ports",
 				    &cma_ports_group_type);
@@ -336,7 +339,7 @@ static struct configfs_group_operations cma_subsys_group_ops = {
 	.drop_item	= drop_cma_dev,
 };
 
-static struct config_item_type cma_subsys_type = {
+static const struct config_item_type cma_subsys_type = {
 	.ct_group_ops	= &cma_subsys_group_ops,
 	.ct_owner	= THIS_MODULE,
 };
@@ -352,12 +355,18 @@ static struct configfs_subsystem cma_subsys = {
 
 int __init cma_configfs_init(void)
 {
+	int ret;
+
 	config_group_init(&cma_subsys.su_group);
 	mutex_init(&cma_subsys.su_mutex);
-	return configfs_register_subsystem(&cma_subsys);
+	ret = configfs_register_subsystem(&cma_subsys);
+	if (ret)
+		mutex_destroy(&cma_subsys.su_mutex);
+	return ret;
 }
 
 void __exit cma_configfs_exit(void)
 {
 	configfs_unregister_subsystem(&cma_subsys);
+	mutex_destroy(&cma_subsys.su_mutex);
 }

@@ -367,7 +367,7 @@ static struct net_device *corkscrew_scan(int unit);
 static int corkscrew_setup(struct net_device *dev, int ioaddr,
 			    struct pnp_dev *idev, int card_number);
 static int corkscrew_open(struct net_device *dev);
-static void corkscrew_timer(unsigned long arg);
+static void corkscrew_timer(struct timer_list *t);
 static netdev_tx_t corkscrew_start_xmit(struct sk_buff *skb,
 					struct net_device *dev);
 static int corkscrew_rx(struct net_device *dev);
@@ -627,7 +627,7 @@ static int corkscrew_setup(struct net_device *dev, int ioaddr,
 
 	spin_lock_init(&vp->lock);
 
-	setup_timer(&vp->timer, corkscrew_timer, (unsigned long) dev);
+	timer_setup(&vp->timer, corkscrew_timer, 0);
 
 	/* Read the station address from the EEPROM. */
 	EL3WINDOW(0);
@@ -869,11 +869,11 @@ static int corkscrew_open(struct net_device *dev)
 	return 0;
 }
 
-static void corkscrew_timer(unsigned long data)
+static void corkscrew_timer(struct timer_list *t)
 {
 #ifdef AUTOMEDIA
-	struct net_device *dev = (struct net_device *) data;
-	struct corkscrew_private *vp = netdev_priv(dev);
+	struct corkscrew_private *vp = from_timer(vp, t, timer);
+	struct net_device *dev = vp->our_dev;
 	int ioaddr = dev->base_addr;
 	unsigned long flags;
 	int ok = 0;
@@ -1177,7 +1177,7 @@ static irqreturn_t corkscrew_interrupt(int irq, void *dev_id)
 				if (inl(ioaddr + DownListPtr) == isa_virt_to_bus(&lp->tx_ring[entry]))
 					break;	/* It still hasn't been processed. */
 				if (lp->tx_skbuff[entry]) {
-					dev_kfree_skb_irq(lp->tx_skbuff[entry]);
+					dev_consume_skb_irq(lp->tx_skbuff[entry]);
 					lp->tx_skbuff[entry] = NULL;
 				}
 				dirty_tx++;
@@ -1192,7 +1192,7 @@ static irqreturn_t corkscrew_interrupt(int irq, void *dev_id)
 #ifdef VORTEX_BUS_MASTER
 		if (status & DMADone) {
 			outw(0x1000, ioaddr + Wn7_MasterStatus);	/* Ack the event. */
-			dev_kfree_skb_irq(lp->tx_skb);	/* Release the transferred buffer */
+			dev_consume_skb_irq(lp->tx_skb);	/* Release the transferred buffer */
 			netif_wake_queue(dev);
 		}
 #endif
@@ -1521,7 +1521,7 @@ static void update_stats(int ioaddr, struct net_device *dev)
 static void set_rx_mode(struct net_device *dev)
 {
 	int ioaddr = dev->base_addr;
-	short new_mode;
+	unsigned short new_mode;
 
 	if (dev->flags & IFF_PROMISC) {
 		if (corkscrew_debug > 3)

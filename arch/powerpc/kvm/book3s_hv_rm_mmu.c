@@ -1,7 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, version 2, as
- * published by the Free Software Foundation.
  *
  * Copyright 2010-2011 Paul Mackerras, IBM Corp. <paulus@au1.ibm.com>
  */
@@ -13,8 +11,8 @@
 #include <linux/hugetlb.h>
 #include <linux/module.h>
 #include <linux/log2.h>
+#include <linux/sizes.h>
 
-#include <asm/tlbflush.h>
 #include <asm/trace.h>
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
@@ -42,7 +40,7 @@ static void *real_vmalloc_addr(void *x)
 }
 
 /* Return 1 if we need to do a global tlbie, 0 if we can use tlbiel */
-static int global_invalidates(struct kvm *kvm, unsigned long flags)
+static int global_invalidates(struct kvm *kvm)
 {
 	int global;
 	int cpu;
@@ -69,7 +67,7 @@ static int global_invalidates(struct kvm *kvm, unsigned long flags)
 		 * so use the bit for the first thread to represent the core.
 		 */
 		if (cpu_has_feature(CPU_FTR_ARCH_300))
-			cpu = cpu_first_thread_sibling(cpu);
+			cpu = cpu_first_tlb_thread_sibling(cpu);
 		cpumask_clear_cpu(cpu, &kvm->arch.need_tlb_flush);
 	}
 
@@ -101,36 +99,56 @@ void kvmppc_add_revmap_chain(struct kvm *kvm, struct revmap_entry *rev,
 	} else {
 		rev->forw = rev->back = pte_index;
 		*rmap = (*rmap & ~KVMPPC_RMAP_INDEX) |
-			pte_index | KVMPPC_RMAP_PRESENT;
+			pte_index | KVMPPC_RMAP_PRESENT | KVMPPC_RMAP_HPT;
 	}
 	unlock_rmap(rmap);
 }
 EXPORT_SYMBOL_GPL(kvmppc_add_revmap_chain);
 
-/* Update the changed page order field of an rmap entry */
-void kvmppc_update_rmap_change(unsigned long *rmap, unsigned long psize)
+/* Update the dirty bitmap of a memslot */
+void kvmppc_update_dirty_map(const struct kvm_memory_slot *memslot,
+			     unsigned long gfn, unsigned long psize)
 {
-	unsigned long order;
+	unsigned long npages;
 
-	if (!psize)
+	if (!psize || !memslot->dirty_bitmap)
 		return;
-	order = ilog2(psize);
-	order <<= KVMPPC_RMAP_CHG_SHIFT;
-	if (order > (*rmap & KVMPPC_RMAP_CHG_ORDER))
-		*rmap = (*rmap & ~KVMPPC_RMAP_CHG_ORDER) | order;
+	npages = (psize + PAGE_SIZE - 1) / PAGE_SIZE;
+	gfn -= memslot->base_gfn;
+	set_dirty_bits_atomic(memslot->dirty_bitmap, gfn, npages);
 }
-EXPORT_SYMBOL_GPL(kvmppc_update_rmap_change);
+EXPORT_SYMBOL_GPL(kvmppc_update_dirty_map);
+
+static void kvmppc_set_dirty_from_hpte(struct kvm *kvm,
+				unsigned long hpte_v, unsigned long hpte_gr)
+{
+	struct kvm_memory_slot *memslot;
+	unsigned long gfn;
+	unsigned long psize;
+
+	psize = kvmppc_actual_pgsz(hpte_v, hpte_gr);
+	gfn = hpte_rpn(hpte_gr, psize);
+	memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+	if (memslot && memslot->dirty_bitmap)
+		kvmppc_update_dirty_map(memslot, gfn, psize);
+}
 
 /* Returns a pointer to the revmap entry for the page mapped by a HPTE */
 static unsigned long *revmap_for_hpte(struct kvm *kvm, unsigned long hpte_v,
-				      unsigned long hpte_gr)
+				      unsigned long hpte_gr,
+				      struct kvm_memory_slot **memslotp,
+				      unsigned long *gfnp)
 {
 	struct kvm_memory_slot *memslot;
 	unsigned long *rmap;
 	unsigned long gfn;
 
-	gfn = hpte_rpn(hpte_gr, hpte_page_size(hpte_v, hpte_gr));
+	gfn = hpte_rpn(hpte_gr, kvmppc_actual_pgsz(hpte_v, hpte_gr));
 	memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+	if (memslotp)
+		*memslotp = memslot;
+	if (gfnp)
+		*gfnp = gfn;
 	if (!memslot)
 		return NULL;
 
@@ -147,10 +165,12 @@ static void remove_revmap_chain(struct kvm *kvm, long pte_index,
 	unsigned long ptel, head;
 	unsigned long *rmap;
 	unsigned long rcbits;
+	struct kvm_memory_slot *memslot;
+	unsigned long gfn;
 
 	rcbits = hpte_r & (HPTE_R_R | HPTE_R_C);
 	ptel = rev->guest_rpte |= rcbits;
-	rmap = revmap_for_hpte(kvm, hpte_v, ptel);
+	rmap = revmap_for_hpte(kvm, hpte_v, ptel, &memslot, &gfn);
 	if (!rmap)
 		return;
 	lock_rmap(rmap);
@@ -169,7 +189,8 @@ static void remove_revmap_chain(struct kvm *kvm, long pte_index,
 	}
 	*rmap |= rcbits << KVMPPC_RMAP_RC_SHIFT;
 	if (rcbits & HPTE_R_C)
-		kvmppc_update_rmap_change(rmap, hpte_page_size(hpte_v, hpte_r));
+		kvmppc_update_dirty_map(memslot, gfn,
+					kvmppc_actual_pgsz(hpte_v, hpte_r));
 	unlock_rmap(rmap);
 }
 
@@ -193,7 +214,7 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 
 	if (kvm_is_radix(kvm))
 		return H_FUNCTION;
-	psize = hpte_page_size(pteh, ptel);
+	psize = kvmppc_actual_pgsz(pteh, ptel);
 	if (!psize)
 		return H_PARAMETER;
 	writing = hpte_is_writable(ptel);
@@ -395,7 +416,8 @@ long kvmppc_h_enter(struct kvm_vcpu *vcpu, unsigned long flags,
 		    long pte_index, unsigned long pteh, unsigned long ptel)
 {
 	return kvmppc_do_h_enter(vcpu->kvm, flags, pte_index, pteh, ptel,
-				 vcpu->arch.pgdir, true, &vcpu->arch.gpr[4]);
+				 vcpu->arch.pgdir, true,
+				 &vcpu->arch.regs.gpr[4]);
 }
 
 #ifdef __BIG_ENDIAN__
@@ -409,24 +431,6 @@ static inline int is_mmio_hpte(unsigned long v, unsigned long r)
 	return ((v & HPTE_V_ABSENT) &&
 		(r & (HPTE_R_KEY_HI | HPTE_R_KEY_LO)) ==
 		(HPTE_R_KEY_HI | HPTE_R_KEY_LO));
-}
-
-static inline int try_lock_tlbie(unsigned int *lock)
-{
-	unsigned int tmp, old;
-	unsigned int token = LOCK_TOKEN;
-
-	asm volatile("1:lwarx	%1,0,%2\n"
-		     "	cmpwi	cr0,%1,0\n"
-		     "	bne	2f\n"
-		     "  stwcx.	%3,0,%2\n"
-		     "	bne-	1b\n"
-		     "  isync\n"
-		     "2:"
-		     : "=&r" (tmp), "=&r" (old)
-		     : "r" (lock), "r" (token)
-		     : "cc", "memory");
-	return old == 0;
 }
 
 static inline void fixup_tlbie_lpid(unsigned long rb_value, unsigned long lpid)
@@ -471,8 +475,6 @@ static void do_tlbies(struct kvm *kvm, unsigned long *rbvalues,
 	 * the RS field, this is backwards-compatible with P7 and P8.
 	 */
 	if (global) {
-		while (!try_lock_tlbie(&kvm->arch.tlbie_lock))
-			cpu_relax();
 		if (need_sync)
 			asm volatile("ptesync" : : : "memory");
 		for (i = 0; i < npages; ++i) {
@@ -482,7 +484,6 @@ static void do_tlbies(struct kvm *kvm, unsigned long *rbvalues,
 
 		fixup_tlbie_lpid(rbvalues[i - 1], kvm->arch.lpid);
 		asm volatile("eieio; tlbsync; ptesync" : : : "memory");
-		kvm->arch.tlbie_lock = 0;
 	} else {
 		if (need_sync)
 			asm volatile("ptesync" : : : "memory");
@@ -528,7 +529,7 @@ long kvmppc_do_h_remove(struct kvm *kvm, unsigned long flags,
 	if (v & HPTE_V_VALID) {
 		hpte[0] &= ~cpu_to_be64(HPTE_V_VALID);
 		rb = compute_tlbie_rb(v, pte_r, pte_index);
-		do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags), true);
+		do_tlbies(kvm, &rb, 1, global_invalidates(kvm), true);
 		/*
 		 * The reference (R) and change (C) bits in a HPT
 		 * entry can be set by hardware at any time up until
@@ -560,13 +561,13 @@ long kvmppc_h_remove(struct kvm_vcpu *vcpu, unsigned long flags,
 		     unsigned long pte_index, unsigned long avpn)
 {
 	return kvmppc_do_h_remove(vcpu->kvm, flags, pte_index, avpn,
-				  &vcpu->arch.gpr[4]);
+				  &vcpu->arch.regs.gpr[4]);
 }
 
 long kvmppc_h_bulk_remove(struct kvm_vcpu *vcpu)
 {
 	struct kvm *kvm = vcpu->kvm;
-	unsigned long *args = &vcpu->arch.gpr[4];
+	unsigned long *args = &vcpu->arch.regs.gpr[4];
 	__be64 *hp, *hptes[4];
 	unsigned long tlbrb[4];
 	long int i, j, k, n, found, indexes[4];
@@ -578,7 +579,7 @@ long kvmppc_h_bulk_remove(struct kvm_vcpu *vcpu)
 
 	if (kvm_is_radix(kvm))
 		return H_FUNCTION;
-	global = global_invalidates(kvm, 0);
+	global = global_invalidates(kvm);
 	for (i = 0; i < 4 && ret == H_SUCCESS; ) {
 		n = 0;
 		for (; i < 4; ++i) {
@@ -738,8 +739,7 @@ long kvmppc_h_protect(struct kvm_vcpu *vcpu, unsigned long flags,
 			rb = compute_tlbie_rb(v, r, pte_index);
 			hpte[0] = cpu_to_be64((pte_v & ~HPTE_V_VALID) |
 					      HPTE_V_ABSENT);
-			do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags),
-				  true);
+			do_tlbies(kvm, &rb, 1, global_invalidates(kvm), true);
 			/* Don't lose R/C bit updates done by hardware */
 			r |= be64_to_cpu(hpte[1]) & (HPTE_R_R | HPTE_R_C);
 			hpte[1] = cpu_to_be64(r);
@@ -787,8 +787,8 @@ long kvmppc_h_read(struct kvm_vcpu *vcpu, unsigned long flags,
 			r = rev[i].guest_rpte | (r & (HPTE_R_R | HPTE_R_C));
 			r &= ~HPTE_GR_RESERVED;
 		}
-		vcpu->arch.gpr[4 + i * 2] = v;
-		vcpu->arch.gpr[5 + i * 2] = r;
+		vcpu->arch.regs.gpr[4 + i * 2] = v;
+		vcpu->arch.regs.gpr[5 + i * 2] = r;
 	}
 	return H_SUCCESS;
 }
@@ -826,7 +826,7 @@ long kvmppc_h_clear_ref(struct kvm_vcpu *vcpu, unsigned long flags,
 		gr |= r & (HPTE_R_R | HPTE_R_C);
 		if (r & HPTE_R_R) {
 			kvmppc_clear_ref_hpte(kvm, hpte, pte_index);
-			rmap = revmap_for_hpte(kvm, v, gr);
+			rmap = revmap_for_hpte(kvm, v, gr, NULL, NULL);
 			if (rmap) {
 				lock_rmap(rmap);
 				*rmap |= KVMPPC_RMAP_REFERENCED;
@@ -834,7 +834,7 @@ long kvmppc_h_clear_ref(struct kvm_vcpu *vcpu, unsigned long flags,
 			}
 		}
 	}
-	vcpu->arch.gpr[4] = gr;
+	vcpu->arch.regs.gpr[4] = gr;
 	ret = H_SUCCESS;
  out:
 	unlock_hpte(hpte, v & ~HPTE_V_HVLOCK);
@@ -848,7 +848,6 @@ long kvmppc_h_clear_mod(struct kvm_vcpu *vcpu, unsigned long flags,
 	__be64 *hpte;
 	unsigned long v, r, gr;
 	struct revmap_entry *rev;
-	unsigned long *rmap;
 	long ret = H_NOT_FOUND;
 
 	if (kvm_is_radix(kvm))
@@ -877,22 +876,158 @@ long kvmppc_h_clear_mod(struct kvm_vcpu *vcpu, unsigned long flags,
 		r = be64_to_cpu(hpte[1]);
 		gr |= r & (HPTE_R_R | HPTE_R_C);
 		if (r & HPTE_R_C) {
-			unsigned long psize = hpte_page_size(v, r);
 			hpte[1] = cpu_to_be64(r & ~HPTE_R_C);
 			eieio();
-			rmap = revmap_for_hpte(kvm, v, gr);
-			if (rmap) {
-				lock_rmap(rmap);
-				*rmap |= KVMPPC_RMAP_CHANGED;
-				kvmppc_update_rmap_change(rmap, psize);
-				unlock_rmap(rmap);
-			}
+			kvmppc_set_dirty_from_hpte(kvm, v, gr);
 		}
 	}
-	vcpu->arch.gpr[4] = gr;
+	vcpu->arch.regs.gpr[4] = gr;
 	ret = H_SUCCESS;
  out:
 	unlock_hpte(hpte, v & ~HPTE_V_HVLOCK);
+	return ret;
+}
+
+static int kvmppc_get_hpa(struct kvm_vcpu *vcpu, unsigned long gpa,
+			  int writing, unsigned long *hpa,
+			  struct kvm_memory_slot **memslot_p)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_memory_slot *memslot;
+	unsigned long gfn, hva, pa, psize = PAGE_SHIFT;
+	unsigned int shift;
+	pte_t *ptep, pte;
+
+	/* Find the memslot for this address */
+	gfn = gpa >> PAGE_SHIFT;
+	memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+	if (!memslot || (memslot->flags & KVM_MEMSLOT_INVALID))
+		return H_PARAMETER;
+
+	/* Translate to host virtual address */
+	hva = __gfn_to_hva_memslot(memslot, gfn);
+
+	/* Try to find the host pte for that virtual address */
+	ptep = __find_linux_pte(vcpu->arch.pgdir, hva, NULL, &shift);
+	if (!ptep)
+		return H_TOO_HARD;
+	pte = kvmppc_read_update_linux_pte(ptep, writing);
+	if (!pte_present(pte))
+		return H_TOO_HARD;
+
+	/* Convert to a physical address */
+	if (shift)
+		psize = 1UL << shift;
+	pa = pte_pfn(pte) << PAGE_SHIFT;
+	pa |= hva & (psize - 1);
+	pa |= gpa & ~PAGE_MASK;
+
+	if (hpa)
+		*hpa = pa;
+	if (memslot_p)
+		*memslot_p = memslot;
+
+	return H_SUCCESS;
+}
+
+static long kvmppc_do_h_page_init_zero(struct kvm_vcpu *vcpu,
+				       unsigned long dest)
+{
+	struct kvm_memory_slot *memslot;
+	struct kvm *kvm = vcpu->kvm;
+	unsigned long pa, mmu_seq;
+	long ret = H_SUCCESS;
+	int i;
+
+	/* Used later to detect if we might have been invalidated */
+	mmu_seq = kvm->mmu_notifier_seq;
+	smp_rmb();
+
+	ret = kvmppc_get_hpa(vcpu, dest, 1, &pa, &memslot);
+	if (ret != H_SUCCESS)
+		return ret;
+
+	/* Check if we've been invalidated */
+	raw_spin_lock(&kvm->mmu_lock.rlock);
+	if (mmu_notifier_retry(kvm, mmu_seq)) {
+		ret = H_TOO_HARD;
+		goto out_unlock;
+	}
+
+	/* Zero the page */
+	for (i = 0; i < SZ_4K; i += L1_CACHE_BYTES, pa += L1_CACHE_BYTES)
+		dcbz((void *)pa);
+	kvmppc_update_dirty_map(memslot, dest >> PAGE_SHIFT, PAGE_SIZE);
+
+out_unlock:
+	raw_spin_unlock(&kvm->mmu_lock.rlock);
+	return ret;
+}
+
+static long kvmppc_do_h_page_init_copy(struct kvm_vcpu *vcpu,
+				       unsigned long dest, unsigned long src)
+{
+	unsigned long dest_pa, src_pa, mmu_seq;
+	struct kvm_memory_slot *dest_memslot;
+	struct kvm *kvm = vcpu->kvm;
+	long ret = H_SUCCESS;
+
+	/* Used later to detect if we might have been invalidated */
+	mmu_seq = kvm->mmu_notifier_seq;
+	smp_rmb();
+
+	ret = kvmppc_get_hpa(vcpu, dest, 1, &dest_pa, &dest_memslot);
+	if (ret != H_SUCCESS)
+		return ret;
+	ret = kvmppc_get_hpa(vcpu, src, 0, &src_pa, NULL);
+	if (ret != H_SUCCESS)
+		return ret;
+
+	/* Check if we've been invalidated */
+	raw_spin_lock(&kvm->mmu_lock.rlock);
+	if (mmu_notifier_retry(kvm, mmu_seq)) {
+		ret = H_TOO_HARD;
+		goto out_unlock;
+	}
+
+	/* Copy the page */
+	memcpy((void *)dest_pa, (void *)src_pa, SZ_4K);
+
+	kvmppc_update_dirty_map(dest_memslot, dest >> PAGE_SHIFT, PAGE_SIZE);
+
+out_unlock:
+	raw_spin_unlock(&kvm->mmu_lock.rlock);
+	return ret;
+}
+
+long kvmppc_rm_h_page_init(struct kvm_vcpu *vcpu, unsigned long flags,
+			   unsigned long dest, unsigned long src)
+{
+	struct kvm *kvm = vcpu->kvm;
+	u64 pg_mask = SZ_4K - 1;	/* 4K page size */
+	long ret = H_SUCCESS;
+
+	/* Don't handle radix mode here, go up to the virtual mode handler */
+	if (kvm_is_radix(kvm))
+		return H_TOO_HARD;
+
+	/* Check for invalid flags (H_PAGE_SET_LOANED covers all CMO flags) */
+	if (flags & ~(H_ICACHE_INVALIDATE | H_ICACHE_SYNCHRONIZE |
+		      H_ZERO_PAGE | H_COPY_PAGE | H_PAGE_SET_LOANED))
+		return H_PARAMETER;
+
+	/* dest (and src if copy_page flag set) must be page aligned */
+	if ((dest & pg_mask) || ((flags & H_COPY_PAGE) && (src & pg_mask)))
+		return H_PARAMETER;
+
+	/* zero and/or copy the page as determined by the flags */
+	if (flags & H_COPY_PAGE)
+		ret = kvmppc_do_h_page_init_copy(vcpu, dest, src);
+	else if (flags & H_ZERO_PAGE)
+		ret = kvmppc_do_h_page_init_zero(vcpu, dest);
+
+	/* We can ignore the other flags */
+
 	return ret;
 }
 
@@ -1043,7 +1178,7 @@ long kvmppc_hv_find_lock_hpte(struct kvm *kvm, gva_t eaddr, unsigned long slb_v,
 			 * Check the HPTE again, including base page size
 			 */
 			if ((v & valid) && (v & mask) == val &&
-			    hpte_base_page_size(v, r) == (1ul << pshift))
+			    kvmppc_hpte_base_page_shift(v, r) == pshift)
 				/* Return with the HPTE still locked */
 				return (hash << 3) + (i >> 1);
 

@@ -1,24 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *   ALSA driver for RME Hammerfall DSP audio interface(s)
  *
  *      Copyright (c) 2002  Paul Davis
  *                          Marcus Andersson
  *                          Thomas Charbonnel
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
  */
 
 #include <linux/init.h>
@@ -1411,9 +1397,9 @@ static void snd_hdsp_midi_input_trigger(struct snd_rawmidi_substream *substream,
 	spin_unlock_irqrestore (&hdsp->lock, flags);
 }
 
-static void snd_hdsp_midi_output_timer(unsigned long data)
+static void snd_hdsp_midi_output_timer(struct timer_list *t)
 {
-	struct hdsp_midi *hmidi = (struct hdsp_midi *) data;
+	struct hdsp_midi *hmidi = from_timer(hmidi, t, timer);
 	unsigned long flags;
 
 	snd_hdsp_midi_output_write(hmidi);
@@ -1440,8 +1426,8 @@ static void snd_hdsp_midi_output_trigger(struct snd_rawmidi_substream *substream
 	spin_lock_irqsave (&hmidi->lock, flags);
 	if (up) {
 		if (!hmidi->istimer) {
-			setup_timer(&hmidi->timer, snd_hdsp_midi_output_timer,
-				    (unsigned long) hmidi);
+			timer_setup(&hmidi->timer, snd_hdsp_midi_output_timer,
+				    0);
 			mod_timer(&hmidi->timer, 1 + jiffies);
 			hmidi->istimer++;
 		}
@@ -3708,10 +3694,7 @@ snd_hdsp_proc_read(struct snd_info_entry *entry, struct snd_info_buffer *buffer)
 
 static void snd_hdsp_proc_init(struct hdsp *hdsp)
 {
-	struct snd_info_entry *entry;
-
-	if (! snd_card_proc_new(hdsp->card, "hdsp", &entry))
-		snd_info_set_text_ops(entry, hdsp, snd_hdsp_proc_read);
+	snd_card_ro_proc_new(hdsp->card, "hdsp", hdsp, snd_hdsp_proc_read);
 }
 
 static void snd_hdsp_free_buffers(struct hdsp *hdsp)

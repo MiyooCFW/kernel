@@ -1,13 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *	Bridge per vlan tunnels
  *
  *	Authors:
  *	Roopa Prabhu		<roopa@cumulusnetworks.com>
- *
- *	This program is free software; you can redistribute it and/or
- *	modify it under the terms of the GNU General Public License
- *	as published by the Free Software Foundation; either version
- *	2 of the License, or (at your option) any later version.
  */
 
 #ifndef _BR_PRIVATE_TUNNEL_H
@@ -26,7 +22,8 @@ int br_process_vlan_tunnel_info(struct net_bridge *br,
 				struct net_bridge_port *p,
 				int cmd,
 				struct vtunnel_info *tinfo_curr,
-				struct vtunnel_info *tinfo_last);
+				struct vtunnel_info *tinfo_last,
+				bool *changed);
 int br_get_vlan_tunnel_info_size(struct net_bridge_vlan_group *vg);
 int br_fill_vlan_tunnel_info(struct sk_buff *skb,
 			     struct net_bridge_vlan_group *vg);

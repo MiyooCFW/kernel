@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2005 - 2016 Broadcom
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.  The full GNU General
- * Public License is included in this distribution in the file called COPYING.
  *
  * Contact Information:
  * linux-drivers@emulex.com
@@ -34,11 +30,11 @@ MODULE_LICENSE("GPL");
  * Use sysfs method to enable/disable VFs.
  */
 static unsigned int num_vfs;
-module_param(num_vfs, uint, S_IRUGO);
+module_param(num_vfs, uint, 0444);
 MODULE_PARM_DESC(num_vfs, "Number of PCI VFs to initialize");
 
 static ushort rx_frag_size = 2048;
-module_param(rx_frag_size, ushort, S_IRUGO);
+module_param(rx_frag_size, ushort, 0444);
 MODULE_PARM_DESC(rx_frag_size, "Size of a fragment that holds rcvd data.");
 
 /* Per-module error detection/recovery workq shared across all functions.
@@ -47,14 +43,22 @@ MODULE_PARM_DESC(rx_frag_size, "Size of a fragment that holds rcvd data.");
 static struct workqueue_struct *be_err_recovery_workq;
 
 static const struct pci_device_id be_dev_ids[] = {
+#ifdef CONFIG_BE2NET_BE2
 	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID1) },
-	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID2) },
 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID1) },
+#endif /* CONFIG_BE2NET_BE2 */
+#ifdef CONFIG_BE2NET_BE3
+	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID2) },
 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID2) },
+#endif /* CONFIG_BE2NET_BE3 */
+#ifdef CONFIG_BE2NET_LANCER
 	{ PCI_DEVICE(EMULEX_VENDOR_ID, OC_DEVICE_ID3)},
 	{ PCI_DEVICE(EMULEX_VENDOR_ID, OC_DEVICE_ID4)},
+#endif /* CONFIG_BE2NET_LANCER */
+#ifdef CONFIG_BE2NET_SKYHAWK
 	{ PCI_DEVICE(EMULEX_VENDOR_ID, OC_DEVICE_ID5)},
 	{ PCI_DEVICE(EMULEX_VENDOR_ID, OC_DEVICE_ID6)},
+#endif /* CONFIG_BE2NET_SKYHAWK */
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, be_dev_ids);
@@ -159,8 +163,8 @@ static int be_queue_alloc(struct be_adapter *adapter, struct be_queue_info *q,
 	q->len = len;
 	q->entry_size = entry_size;
 	mem->size = len * entry_size;
-	mem->va = dma_zalloc_coherent(&adapter->pdev->dev, mem->size, &mem->dma,
-				      GFP_KERNEL);
+	mem->va = dma_alloc_coherent(&adapter->pdev->dev, mem->size,
+				     &mem->dma, GFP_KERNEL);
 	if (!mem->va)
 		return -ENOMEM;
 	return 0;
@@ -605,7 +609,7 @@ static void accumulate_16bit_val(u32 *acc, u16 val)
 
 	if (wrapped)
 		newacc += 65536;
-	ACCESS_ONCE(*acc) = newacc;
+	WRITE_ONCE(*acc, newacc);
 }
 
 static void populate_erx_stats(struct be_adapter *adapter,
@@ -788,7 +792,7 @@ static inline u16 be_get_tx_vlan_tag(struct be_adapter *adapter,
 	u16 vlan_tag;
 
 	vlan_tag = skb_vlan_tag_get(skb);
-	vlan_prio = (vlan_tag & VLAN_PRIO_MASK) >> VLAN_PRIO_SHIFT;
+	vlan_prio = skb_vlan_tag_get_prio(skb);
 	/* If vlan priority provided by OS is NOT in available bmap */
 	if (!(adapter->vlan_prio_bmap & (1 << vlan_prio)))
 		vlan_tag = (vlan_tag & ~VLAN_PRIO_MASK) |
@@ -991,9 +995,8 @@ static u32 be_xmit_enqueue(struct be_adapter *adapter, struct be_tx_obj *txo,
 {
 	u32 i, copied = 0, wrb_cnt = skb_wrb_cnt(skb);
 	struct device *dev = &adapter->pdev->dev;
-	struct be_queue_info *txq = &txo->q;
 	bool map_single = false;
-	u32 head = txq->head;
+	u32 head;
 	dma_addr_t busaddr;
 	int len;
 
@@ -1011,7 +1014,7 @@ static u32 be_xmit_enqueue(struct be_adapter *adapter, struct be_tx_obj *txo,
 	}
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-		const struct skb_frag_struct *frag = &skb_shinfo(skb)->frags[i];
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 		len = skb_frag_size(frag);
 
 		busaddr = skb_frag_dma_map(dev, frag, 0, len, DMA_TO_DEVICE);
@@ -1042,30 +1045,35 @@ static struct sk_buff *be_insert_vlan_in_pkt(struct be_adapter *adapter,
 					     struct be_wrb_params
 					     *wrb_params)
 {
+	bool insert_vlan = false;
 	u16 vlan_tag = 0;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (unlikely(!skb))
 		return skb;
 
-	if (skb_vlan_tag_present(skb))
+	if (skb_vlan_tag_present(skb)) {
 		vlan_tag = be_get_tx_vlan_tag(adapter, skb);
+		insert_vlan = true;
+	}
 
 	if (qnq_async_evt_rcvd(adapter) && adapter->pvid) {
-		if (!vlan_tag)
+		if (!insert_vlan) {
 			vlan_tag = adapter->pvid;
+			insert_vlan = true;
+		}
 		/* f/w workaround to set skip_hw_vlan = 1, informs the F/W to
 		 * skip VLAN insertion
 		 */
 		BE_WRB_F_SET(wrb_params->features, VLAN_SKIP_HW, 1);
 	}
 
-	if (vlan_tag) {
+	if (insert_vlan) {
 		skb = vlan_insert_tag_set_proto(skb, htons(ETH_P_8021Q),
 						vlan_tag);
 		if (unlikely(!skb))
 			return skb;
-		skb->vlan_tci = 0;
+		__vlan_hwaccel_clear_tag(skb);
 	}
 
 	/* Insert the outer VLAN, if any */
@@ -1259,10 +1267,6 @@ static void be_xmit_flush(struct be_adapter *adapter, struct be_tx_obj *txo)
 #define is_arp_allowed_on_bmc(adapter, skb)	\
 	(is_arp(skb) && is_arp_filt_enabled(adapter))
 
-#define is_broadcast_packet(eh, adapter)	\
-		(is_multicast_ether_addr(eh->h_dest) && \
-		!compare_ether_addr(eh->h_dest, adapter->netdev->broadcast))
-
 #define is_arp(skb)	(skb->protocol == htons(ETH_P_ARP))
 
 #define is_arp_filt_enabled(adapter)	\
@@ -1369,7 +1373,7 @@ static netdev_tx_t be_xmit(struct sk_buff *skb, struct net_device *netdev)
 	u16 q_idx = skb_get_queue_mapping(skb);
 	struct be_tx_obj *txo = &adapter->tx_obj[q_idx];
 	struct be_wrb_params wrb_params = { 0 };
-	bool flush = !skb->xmit_more;
+	bool flush = !netdev_xmit_more();
 	u16 wrb_cnt;
 
 	skb = be_xmit_workarounds(adapter, skb, &wrb_params);
@@ -1412,6 +1416,83 @@ drop:
 		be_xmit_flush(adapter, txo);
 
 	return NETDEV_TX_OK;
+}
+
+static void be_tx_timeout(struct net_device *netdev)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+	struct device *dev = &adapter->pdev->dev;
+	struct be_tx_obj *txo;
+	struct sk_buff *skb;
+	struct tcphdr *tcphdr;
+	struct udphdr *udphdr;
+	u32 *entry;
+	int status;
+	int i, j;
+
+	for_all_tx_queues(adapter, txo, i) {
+		dev_info(dev, "TXQ Dump: %d H: %d T: %d used: %d, qid: 0x%x\n",
+			 i, txo->q.head, txo->q.tail,
+			 atomic_read(&txo->q.used), txo->q.id);
+
+		entry = txo->q.dma_mem.va;
+		for (j = 0; j < TX_Q_LEN * 4; j += 4) {
+			if (entry[j] != 0 || entry[j + 1] != 0 ||
+			    entry[j + 2] != 0 || entry[j + 3] != 0) {
+				dev_info(dev, "Entry %d 0x%x 0x%x 0x%x 0x%x\n",
+					 j, entry[j], entry[j + 1],
+					 entry[j + 2], entry[j + 3]);
+			}
+		}
+
+		entry = txo->cq.dma_mem.va;
+		dev_info(dev, "TXCQ Dump: %d  H: %d T: %d used: %d\n",
+			 i, txo->cq.head, txo->cq.tail,
+			 atomic_read(&txo->cq.used));
+		for (j = 0; j < TX_CQ_LEN * 4; j += 4) {
+			if (entry[j] != 0 || entry[j + 1] != 0 ||
+			    entry[j + 2] != 0 || entry[j + 3] != 0) {
+				dev_info(dev, "Entry %d 0x%x 0x%x 0x%x 0x%x\n",
+					 j, entry[j], entry[j + 1],
+					 entry[j + 2], entry[j + 3]);
+			}
+		}
+
+		for (j = 0; j < TX_Q_LEN; j++) {
+			if (txo->sent_skb_list[j]) {
+				skb = txo->sent_skb_list[j];
+				if (ip_hdr(skb)->protocol == IPPROTO_TCP) {
+					tcphdr = tcp_hdr(skb);
+					dev_info(dev, "TCP source port %d\n",
+						 ntohs(tcphdr->source));
+					dev_info(dev, "TCP dest port %d\n",
+						 ntohs(tcphdr->dest));
+					dev_info(dev, "TCP sequence num %d\n",
+						 ntohs(tcphdr->seq));
+					dev_info(dev, "TCP ack_seq %d\n",
+						 ntohs(tcphdr->ack_seq));
+				} else if (ip_hdr(skb)->protocol ==
+					   IPPROTO_UDP) {
+					udphdr = udp_hdr(skb);
+					dev_info(dev, "UDP source port %d\n",
+						 ntohs(udphdr->source));
+					dev_info(dev, "UDP dest port %d\n",
+						 ntohs(udphdr->dest));
+				}
+				dev_info(dev, "skb[%d] %p len %d proto 0x%x\n",
+					 j, skb, skb->len, skb->protocol);
+			}
+		}
+	}
+
+	if (lancer_chip(adapter)) {
+		dev_info(dev, "Initiating reset due to tx timeout\n");
+		dev_info(dev, "Resetting adapter\n");
+		status = lancer_physdev_ctrl(adapter,
+					     PHYSDEV_CONTROL_FW_RESET_MASK);
+		if (status)
+			dev_err(dev, "Reset failed .. Reboot server\n");
+	}
 }
 
 static inline bool be_in_all_promisc(struct be_adapter *adapter)
@@ -2067,7 +2148,7 @@ static int be_get_new_eqd(struct be_eq_obj *eqo)
 	int i;
 
 	aic = &adapter->aic_obj[eqo->idx];
-	if (!aic->enable) {
+	if (!adapter->aic_enabled) {
 		if (aic->jiffies)
 			aic->jiffies = 0;
 		eqd = aic->et_eqd;
@@ -2124,7 +2205,7 @@ static u32 be_get_eq_delay_mult_enc(struct be_eq_obj *eqo)
 	int eqd;
 	u32 mult_enc;
 
-	if (!aic->enable)
+	if (!adapter->aic_enabled)
 		return 0;
 
 	if (jiffies_to_msecs(now - aic->jiffies) < 1)
@@ -2266,8 +2347,8 @@ static void skb_fill_rx_data(struct be_rx_obj *rxo, struct sk_buff *skb,
 		memcpy(skb->data, start, hdr_len);
 		skb_shinfo(skb)->nr_frags = 1;
 		skb_frag_set_page(skb, 0, page_info->page);
-		skb_shinfo(skb)->frags[0].page_offset =
-					page_info->page_offset + hdr_len;
+		skb_frag_off_set(&skb_shinfo(skb)->frags[0],
+				 page_info->page_offset + hdr_len);
 		skb_frag_size_set(&skb_shinfo(skb)->frags[0],
 				  curr_frag_len - hdr_len);
 		skb->data_len = curr_frag_len - hdr_len;
@@ -2292,8 +2373,8 @@ static void skb_fill_rx_data(struct be_rx_obj *rxo, struct sk_buff *skb,
 			/* Fresh page */
 			j++;
 			skb_frag_set_page(skb, j, page_info->page);
-			skb_shinfo(skb)->frags[j].page_offset =
-							page_info->page_offset;
+			skb_frag_off_set(&skb_shinfo(skb)->frags[j],
+					 page_info->page_offset);
 			skb_frag_size_set(&skb_shinfo(skb)->frags[j], 0);
 			skb_shinfo(skb)->nr_frags++;
 		} else {
@@ -2374,8 +2455,8 @@ static void be_rx_compl_process_gro(struct be_rx_obj *rxo,
 			/* First frag or Fresh page */
 			j++;
 			skb_frag_set_page(skb, j, page_info->page);
-			skb_shinfo(skb)->frags[j].page_offset =
-							page_info->page_offset;
+			skb_frag_off_set(&skb_shinfo(skb)->frags[j],
+					 page_info->page_offset);
 			skb_frag_size_set(&skb_shinfo(skb)->frags[j], 0);
 		} else {
 			put_page(page_info->page);
@@ -2585,7 +2666,48 @@ static void be_post_rx_frags(struct be_rx_obj *rxo, gfp_t gfp, u32 frags_needed)
 	}
 }
 
-static struct be_tx_compl_info *be_tx_compl_get(struct be_tx_obj *txo)
+static inline void be_update_tx_err(struct be_tx_obj *txo, u8 status)
+{
+	switch (status) {
+	case BE_TX_COMP_HDR_PARSE_ERR:
+		tx_stats(txo)->tx_hdr_parse_err++;
+		break;
+	case BE_TX_COMP_NDMA_ERR:
+		tx_stats(txo)->tx_dma_err++;
+		break;
+	case BE_TX_COMP_ACL_ERR:
+		tx_stats(txo)->tx_spoof_check_err++;
+		break;
+	}
+}
+
+static inline void lancer_update_tx_err(struct be_tx_obj *txo, u8 status)
+{
+	switch (status) {
+	case LANCER_TX_COMP_LSO_ERR:
+		tx_stats(txo)->tx_tso_err++;
+		break;
+	case LANCER_TX_COMP_HSW_DROP_MAC_ERR:
+	case LANCER_TX_COMP_HSW_DROP_VLAN_ERR:
+		tx_stats(txo)->tx_spoof_check_err++;
+		break;
+	case LANCER_TX_COMP_QINQ_ERR:
+		tx_stats(txo)->tx_qinq_err++;
+		break;
+	case LANCER_TX_COMP_PARITY_ERR:
+		tx_stats(txo)->tx_internal_parity_err++;
+		break;
+	case LANCER_TX_COMP_DMA_ERR:
+		tx_stats(txo)->tx_dma_err++;
+		break;
+	case LANCER_TX_COMP_SGE_ERR:
+		tx_stats(txo)->tx_sge_err++;
+		break;
+	}
+}
+
+static struct be_tx_compl_info *be_tx_compl_get(struct be_adapter *adapter,
+						struct be_tx_obj *txo)
 {
 	struct be_queue_info *tx_cq = &txo->cq;
 	struct be_tx_compl_info *txcp = &txo->txcp;
@@ -2600,6 +2722,24 @@ static struct be_tx_compl_info *be_tx_compl_get(struct be_tx_obj *txo)
 
 	txcp->status = GET_TX_COMPL_BITS(status, compl);
 	txcp->end_index = GET_TX_COMPL_BITS(wrb_index, compl);
+
+	if (txcp->status) {
+		if (lancer_chip(adapter)) {
+			lancer_update_tx_err(txo, txcp->status);
+			/* Reset the adapter incase of TSO,
+			 * SGE or Parity error
+			 */
+			if (txcp->status == LANCER_TX_COMP_LSO_ERR ||
+			    txcp->status == LANCER_TX_COMP_PARITY_ERR ||
+			    txcp->status == LANCER_TX_COMP_SGE_ERR)
+				be_set_error(adapter, BE_ERROR_TX);
+		} else {
+			be_update_tx_err(txo, txcp->status);
+		}
+	}
+
+	if (be_check_error(adapter, BE_ERROR_TX))
+		return NULL;
 
 	compl->dw[offsetof(struct amap_eth_tx_compl, valid) / 32] = 0;
 	queue_tail_inc(tx_cq);
@@ -2743,7 +2883,7 @@ static void be_tx_compl_clean(struct be_adapter *adapter)
 			cmpl = 0;
 			num_wrbs = 0;
 			txq = &txo->q;
-			while ((txcp = be_tx_compl_get(txo))) {
+			while ((txcp = be_tx_compl_get(adapter, txo))) {
 				num_wrbs +=
 					be_tx_compl_process(adapter, txo,
 							    txcp->end_index);
@@ -2820,6 +2960,8 @@ static int be_evt_queues_create(struct be_adapter *adapter)
 				    max(adapter->cfg_num_rx_irqs,
 					adapter->cfg_num_tx_irqs));
 
+	adapter->aic_enabled = true;
+
 	for_all_evt_queues(adapter, eqo, i) {
 		int numa_node = dev_to_node(&adapter->pdev->dev);
 
@@ -2827,7 +2969,6 @@ static int be_evt_queues_create(struct be_adapter *adapter)
 		eqo->adapter = adapter;
 		eqo->idx = i;
 		aic->max_eqd = BE_MAX_EQD;
-		aic->enable = true;
 
 		eq = &eqo->q;
 		rc = be_queue_alloc(adapter, eq, EVNT_Q_LEN,
@@ -3122,42 +3263,6 @@ loop_continue:
 	return work_done;
 }
 
-static inline void be_update_tx_err(struct be_tx_obj *txo, u8 status)
-{
-	switch (status) {
-	case BE_TX_COMP_HDR_PARSE_ERR:
-		tx_stats(txo)->tx_hdr_parse_err++;
-		break;
-	case BE_TX_COMP_NDMA_ERR:
-		tx_stats(txo)->tx_dma_err++;
-		break;
-	case BE_TX_COMP_ACL_ERR:
-		tx_stats(txo)->tx_spoof_check_err++;
-		break;
-	}
-}
-
-static inline void lancer_update_tx_err(struct be_tx_obj *txo, u8 status)
-{
-	switch (status) {
-	case LANCER_TX_COMP_LSO_ERR:
-		tx_stats(txo)->tx_tso_err++;
-		break;
-	case LANCER_TX_COMP_HSW_DROP_MAC_ERR:
-	case LANCER_TX_COMP_HSW_DROP_VLAN_ERR:
-		tx_stats(txo)->tx_spoof_check_err++;
-		break;
-	case LANCER_TX_COMP_QINQ_ERR:
-		tx_stats(txo)->tx_qinq_err++;
-		break;
-	case LANCER_TX_COMP_PARITY_ERR:
-		tx_stats(txo)->tx_internal_parity_err++;
-		break;
-	case LANCER_TX_COMP_DMA_ERR:
-		tx_stats(txo)->tx_dma_err++;
-		break;
-	}
-}
 
 static void be_process_tx(struct be_adapter *adapter, struct be_tx_obj *txo,
 			  int idx)
@@ -3165,16 +3270,9 @@ static void be_process_tx(struct be_adapter *adapter, struct be_tx_obj *txo,
 	int num_wrbs = 0, work_done = 0;
 	struct be_tx_compl_info *txcp;
 
-	while ((txcp = be_tx_compl_get(txo))) {
+	while ((txcp = be_tx_compl_get(adapter, txo))) {
 		num_wrbs += be_tx_compl_process(adapter, txo, txcp->end_index);
 		work_done++;
-
-		if (txcp->status) {
-			if (lancer_chip(adapter))
-				lancer_update_tx_err(txo, txcp->status);
-			else
-				be_update_tx_err(txo, txcp->status);
-		}
 	}
 
 	if (work_done) {
@@ -3260,7 +3358,7 @@ void be_detect_error(struct be_adapter *adapter)
 			/* Do not log error messages if its a FW reset */
 			if (sliport_err1 == SLIPORT_ERROR_FW_RESET1 &&
 			    sliport_err2 == SLIPORT_ERROR_FW_RESET2) {
-				dev_info(dev, "Firmware update in progress\n");
+				dev_info(dev, "Reset is in progress\n");
 			} else {
 				dev_err(dev, "Error detected in the card\n");
 				dev_err(dev, "ERR: sliport status 0x%x\n",
@@ -4602,8 +4700,13 @@ int be_update_queues(struct be_adapter *adapter)
 	int status;
 
 	if (netif_running(netdev)) {
+		/* be_tx_timeout() must not run concurrently with this
+		 * function, synchronize with an already-running dev_watchdog
+		 */
+		netif_tx_lock_bh(netdev);
 		/* device cannot transmit now, avoid dev_watchdog timeouts */
 		netif_carrier_off(netdev);
+		netif_tx_unlock_bh(netdev);
 
 		be_close(netdev);
 	}
@@ -4637,8 +4740,7 @@ int be_update_queues(struct be_adapter *adapter)
 
 	be_schedule_worker(adapter);
 
-	/*
-	 * The IF was destroyed and re-created. We need to clear
+	/* The IF was destroyed and re-created. We need to clear
 	 * all promiscuous flags valid for the destroyed IF.
 	 * Without this promisc mode is not restored during
 	 * be_open() because the driver thinks that it is
@@ -4856,7 +4958,7 @@ fw_exit:
 }
 
 static int be_ndo_bridge_setlink(struct net_device *dev, struct nlmsghdr *nlh,
-				 u16 flags)
+				 u16 flags, struct netlink_ext_ack *extack)
 {
 	struct be_adapter *adapter = netdev_priv(dev);
 	struct nlattr *attr, *br_spec;
@@ -5109,9 +5211,12 @@ static netdev_features_t be_features_check(struct sk_buff *skb,
 			features &= ~NETIF_F_TSO6;
 
 		/* Lancer cannot handle the packet with MSS less than 256.
+		 * Also it can't handle a TSO packet with a single segment
 		 * Disable the GSO support in such cases
 		 */
-		if (lancer_chip(adapter) && skb_shinfo(skb)->gso_size < 256)
+		if (lancer_chip(adapter) &&
+		    (skb_shinfo(skb)->gso_size < 256 ||
+		     skb_shinfo(skb)->gso_segs == 1))
 			features &= ~NETIF_F_GSO_MASK;
 	}
 
@@ -5200,6 +5305,7 @@ static const struct net_device_ops be_netdev_ops = {
 	.ndo_get_vf_config	= be_get_vf_config,
 	.ndo_set_vf_link_state  = be_set_vf_link_state,
 	.ndo_set_vf_spoofchk    = be_set_vf_spoofchk,
+	.ndo_tx_timeout		= be_tx_timeout,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= be_netpoll,
 #endif
@@ -5663,9 +5769,9 @@ static int be_drv_init(struct be_adapter *adapter)
 	int status = 0;
 
 	mbox_mem_alloc->size = sizeof(struct be_mcc_mailbox) + 16;
-	mbox_mem_alloc->va = dma_zalloc_coherent(dev, mbox_mem_alloc->size,
-						 &mbox_mem_alloc->dma,
-						 GFP_KERNEL);
+	mbox_mem_alloc->va = dma_alloc_coherent(dev, mbox_mem_alloc->size,
+						&mbox_mem_alloc->dma,
+						GFP_KERNEL);
 	if (!mbox_mem_alloc->va)
 		return -ENOMEM;
 
@@ -5674,8 +5780,8 @@ static int be_drv_init(struct be_adapter *adapter)
 	mbox_mem_align->dma = PTR_ALIGN(mbox_mem_alloc->dma, 16);
 
 	rx_filter->size = sizeof(struct be_cmd_req_rx_filter);
-	rx_filter->va = dma_zalloc_coherent(dev, rx_filter->size,
-					    &rx_filter->dma, GFP_KERNEL);
+	rx_filter->va = dma_alloc_coherent(dev, rx_filter->size,
+					   &rx_filter->dma, GFP_KERNEL);
 	if (!rx_filter->va) {
 		status = -ENOMEM;
 		goto free_mbox;
@@ -5689,8 +5795,8 @@ static int be_drv_init(struct be_adapter *adapter)
 		stats_cmd->size = sizeof(struct be_cmd_req_get_stats_v1);
 	else
 		stats_cmd->size = sizeof(struct be_cmd_req_get_stats_v2);
-	stats_cmd->va = dma_zalloc_coherent(dev, stats_cmd->size,
-					    &stats_cmd->dma, GFP_KERNEL);
+	stats_cmd->va = dma_alloc_coherent(dev, stats_cmd->size,
+					   &stats_cmd->dma, GFP_KERNEL);
 	if (!stats_cmd->va) {
 		status = -ENOMEM;
 		goto free_rx_filter;
@@ -5775,7 +5881,7 @@ static ssize_t be_hwmon_show_temp(struct device *dev,
 			       adapter->hwmon_info.be_on_die_temp * 1000);
 }
 
-static SENSOR_DEVICE_ATTR(temp1_input, S_IRUGO,
+static SENSOR_DEVICE_ATTR(temp1_input, 0444,
 			  be_hwmon_show_temp, NULL, 1);
 
 static struct attribute *be_hwmon_attrs[] = {
@@ -6049,7 +6155,6 @@ static pci_ers_result_t be_eeh_reset(struct pci_dev *pdev)
 	if (status)
 		return PCI_ERS_RESULT_DISCONNECT;
 
-	pci_cleanup_aer_uncorrect_error_status(pdev);
 	be_clear_error(adapter, BE_CLEAR_ALL);
 	return PCI_ERS_RESULT_RECOVERED;
 }

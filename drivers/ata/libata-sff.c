@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  libata-sff.c - helper library for PCI IDE BMDMA
  *
@@ -8,28 +9,11 @@
  *  Copyright 2003-2006 Red Hat, Inc.  All rights reserved.
  *  Copyright 2003-2006 Jeff Garzik
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; see the file COPYING.  If not, write to
- *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
- *
- *
  *  libata documentation is available via 'make {ps|pdf}docs',
  *  as Documentation/driver-api/libata.rst
  *
  *  Hardware documentation available from http://www.t13.org/ and
  *  http://www.sata-io.org/
- *
  */
 
 #include <linux/kernel.h>
@@ -670,36 +654,6 @@ static void ata_pio_xfer(struct ata_queued_cmd *qc, struct page *page,
 	if (!do_write && !PageSlab(page))
 		flush_dcache_page(page);
 }
-
-/**
- *	ata_sff_data_xfer_noirq - Transfer data by PIO
- *	@qc: queued command
- *	@buf: data buffer
- *	@buflen: buffer length
- *	@rw: read/write
- *
- *	Transfer data from/to the device data register by PIO. Do the
- *	transfer with interrupts disabled.
- *
- *	LOCKING:
- *	Inherited from caller.
- *
- *	RETURNS:
- *	Bytes consumed.
- */
-unsigned int ata_sff_data_xfer_noirq(struct ata_queued_cmd *qc, unsigned char *buf,
-				     unsigned int buflen, int rw)
-{
-	unsigned long flags;
-	unsigned int consumed;
-
-	local_irq_save(flags);
-	consumed = ata_sff_data_xfer32(qc, buf, buflen, rw);
-	local_irq_restore(flags);
-
-	return consumed;
-}
-EXPORT_SYMBOL_GPL(ata_sff_data_xfer_noirq);
 
 /**
  *	ata_pio_sector - Transfer a sector of data.
@@ -3222,15 +3176,9 @@ void ata_pci_bmdma_init(struct ata_host *host)
 	 * ->sff_irq_clear method.  Try to initialize bmdma_addr
 	 * regardless of dma masks.
 	 */
-	rc = dma_set_mask(&pdev->dev, ATA_DMA_MASK);
+	rc = dma_set_mask_and_coherent(&pdev->dev, ATA_DMA_MASK);
 	if (rc)
 		ata_bmdma_nodma(host, "failed to set dma mask");
-	if (!rc) {
-		rc = dma_set_coherent_mask(&pdev->dev, ATA_DMA_MASK);
-		if (rc)
-			ata_bmdma_nodma(host,
-					"failed to set consistent dma mask");
-	}
 
 	/* request and iomap DMA region */
 	rc = pcim_iomap_regions(pdev, 1 << 4, dev_driver_string(gdev));

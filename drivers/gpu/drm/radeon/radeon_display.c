@@ -23,19 +23,27 @@
  * Authors: Dave Airlie
  *          Alex Deucher
  */
-#include <drm/drmP.h>
-#include <drm/radeon_drm.h>
-#include "radeon.h"
-
-#include "atom.h"
-#include <asm/div64.h>
 
 #include <linux/pm_runtime.h>
-#include <drm/drm_crtc_helper.h>
-#include <drm/drm_plane_helper.h>
-#include <drm/drm_edid.h>
-
 #include <linux/gcd.h>
+
+#include <asm/div64.h>
+
+#include <drm/drm_crtc_helper.h>
+#include <drm/drm_device.h>
+#include <drm/drm_drv.h>
+#include <drm/drm_edid.h>
+#include <drm/drm_fb_helper.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_pci.h>
+#include <drm/drm_plane_helper.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
+#include <drm/radeon_drm.h>
+
+#include "atom.h"
+#include "radeon.h"
 
 static void avivo_crtc_load_lut(struct drm_crtc *crtc)
 {
@@ -269,7 +277,7 @@ static void radeon_unpin_work_func(struct work_struct *__work)
 	} else
 		DRM_ERROR("failed to reserve buffer after flip\n");
 
-	drm_gem_object_put_unlocked(&work->old_rbo->gem_base);
+	drm_gem_object_put_unlocked(&work->old_rbo->tbo.base);
 	kfree(work);
 }
 
@@ -479,8 +487,6 @@ static int radeon_crtc_page_flip_target(struct drm_crtc *crtc,
 	struct drm_device *dev = crtc->dev;
 	struct radeon_device *rdev = dev->dev_private;
 	struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
-	struct radeon_framebuffer *old_radeon_fb;
-	struct radeon_framebuffer *new_radeon_fb;
 	struct drm_gem_object *obj;
 	struct radeon_flip_work *work;
 	struct radeon_bo *new_rbo;
@@ -502,15 +508,13 @@ static int radeon_crtc_page_flip_target(struct drm_crtc *crtc,
 	work->async = (page_flip_flags & DRM_MODE_PAGE_FLIP_ASYNC) != 0;
 
 	/* schedule unpin of the old buffer */
-	old_radeon_fb = to_radeon_framebuffer(crtc->primary->fb);
-	obj = old_radeon_fb->obj;
+	obj = crtc->primary->fb->obj[0];
 
 	/* take a reference to the old object */
 	drm_gem_object_get(obj);
 	work->old_rbo = gem_to_radeon_bo(obj);
 
-	new_radeon_fb = to_radeon_framebuffer(fb);
-	obj = new_radeon_fb->obj;
+	obj = fb->obj[0];
 	new_rbo = gem_to_radeon_bo(obj);
 
 	/* pin the new buffer */
@@ -531,7 +535,7 @@ static int radeon_crtc_page_flip_target(struct drm_crtc *crtc,
 		DRM_ERROR("failed to pin new rbo buffer before flip\n");
 		goto cleanup;
 	}
-	work->fence = dma_fence_get(reservation_object_get_excl(new_rbo->tbo.resv));
+	work->fence = dma_fence_get(dma_resv_get_excl(new_rbo->tbo.base.resv));
 	radeon_bo_get_tiling_flags(new_rbo, &tiling_flags, NULL);
 	radeon_bo_unreserve(new_rbo);
 
@@ -571,7 +575,7 @@ static int radeon_crtc_page_flip_target(struct drm_crtc *crtc,
 		base &= ~7;
 	}
 	work->base = base;
-	work->target_vblank = target - drm_crtc_vblank_count(crtc) +
+	work->target_vblank = target - (uint32_t)drm_crtc_vblank_count(crtc) +
 		dev->driver->get_vblank_counter(dev, work->crtc_id);
 
 	/* We borrow the event spin lock for protecting flip_work */
@@ -605,7 +609,7 @@ pflip_cleanup:
 	radeon_bo_unreserve(new_rbo);
 
 cleanup:
-	drm_gem_object_put_unlocked(&work->old_rbo->gem_base);
+	drm_gem_object_put_unlocked(&work->old_rbo->tbo.base);
 	dma_fence_put(work->fence);
 	kfree(work);
 	return r;
@@ -1288,41 +1292,23 @@ void radeon_compute_pll_legacy(struct radeon_pll *pll,
 
 }
 
-static void radeon_user_framebuffer_destroy(struct drm_framebuffer *fb)
-{
-	struct radeon_framebuffer *radeon_fb = to_radeon_framebuffer(fb);
-
-	drm_gem_object_put_unlocked(radeon_fb->obj);
-	drm_framebuffer_cleanup(fb);
-	kfree(radeon_fb);
-}
-
-static int radeon_user_framebuffer_create_handle(struct drm_framebuffer *fb,
-						  struct drm_file *file_priv,
-						  unsigned int *handle)
-{
-	struct radeon_framebuffer *radeon_fb = to_radeon_framebuffer(fb);
-
-	return drm_gem_handle_create(file_priv, radeon_fb->obj, handle);
-}
-
 static const struct drm_framebuffer_funcs radeon_fb_funcs = {
-	.destroy = radeon_user_framebuffer_destroy,
-	.create_handle = radeon_user_framebuffer_create_handle,
+	.destroy = drm_gem_fb_destroy,
+	.create_handle = drm_gem_fb_create_handle,
 };
 
 int
 radeon_framebuffer_init(struct drm_device *dev,
-			struct radeon_framebuffer *rfb,
+			struct drm_framebuffer *fb,
 			const struct drm_mode_fb_cmd2 *mode_cmd,
 			struct drm_gem_object *obj)
 {
 	int ret;
-	rfb->obj = obj;
-	drm_helper_mode_fill_fb_struct(dev, &rfb->base, mode_cmd);
-	ret = drm_framebuffer_init(dev, &rfb->base, &radeon_fb_funcs);
+	fb->obj[0] = obj;
+	drm_helper_mode_fill_fb_struct(dev, fb, mode_cmd);
+	ret = drm_framebuffer_init(dev, fb, &radeon_fb_funcs);
 	if (ret) {
-		rfb->obj = NULL;
+		fb->obj[0] = NULL;
 		return ret;
 	}
 	return 0;
@@ -1334,7 +1320,7 @@ radeon_user_framebuffer_create(struct drm_device *dev,
 			       const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct drm_gem_object *obj;
-	struct radeon_framebuffer *radeon_fb;
+	struct drm_framebuffer *fb;
 	int ret;
 
 	obj = drm_gem_object_lookup(file_priv, mode_cmd->handles[0]);
@@ -1351,31 +1337,25 @@ radeon_user_framebuffer_create(struct drm_device *dev,
 		return ERR_PTR(-EINVAL);
 	}
 
-	radeon_fb = kzalloc(sizeof(*radeon_fb), GFP_KERNEL);
-	if (radeon_fb == NULL) {
+	fb = kzalloc(sizeof(*fb), GFP_KERNEL);
+	if (fb == NULL) {
 		drm_gem_object_put_unlocked(obj);
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ret = radeon_framebuffer_init(dev, radeon_fb, mode_cmd, obj);
+	ret = radeon_framebuffer_init(dev, fb, mode_cmd, obj);
 	if (ret) {
-		kfree(radeon_fb);
+		kfree(fb);
 		drm_gem_object_put_unlocked(obj);
 		return ERR_PTR(ret);
 	}
 
-	return &radeon_fb->base;
-}
-
-static void radeon_output_poll_changed(struct drm_device *dev)
-{
-	struct radeon_device *rdev = dev->dev_private;
-	radeon_fb_output_poll_changed(rdev);
+	return fb;
 }
 
 static const struct drm_mode_config_funcs radeon_mode_funcs = {
 	.fb_create = radeon_user_framebuffer_create,
-	.output_poll_changed = radeon_output_poll_changed
+	.output_poll_changed = drm_fb_helper_output_poll_changed,
 };
 
 static const struct drm_prop_enum_list radeon_tmds_pll_enum_list[] =
@@ -1677,7 +1657,7 @@ void radeon_modeset_fini(struct radeon_device *rdev)
 	if (rdev->mode_info.mode_config_initialized) {
 		drm_kms_helper_poll_fini(rdev->ddev);
 		radeon_hpd_fini(rdev);
-		drm_crtc_force_disable_all(rdev->ddev);
+		drm_helper_force_disable_all(rdev->ddev);
 		radeon_fbdev_fini(rdev);
 		radeon_afmt_fini(rdev);
 		drm_mode_config_cleanup(rdev->ddev);

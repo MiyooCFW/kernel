@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Edgeport USB Serial Converter driver
  *
  * Copyright (C) 2000 Inside Out Networks, All rights reserved.
  * Copyright (C) 2001-2002 Greg Kroah-Hartman <greg@kroah.com>
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  *
  * Supports the following devices:
  *	Edgeport/4
@@ -1641,24 +1637,20 @@ static int edge_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
-static int get_serial_info(struct edgeport_port *edge_port,
-				struct serial_struct __user *retinfo)
+static int get_serial_info(struct tty_struct *tty,
+				struct serial_struct *ss)
 {
-	struct serial_struct tmp;
+	struct usb_serial_port *port = tty->driver_data;
+	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 
-	memset(&tmp, 0, sizeof(tmp));
-
-	tmp.type		= PORT_16550A;
-	tmp.line		= edge_port->port->minor;
-	tmp.port		= edge_port->port->port_number;
-	tmp.irq			= 0;
-	tmp.xmit_fifo_size	= edge_port->maxTxCredits;
-	tmp.baud_base		= 9600;
-	tmp.close_delay		= 5*HZ;
-	tmp.closing_wait	= 30*HZ;
-
-	if (copy_to_user(retinfo, &tmp, sizeof(*retinfo)))
-		return -EFAULT;
+	ss->type		= PORT_16550A;
+	ss->line		= edge_port->port->minor;
+	ss->port		= edge_port->port->port_number;
+	ss->irq			= 0;
+	ss->xmit_fifo_size	= edge_port->maxTxCredits;
+	ss->baud_base		= 9600;
+	ss->close_delay		= 5*HZ;
+	ss->closing_wait	= 30*HZ;
 	return 0;
 }
 
@@ -1671,17 +1663,12 @@ static int edge_ioctl(struct tty_struct *tty,
 					unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
-	DEFINE_WAIT(wait);
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 
 	switch (cmd) {
 	case TIOCSERGETLSR:
 		dev_dbg(&port->dev, "%s TIOCSERGETLSR\n", __func__);
 		return get_lsr_info(edge_port, (unsigned int __user *) arg);
-
-	case TIOCGSERIAL:
-		dev_dbg(&port->dev, "%s TIOCGSERIAL\n", __func__);
-		return get_serial_info(edge_port, (struct serial_struct __user *) arg);
 	}
 	return -ENOIOCTLCMD;
 }
@@ -1765,7 +1752,7 @@ static void process_rcvd_data(struct edgeport_serial *edge_serial,
 				edge_serial->rxState = EXPECT_HDR2;
 				break;
 			}
-			/* otherwise, drop on through */
+			/* Fall through */
 		case EXPECT_HDR2:
 			edge_serial->rxHeader2 = *buffer;
 			++buffer;
@@ -1804,29 +1791,20 @@ static void process_rcvd_data(struct edgeport_serial *edge_serial,
 						edge_serial->rxHeader2, 0);
 				edge_serial->rxState = EXPECT_HDR1;
 				break;
-			} else {
-				edge_serial->rxPort =
-				    IOSP_GET_HDR_PORT(edge_serial->rxHeader1);
-				edge_serial->rxBytesRemaining =
-				    IOSP_GET_HDR_DATA_LEN(
-						edge_serial->rxHeader1,
-						edge_serial->rxHeader2);
-				dev_dbg(dev, "%s - Data for Port %u Len %u\n",
-					__func__,
-					edge_serial->rxPort,
-					edge_serial->rxBytesRemaining);
-
-				/* ASSERT(DevExt->RxPort < DevExt->NumPorts);
-				 * ASSERT(DevExt->RxBytesRemaining <
-				 *		IOSP_MAX_DATA_LENGTH);
-				 */
-
-				if (bufferLength == 0) {
-					edge_serial->rxState = EXPECT_DATA;
-					break;
-				}
-				/* Else, drop through */
 			}
+
+			edge_serial->rxPort = IOSP_GET_HDR_PORT(edge_serial->rxHeader1);
+			edge_serial->rxBytesRemaining = IOSP_GET_HDR_DATA_LEN(edge_serial->rxHeader1,
+									      edge_serial->rxHeader2);
+			dev_dbg(dev, "%s - Data for Port %u Len %u\n", __func__,
+				edge_serial->rxPort,
+				edge_serial->rxBytesRemaining);
+
+			if (bufferLength == 0) {
+				edge_serial->rxState = EXPECT_DATA;
+				break;
+			}
+			/* Fall through */
 		case EXPECT_DATA: /* Expect data */
 			if (bufferLength < edge_serial->rxBytesRemaining) {
 				rxLen = bufferLength;
@@ -3140,6 +3118,7 @@ static struct usb_serial_driver edgeport_2port_device = {
 	.set_termios		= edge_set_termios,
 	.tiocmget		= edge_tiocmget,
 	.tiocmset		= edge_tiocmset,
+	.get_serial		= get_serial_info,
 	.tiocmiwait		= usb_serial_generic_tiocmiwait,
 	.get_icount		= usb_serial_generic_get_icount,
 	.write			= edge_write,
@@ -3175,6 +3154,7 @@ static struct usb_serial_driver edgeport_4port_device = {
 	.set_termios		= edge_set_termios,
 	.tiocmget		= edge_tiocmget,
 	.tiocmset		= edge_tiocmset,
+	.get_serial		= get_serial_info,
 	.tiocmiwait		= usb_serial_generic_tiocmiwait,
 	.get_icount		= usb_serial_generic_get_icount,
 	.write			= edge_write,
@@ -3210,6 +3190,7 @@ static struct usb_serial_driver edgeport_8port_device = {
 	.set_termios		= edge_set_termios,
 	.tiocmget		= edge_tiocmget,
 	.tiocmset		= edge_tiocmset,
+	.get_serial		= get_serial_info,
 	.tiocmiwait		= usb_serial_generic_tiocmiwait,
 	.get_icount		= usb_serial_generic_get_icount,
 	.write			= edge_write,
@@ -3245,6 +3226,7 @@ static struct usb_serial_driver epic_device = {
 	.set_termios		= edge_set_termios,
 	.tiocmget		= edge_tiocmget,
 	.tiocmset		= edge_tiocmset,
+	.get_serial		= get_serial_info,
 	.tiocmiwait		= usb_serial_generic_tiocmiwait,
 	.get_icount		= usb_serial_generic_get_icount,
 	.write			= edge_write,

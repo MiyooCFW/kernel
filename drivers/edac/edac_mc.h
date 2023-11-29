@@ -122,12 +122,20 @@ do {									\
  *	On success, return a pointer to struct mem_ctl_info pointer;
  *	%NULL otherwise
  */
-struct mem_ctl_info *edac_mc_alloc(unsigned mc_num,
-				   unsigned n_layers,
+struct mem_ctl_info *edac_mc_alloc(unsigned int mc_num,
+				   unsigned int n_layers,
 				   struct edac_mc_layer *layers,
-				   unsigned sz_pvt);
+				   unsigned int sz_pvt);
 
 /**
+ * edac_get_owner - Return the owner's mod_name of EDAC MC
+ *
+ * Returns:
+ *	Pointer to mod_name string when EDAC MC is owned. NULL otherwise.
+ */
+extern const char *edac_get_owner(void);
+
+/*
  * edac_mc_add_mc_with_groups() - Insert the @mci structure into the mci
  *	global list and create sysfs entries associated with @mci structure.
  *

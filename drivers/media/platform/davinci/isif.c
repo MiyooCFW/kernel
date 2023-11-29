@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2008-2009 Texas Instruments Inc
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  *
  * Image Sensor Interface (ISIF) driver
  *
@@ -30,8 +21,6 @@
 #include <linux/videodev2.h>
 #include <linux/err.h>
 #include <linux/module.h>
-
-#include <mach/mux.h>
 
 #include <media/davinci/isif.h>
 #include <media/davinci/vpss.h>
@@ -330,7 +319,7 @@ static void isif_config_bclamp(struct isif_black_clamp *bc)
 	if (bc->en) {
 		val = bc->bc_mode_color << ISIF_BC_MODE_COLOR_SHIFT;
 
-		/* Enable BC and horizontal clamp caculation paramaters */
+		/* Enable BC and horizontal clamp calculation parameters */
 		val = val | 1 | (bc->horz.mode << ISIF_HORZ_BC_MODE_SHIFT);
 
 		regw(val, CLAMPCFG);
@@ -360,7 +349,7 @@ static void isif_config_bclamp(struct isif_black_clamp *bc)
 			regw(bc->horz.win_start_v_calc, CLHWIN2);
 		}
 
-		/* vertical clamp caculation paramaters */
+		/* vertical clamp calculation parameters */
 
 		/* Reset clamp value sel for previous line */
 		val |=
@@ -991,7 +980,7 @@ static int isif_close(struct device *device)
 	return 0;
 }
 
-static struct ccdc_hw_device isif_hw_dev = {
+static const struct ccdc_hw_device isif_hw_dev = {
 	.name = "ISIF",
 	.owner = THIS_MODULE,
 	.hw_ops = {
@@ -1020,7 +1009,7 @@ static int isif_probe(struct platform_device *pdev)
 {
 	void (*setup_pinmux)(void);
 	struct resource	*res;
-	void *__iomem addr;
+	void __iomem *addr;
 	int status = 0, i;
 
 	/* Platform data holds setup_pinmux function ptr */

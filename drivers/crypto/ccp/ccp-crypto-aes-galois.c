@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AMD Cryptographic Coprocessor (CCP) AES GCM crypto API support
  *
  * Copyright (C) 2016,2017 Advanced Micro Devices, Inc.
  *
  * Author: Gary R Hook <gary.hook@amd.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -19,12 +16,10 @@
 #include <crypto/algapi.h>
 #include <crypto/aes.h>
 #include <crypto/ctr.h>
+#include <crypto/gcm.h>
 #include <crypto/scatterwalk.h>
-#include <linux/delay.h>
 
 #include "ccp-crypto.h"
-
-#define	AES_GCM_IVSIZE	12
 
 static int ccp_aes_gcm_complete(struct crypto_async_request *async_req, int ret)
 {
@@ -108,9 +103,9 @@ static int ccp_aes_gcm_crypt(struct aead_request *req, bool encrypt)
 	 */
 
 	/* Prepare the IV: 12 bytes + an integer (counter) */
-	memcpy(rctx->iv, req->iv, AES_GCM_IVSIZE);
+	memcpy(rctx->iv, req->iv, GCM_AES_IV_SIZE);
 	for (i = 0; i < 3; i++)
-		rctx->iv[i + AES_GCM_IVSIZE] = 0;
+		rctx->iv[i + GCM_AES_IV_SIZE] = 0;
 	rctx->iv[AES_BLOCK_SIZE - 1] = 1;
 
 	/* Set up a scatterlist for the IV */
@@ -174,7 +169,7 @@ static struct aead_alg ccp_aes_gcm_defaults = {
 	.encrypt = ccp_aes_gcm_encrypt,
 	.decrypt = ccp_aes_gcm_decrypt,
 	.init = ccp_aes_gcm_cra_init,
-	.ivsize = AES_GCM_IVSIZE,
+	.ivsize = GCM_AES_IV_SIZE,
 	.maxauthsize = AES_BLOCK_SIZE,
 	.base = {
 		.cra_flags	= CRYPTO_ALG_TYPE_ABLKCIPHER |

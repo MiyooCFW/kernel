@@ -1,10 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	SGI UltraViolet TLB flush routines.
  *
  *	(c) 2008-2014 Cliff Wickman <cpw@sgi.com>, SGI.
- *
- *	This code is released under the GNU General Public License version 2 or
- *	later.
  */
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
@@ -68,7 +66,6 @@ static struct tunables tunables[] = {
 };
 
 static struct dentry *tunables_dir;
-static struct dentry *tunables_file;
 
 /* these correspond to the statistics printed by ptc_seq_show() */
 static char *stat_description[] = {
@@ -615,7 +612,7 @@ static int uv2_3_wait_completion(struct bau_desc *bau_desc,
 
 	/* spin on the status MMR, waiting for it to go idle */
 	while (descriptor_stat != UV2H_DESC_IDLE) {
-		if ((descriptor_stat == UV2H_DESC_SOURCE_TIMEOUT)) {
+		if (descriptor_stat == UV2H_DESC_SOURCE_TIMEOUT) {
 			/*
 			 * A h/w bug on the destination side may
 			 * have prevented the message being marked
@@ -1608,8 +1605,6 @@ static int parse_tunables_write(struct bau_control *bcp, char *instr,
 				*tunables[cnt].tunp = val;
 			continue;
 		}
-		if (q == p)
-			break;
 	}
 	return 0;
 }
@@ -1704,18 +1699,8 @@ static int __init uv_ptc_init(void)
 	}
 
 	tunables_dir = debugfs_create_dir(UV_BAU_TUNABLES_DIR, NULL);
-	if (!tunables_dir) {
-		pr_err("unable to create debugfs directory %s\n",
-		       UV_BAU_TUNABLES_DIR);
-		return -EINVAL;
-	}
-	tunables_file = debugfs_create_file(UV_BAU_TUNABLES_FILE, 0600,
-					tunables_dir, NULL, &tunables_fops);
-	if (!tunables_file) {
-		pr_err("unable to create debugfs file %s\n",
-		       UV_BAU_TUNABLES_FILE);
-		return -EINVAL;
-	}
+	debugfs_create_file(UV_BAU_TUNABLES_FILE, 0600, tunables_dir, NULL,
+			    &tunables_fops);
 	return 0;
 }
 
@@ -1752,7 +1737,8 @@ static void activation_descriptor_init(int node, int pnode, int base_pnode)
 		uv1 = 1;
 
 	/* the 14-bit pnode */
-	write_mmr_descriptor_base(pnode, (n << UV_DESC_PSHIFT | m));
+	write_mmr_descriptor_base(pnode,
+		(n << UVH_LB_BAU_SB_DESCRIPTOR_BASE_NODE_ID_SHFT | m));
 	/*
 	 * Initializing all 8 (ITEMS_PER_DESC) descriptors for each
 	 * cpu even though we only use the first one; one descriptor can
@@ -1818,9 +1804,9 @@ static void pq_init(int node, int pnode)
 
 	plsize = (DEST_Q_SIZE + 1) * sizeof(struct bau_pq_entry);
 	vp = kmalloc_node(plsize, GFP_KERNEL, node);
-	pqp = (struct bau_pq_entry *)vp;
-	BUG_ON(!pqp);
+	BUG_ON(!vp);
 
+	pqp = (struct bau_pq_entry *)vp;
 	cp = (char *)pqp + 31;
 	pqp = (struct bau_pq_entry *)(((unsigned long)cp >> 5) << 5);
 
@@ -2011,8 +1997,7 @@ static void make_per_cpu_thp(struct bau_control *smaster)
 	int cpu;
 	size_t hpsz = sizeof(struct hub_and_pnode) * num_possible_cpus();
 
-	smaster->thp = kmalloc_node(hpsz, GFP_KERNEL, smaster->osnode);
-	memset(smaster->thp, 0, hpsz);
+	smaster->thp = kzalloc_node(hpsz, GFP_KERNEL, smaster->osnode);
 	for_each_present_cpu(cpu) {
 		smaster->thp[cpu].pnode = uv_cpu_hub_info(cpu)->pnode;
 		smaster->thp[cpu].uvhub = uv_cpu_hub_info(cpu)->numa_blade_id;
@@ -2135,17 +2120,19 @@ static int __init summarize_uvhub_sockets(int nuvhubs,
  */
 static int __init init_per_cpu(int nuvhubs, int base_part_pnode)
 {
-	unsigned char *uvhub_mask;
-	void *vp;
 	struct uvhub_desc *uvhub_descs;
+	unsigned char *uvhub_mask = NULL;
 
 	if (is_uv3_hub() || is_uv2_hub() || is_uv1_hub())
 		timeout_us = calculate_destination_timeout();
 
-	vp = kmalloc(nuvhubs * sizeof(struct uvhub_desc), GFP_KERNEL);
-	uvhub_descs = (struct uvhub_desc *)vp;
-	memset(uvhub_descs, 0, nuvhubs * sizeof(struct uvhub_desc));
+	uvhub_descs = kcalloc(nuvhubs, sizeof(struct uvhub_desc), GFP_KERNEL);
+	if (!uvhub_descs)
+		goto fail;
+
 	uvhub_mask = kzalloc((nuvhubs+7)/8, GFP_KERNEL);
+	if (!uvhub_mask)
+		goto fail;
 
 	if (get_cpu_topology(base_part_pnode, uvhub_descs, uvhub_mask))
 		goto fail;

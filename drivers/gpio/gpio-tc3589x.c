@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) ST-Ericsson SA 2010
  *
- * License Terms: GNU General Public License, version 2
  * Author: Hanumath Prasad <hanumath.prasad@stericsson.com> for ST-Ericsson
  * Author: Rabin Vincent <rabin.vincent@stericsson.com> for ST-Ericsson
  */
@@ -268,7 +268,7 @@ static irqreturn_t tc3589x_gpio_irq(int irq, void *dev)
 		while (stat) {
 			int bit = __ffs(stat);
 			int line = i * 8 + bit;
-			int irq = irq_find_mapping(tc3589x_gpio->chip.irqdomain,
+			int irq = irq_find_mapping(tc3589x_gpio->chip.irq.domain,
 						   line);
 
 			handle_nested_irq(irq);

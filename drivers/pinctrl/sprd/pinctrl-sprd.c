@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Spreadtrum pin controller driver
  * Copyright (C) 2017 Spreadtrum  - http://www.spreadtrum.com
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
  */
 
 #include <linux/debugfs.h>
@@ -462,7 +454,7 @@ static int sprd_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin_id,
 	if (pin->type == GLOBAL_CTRL_PIN &&
 	    param == SPRD_PIN_CONFIG_CONTROL) {
 		arg = reg;
-	} else if (pin->type == COMMON_PIN) {
+	} else if (pin->type == COMMON_PIN || pin->type == MISC_PIN) {
 		switch (param) {
 		case SPRD_PIN_CONFIG_SLEEP_MODE:
 			arg = (reg >> SLEEP_MODE_SHIFT) & SLEEP_MODE_MASK;
@@ -473,14 +465,6 @@ static int sprd_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin_id,
 		case PIN_CONFIG_OUTPUT:
 			arg = reg & SLEEP_OUTPUT_MASK;
 			break;
-		case PIN_CONFIG_SLEEP_HARDWARE_STATE:
-			arg = 0;
-			break;
-		default:
-			return -ENOTSUPP;
-		}
-	} else if (pin->type == MISC_PIN) {
-		switch (param) {
 		case PIN_CONFIG_DRIVE_STRENGTH:
 			arg = (reg >> DRIVE_STRENGTH_SHIFT) &
 				DRIVE_STRENGTH_MASK;
@@ -614,7 +598,7 @@ static int sprd_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin_id,
 		if (pin->type == GLOBAL_CTRL_PIN &&
 		    param == SPRD_PIN_CONFIG_CONTROL) {
 			val = arg;
-		} else if (pin->type == COMMON_PIN) {
+		} else if (pin->type == COMMON_PIN || pin->type == MISC_PIN) {
 			switch (param) {
 			case SPRD_PIN_CONFIG_SLEEP_MODE:
 				if (arg & AP_SLEEP)
@@ -647,13 +631,6 @@ static int sprd_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin_id,
 					shift = SLEEP_OUTPUT_SHIFT;
 				}
 				break;
-			case PIN_CONFIG_SLEEP_HARDWARE_STATE:
-				continue;
-			default:
-				return -ENOTSUPP;
-			}
-		} else if (pin->type == MISC_PIN) {
-			switch (param) {
 			case PIN_CONFIG_DRIVE_STRENGTH:
 				if (arg < 2 || arg > 60)
 					return -EINVAL;
@@ -816,7 +793,7 @@ static void sprd_pinconf_group_dbg_show(struct pinctrl_dev *pctldev,
 
 	grp = &info->groups[selector];
 
-	seq_printf(s, "\n");
+	seq_putc(s, '\n');
 	for (i = 0; i < grp->npins; i++, config++) {
 		unsigned int pin_id = grp->pins[i];
 
@@ -877,8 +854,9 @@ static int sprd_pinctrl_parse_groups(struct device_node *np,
 
 	grp->name = np->name;
 	grp->npins = ret;
-	grp->pins = devm_kzalloc(sprd_pctl->dev, grp->npins *
-				 sizeof(unsigned int), GFP_KERNEL);
+	grp->pins = devm_kcalloc(sprd_pctl->dev,
+				 grp->npins, sizeof(unsigned int),
+				 GFP_KERNEL);
 	if (!grp->pins)
 		return -ENOMEM;
 
@@ -929,14 +907,15 @@ static int sprd_pinctrl_parse_dt(struct sprd_pinctrl *sprd_pctl)
 	if (!info->ngroups)
 		return 0;
 
-	info->groups = devm_kzalloc(sprd_pctl->dev, info->ngroups *
+	info->groups = devm_kcalloc(sprd_pctl->dev,
+				    info->ngroups,
 				    sizeof(struct sprd_pin_group),
 				    GFP_KERNEL);
 	if (!info->groups)
 		return -ENOMEM;
 
-	info->grp_names = devm_kzalloc(sprd_pctl->dev,
-				       info->ngroups * sizeof(char *),
+	info->grp_names = devm_kcalloc(sprd_pctl->dev,
+				       info->ngroups, sizeof(char *),
 				       GFP_KERNEL);
 	if (!info->grp_names)
 		return -ENOMEM;
@@ -946,8 +925,10 @@ static int sprd_pinctrl_parse_dt(struct sprd_pinctrl *sprd_pctl)
 
 	for_each_child_of_node(np, child) {
 		ret = sprd_pinctrl_parse_groups(child, sprd_pctl, grp);
-		if (ret)
+		if (ret) {
+			of_node_put(child);
 			return ret;
+		}
 
 		*temp++ = grp->name;
 		grp++;
@@ -956,8 +937,11 @@ static int sprd_pinctrl_parse_dt(struct sprd_pinctrl *sprd_pctl)
 			for_each_child_of_node(child, sub_child) {
 				ret = sprd_pinctrl_parse_groups(sub_child,
 								sprd_pctl, grp);
-				if (ret)
+				if (ret) {
+					of_node_put(sub_child);
+					of_node_put(child);
 					return ret;
+				}
 
 				*temp++ = grp->name;
 				grp++;
@@ -978,8 +962,8 @@ static int sprd_pinctrl_add_pins(struct sprd_pinctrl *sprd_pctl,
 	int i;
 
 	info->npins = pins_cnt;
-	info->pins = devm_kzalloc(sprd_pctl->dev,
-				  info->npins * sizeof(struct sprd_pin),
+	info->pins = devm_kcalloc(sprd_pctl->dev,
+				  info->npins, sizeof(struct sprd_pin),
 				  GFP_KERNEL);
 	if (!info->pins)
 		return -ENOMEM;
@@ -1026,7 +1010,6 @@ int sprd_pinctrl_core_probe(struct platform_device *pdev,
 	struct sprd_pinctrl *sprd_pctl;
 	struct sprd_pinctrl_soc_info *pinctrl_info;
 	struct pinctrl_pin_desc *pin_desc;
-	struct resource *res;
 	int ret, i;
 
 	sprd_pctl = devm_kzalloc(&pdev->dev, sizeof(struct sprd_pinctrl),
@@ -1034,8 +1017,7 @@ int sprd_pinctrl_core_probe(struct platform_device *pdev,
 	if (!sprd_pctl)
 		return -ENOMEM;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	sprd_pctl->base = devm_ioremap_resource(&pdev->dev, res);
+	sprd_pctl->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(sprd_pctl->base))
 		return PTR_ERR(sprd_pctl->base);
 
@@ -1055,7 +1037,14 @@ int sprd_pinctrl_core_probe(struct platform_device *pdev,
 		return ret;
 	}
 
-	pin_desc = devm_kzalloc(&pdev->dev, pinctrl_info->npins *
+	ret = sprd_pinctrl_parse_dt(sprd_pctl);
+	if (ret) {
+		dev_err(&pdev->dev, "fail to parse dt properties\n");
+		return ret;
+	}
+
+	pin_desc = devm_kcalloc(&pdev->dev,
+				pinctrl_info->npins,
 				sizeof(struct pinctrl_pin_desc),
 				GFP_KERNEL);
 	if (!pin_desc)
@@ -1076,13 +1065,6 @@ int sprd_pinctrl_core_probe(struct platform_device *pdev,
 	if (IS_ERR(sprd_pctl->pctl)) {
 		dev_err(&pdev->dev, "could not register pinctrl driver\n");
 		return PTR_ERR(sprd_pctl->pctl);
-	}
-
-	ret = sprd_pinctrl_parse_dt(sprd_pctl);
-	if (ret) {
-		dev_err(&pdev->dev, "fail to parse dt properties\n");
-		pinctrl_unregister(sprd_pctl->pctl);
-		return ret;
 	}
 
 	return 0;

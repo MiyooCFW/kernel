@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*******************************************************************************
  * This file contains main functions related to iSCSI Parameter negotiation.
  *
@@ -5,15 +6,6 @@
  *
  * Author: Nicholas A. Bellinger <nab@linux-iscsi.org>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  ******************************************************************************/
 
 #include <linux/ctype.h>
@@ -160,22 +152,11 @@ static u32 iscsi_handle_authentication(
 
 	if (strstr("None", authtype))
 		return 1;
-#ifdef CANSRP
-	else if (strstr("SRP", authtype))
-		return srp_main_loop(conn, auth, in_buf, out_buf,
-				&in_length, out_length);
-#endif
 	else if (strstr("CHAP", authtype))
 		return chap_main_loop(conn, auth, in_buf, out_buf,
 				&in_length, out_length);
-	else if (strstr("SPKM1", authtype))
-		return 2;
-	else if (strstr("SPKM2", authtype))
-		return 2;
-	else if (strstr("KRB5", authtype))
-		return 2;
-	else
-		return 2;
+	/* SRP, SPKM1, SPKM2 and KRB5 are unsupported */
+	return 2;
 }
 
 static void iscsi_remove_failed_auth_entry(struct iscsi_conn *conn)
@@ -561,9 +542,15 @@ static void iscsi_target_login_drop(struct iscsi_conn *conn, struct iscsi_login 
 	iscsi_target_login_sess_out(conn, zero_tsih, true);
 }
 
-static void iscsi_target_login_timeout(unsigned long data)
+struct conn_timeout {
+	struct timer_list timer;
+	struct iscsi_conn *conn;
+};
+
+static void iscsi_target_login_timeout(struct timer_list *t)
 {
-	struct iscsi_conn *conn = (struct iscsi_conn *)data;
+	struct conn_timeout *timeout = from_timer(timeout, t, timer);
+	struct iscsi_conn *conn = timeout->conn;
 
 	pr_debug("Entering iscsi_target_login_timeout >>>>>>>>>>>>>>>>>>>\n");
 
@@ -582,7 +569,7 @@ static void iscsi_target_do_login_rx(struct work_struct *work)
 	struct iscsi_np *np = login->np;
 	struct iscsi_portal_group *tpg = conn->tpg;
 	struct iscsi_tpg_np *tpg_np = conn->tpg_np;
-	struct timer_list login_timer;
+	struct conn_timeout timeout;
 	int rc, zero_tsih = login->zero_tsih;
 	bool state;
 
@@ -620,15 +607,14 @@ static void iscsi_target_do_login_rx(struct work_struct *work)
 	conn->login_kworker = current;
 	allow_signal(SIGINT);
 
-	init_timer(&login_timer);
-	login_timer.expires = (get_jiffies_64() + TA_LOGIN_TIMEOUT * HZ);
-	login_timer.data = (unsigned long)conn;
-	login_timer.function = iscsi_target_login_timeout;
-	add_timer(&login_timer);
-	pr_debug("Starting login_timer for %s/%d\n", current->comm, current->pid);
+	timeout.conn = conn;
+	timer_setup_on_stack(&timeout.timer, iscsi_target_login_timeout, 0);
+	mod_timer(&timeout.timer, jiffies + TA_LOGIN_TIMEOUT * HZ);
+	pr_debug("Starting login timer for %s/%d\n", current->comm, current->pid);
 
 	rc = conn->conn_transport->iscsit_get_login_rx(conn, login);
-	del_timer_sync(&login_timer);
+	del_timer_sync(&timeout.timer);
+	destroy_timer_on_stack(&timeout.timer);
 	flush_signals(current);
 	conn->login_kworker = NULL;
 

@@ -714,7 +714,7 @@ static void sis190_tx_interrupt(struct net_device *dev,
 
 		sis190_unmap_tx_skb(tp->pci_dev, skb, txd);
 		tp->Tx_skbuff[entry] = NULL;
-		dev_kfree_skb_irq(skb);
+		dev_consume_skb_irq(skb);
 	}
 
 	if (tp->dirty_tx != dirty_tx) {
@@ -1018,10 +1018,10 @@ out_unlock:
 	rtnl_unlock();
 }
 
-static void sis190_phy_timer(unsigned long __opaque)
+static void sis190_phy_timer(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *)__opaque;
-	struct sis190_private *tp = netdev_priv(dev);
+	struct sis190_private *tp = from_timer(tp, t, timer);
+	struct net_device *dev = tp->dev;
 
 	if (likely(netif_running(dev)))
 		schedule_work(&tp->phy_task);
@@ -1039,10 +1039,8 @@ static inline void sis190_request_timer(struct net_device *dev)
 	struct sis190_private *tp = netdev_priv(dev);
 	struct timer_list *timer = &tp->timer;
 
-	init_timer(timer);
+	timer_setup(timer, sis190_phy_timer, 0);
 	timer->expires = jiffies + SIS190_PHY_TIMEOUT;
-	timer->data = (unsigned long)dev;
-	timer->function = sis190_phy_timer;
 	add_timer(timer);
 }
 
@@ -1144,7 +1142,7 @@ static void sis190_down(struct net_device *dev)
 		if (!poll_locked)
 			poll_locked++;
 
-		synchronize_sched();
+		synchronize_rcu();
 
 	} while (SIS_R32(IntrMask));
 

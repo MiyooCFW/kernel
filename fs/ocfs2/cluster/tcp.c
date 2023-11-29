@@ -1,23 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* -*- mode: c; c-basic-offset: 8; -*-
  *
  * vim: noexpandtab sw=8 ts=8 sts=0:
  *
  * Copyright (C) 2004 Oracle.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  *
  * ----
  *
@@ -140,7 +126,7 @@ static void o2net_rx_until_empty(struct work_struct *work);
 static void o2net_shutdown_sc(struct work_struct *work);
 static void o2net_listen_data_ready(struct sock *sk);
 static void o2net_sc_send_keep_req(struct work_struct *work);
-static void o2net_idle_timer(unsigned long data);
+static void o2net_idle_timer(struct timer_list *t);
 static void o2net_sc_postpone_idle(struct o2net_sock_container *sc);
 static void o2net_sc_reset_idle_timer(struct o2net_sock_container *sc);
 
@@ -450,8 +436,7 @@ static struct o2net_sock_container *sc_alloc(struct o2nm_node *node)
 	INIT_WORK(&sc->sc_shutdown_work, o2net_shutdown_sc);
 	INIT_DELAYED_WORK(&sc->sc_keepalive_work, o2net_sc_send_keep_req);
 
-	setup_timer(&sc->sc_idle_timeout, o2net_idle_timer,
-		    (unsigned long)sc);
+	timer_setup(&sc->sc_idle_timeout, o2net_idle_timer, 0);
 
 	sclog(sc, "alloced\n");
 
@@ -873,8 +858,6 @@ int o2net_register_handler(u32 msg_type, u32 key, u32 max_len,
 				"for type %u key %08x\n", msg_type, key);
 	}
 	write_unlock(&o2net_handler_lock);
-	if (ret)
-		goto out;
 
 out:
 	if (ret)
@@ -919,7 +902,8 @@ static int o2net_recv_tcp_msg(struct socket *sock, void *data, size_t len)
 {
 	struct kvec vec = { .iov_len = len, .iov_base = data, };
 	struct msghdr msg = { .msg_flags = MSG_DONTWAIT, };
-	return kernel_recvmsg(sock, &msg, &vec, 1, len, msg.msg_flags);
+	iov_iter_kvec(&msg.msg_iter, READ, &vec, 1, len);
+	return sock_recvmsg(sock, &msg, MSG_DONTWAIT);
 }
 
 static int o2net_send_tcp_msg(struct socket *sock, struct kvec *vec,
@@ -1078,7 +1062,7 @@ int o2net_send_message_vec(u32 msg_type, u32 key, struct kvec *caller_vec,
 	o2net_set_nst_sock_container(&nst, sc);
 
 	veclen = caller_veclen + 1;
-	vec = kmalloc(sizeof(struct kvec) * veclen, GFP_ATOMIC);
+	vec = kmalloc_array(veclen, sizeof(struct kvec), GFP_ATOMIC);
 	if (vec == NULL) {
 		mlog(0, "failed to %zu element kvec!\n", veclen);
 		ret = -ENOMEM;
@@ -1517,9 +1501,9 @@ static void o2net_sc_send_keep_req(struct work_struct *work)
 /* socket shutdown does a del_timer_sync against this as it tears down.
  * we can't start this timer until we've got to the point in sc buildup
  * where shutdown is going to be involved */
-static void o2net_idle_timer(unsigned long data)
+static void o2net_idle_timer(struct timer_list *t)
 {
-	struct o2net_sock_container *sc = (struct o2net_sock_container *)data;
+	struct o2net_sock_container *sc = from_timer(sc, t, sc_idle_timeout);
 	struct o2net_node *nn = o2net_nn_from_num(sc->sc_node->nd_num);
 #ifdef CONFIG_DEBUG_FS
 	unsigned long msecs = ktime_to_ms(ktime_get()) -
@@ -1778,7 +1762,7 @@ static void o2net_hb_node_up_cb(struct o2nm_node *node, int node_num,
 		(msecs_to_jiffies(o2net_reconnect_delay()) + 1);
 
 	if (node_num != o2nm_this_node()) {
-		/* believe it or not, accept and node hearbeating testing
+		/* believe it or not, accept and node heartbeating testing
 		 * can succeed for this node before we got here.. so
 		 * only use set_nn_state to clear the persistent error
 		 * if that hasn't already happened */
@@ -1819,7 +1803,7 @@ int o2net_register_hb_callbacks(void)
 
 static int o2net_accept_one(struct socket *sock, int *more)
 {
-	int ret, slen;
+	int ret;
 	struct sockaddr_in sin;
 	struct socket *new_sock = NULL;
 	struct o2nm_node *node = NULL;
@@ -1864,9 +1848,7 @@ static int o2net_accept_one(struct socket *sock, int *more)
 		goto out;
 	}
 
-	slen = sizeof(sin);
-	ret = new_sock->ops->getname(new_sock, (struct sockaddr *) &sin,
-				       &slen, 1);
+	ret = new_sock->ops->getname(new_sock, (struct sockaddr *) &sin, 1);
 	if (ret < 0)
 		goto out;
 
@@ -2147,8 +2129,7 @@ int o2net_init(void)
 
 	o2quo_init();
 
-	if (o2net_debugfs_init())
-		goto out;
+	o2net_debugfs_init();
 
 	o2net_hand = kzalloc(sizeof(struct o2net_handshake), GFP_KERNEL);
 	o2net_keep_req = kzalloc(sizeof(struct o2net_msg), GFP_KERNEL);

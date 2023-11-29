@@ -1,16 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2010 Sascha Hauer <s.hauer@pengutronix.de>
  * Copyright (C) 2005-2009 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * for more details.
  */
 #include <linux/module.h>
 #include <linux/export.h>
@@ -122,11 +113,19 @@ enum ipu_color_space ipu_pixelformat_to_colorspace(u32 pixelformat)
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
 		return IPUV3_COLORSPACE_YUV;
+	case V4L2_PIX_FMT_RGB565:
+	case V4L2_PIX_FMT_BGR24:
+	case V4L2_PIX_FMT_RGB24:
+	case V4L2_PIX_FMT_ABGR32:
+	case V4L2_PIX_FMT_XBGR32:
+	case V4L2_PIX_FMT_BGRA32:
+	case V4L2_PIX_FMT_BGRX32:
+	case V4L2_PIX_FMT_RGBA32:
+	case V4L2_PIX_FMT_RGBX32:
+	case V4L2_PIX_FMT_ARGB32:
+	case V4L2_PIX_FMT_XRGB32:
 	case V4L2_PIX_FMT_RGB32:
 	case V4L2_PIX_FMT_BGR32:
-	case V4L2_PIX_FMT_RGB24:
-	case V4L2_PIX_FMT_BGR24:
-	case V4L2_PIX_FMT_RGB565:
 		return IPUV3_COLORSPACE_RGB;
 	default:
 		return IPUV3_COLORSPACE_UNKNOWN;
@@ -190,6 +189,8 @@ int ipu_stride_to_bytes(u32 pixel_stride, u32 pixelformat)
 		return (24 * pixel_stride) >> 3;
 	case V4L2_PIX_FMT_BGR32:
 	case V4L2_PIX_FMT_RGB32:
+	case V4L2_PIX_FMT_XBGR32:
+	case V4L2_PIX_FMT_XRGB32:
 		return (32 * pixel_stride) >> 3;
 	default:
 		break;
@@ -1089,7 +1090,7 @@ static void ipu_irq_handler(struct irq_desc *desc)
 {
 	struct ipu_soc *ipu = irq_desc_get_handler_data(desc);
 	struct irq_chip *chip = irq_desc_get_chip(desc);
-	const int int_reg[] = { 0, 1, 2, 3, 10, 11, 12, 13, 14};
+	static const int int_reg[] = { 0, 1, 2, 3, 10, 11, 12, 13, 14};
 
 	chained_irq_enter(chip, desc);
 
@@ -1102,7 +1103,7 @@ static void ipu_err_irq_handler(struct irq_desc *desc)
 {
 	struct ipu_soc *ipu = irq_desc_get_handler_data(desc);
 	struct irq_chip *chip = irq_desc_get_chip(desc);
-	const int int_reg[] = { 4, 5, 8, 9};
+	static const int int_reg[] = { 4, 5, 8, 9};
 
 	chained_irq_enter(chip, desc);
 

@@ -1,21 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for NXP PN533 NFC Chip - core functions
  *
  * Copyright (C) 2011 Instituto Nokia de Tecnologia
  * Copyright (C) 2012-2013 Tieto Poland
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/device.h>
@@ -1235,9 +1223,9 @@ static int pn533_init_target_complete(struct pn533 *dev, struct sk_buff *resp)
 	return 0;
 }
 
-static void pn533_listen_mode_timer(unsigned long data)
+static void pn533_listen_mode_timer(struct timer_list *t)
 {
-	struct pn533 *dev = (struct pn533 *)data;
+	struct pn533 *dev = from_timer(dev, t, listen_timer);
 
 	dev_dbg(dev->dev, "Listen mode timeout\n");
 
@@ -2154,6 +2142,7 @@ static int pn533_transceive(struct nfc_dev *nfc_dev,
 
 			break;
 		}
+		/* fall through */
 	default:
 		/* jumbo frame ? */
 		if (skb->len > PN533_CMD_DATAEXCH_DATA_MAXLEN) {
@@ -2280,6 +2269,7 @@ static void pn533_wq_mi_recv(struct work_struct *work)
 
 			break;
 		}
+		/* fall through */
 	default:
 		skb_put_u8(skb, 1); /*TG*/
 
@@ -2639,9 +2629,7 @@ struct pn533 *pn533_register_device(u32 device_type,
 	if (priv->wq == NULL)
 		goto error;
 
-	init_timer(&priv->listen_timer);
-	priv->listen_timer.data = (unsigned long) priv;
-	priv->listen_timer.function = pn533_listen_mode_timer;
+	timer_setup(&priv->listen_timer, pn533_listen_mode_timer, 0);
 
 	skb_queue_head_init(&priv->resp_q);
 	skb_queue_head_init(&priv->fragment_skb);

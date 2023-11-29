@@ -161,7 +161,6 @@ int qla4xxx_get_sys_info(struct scsi_qla_host *ha)
 
 		goto exit_get_sys_info_no_free;
 	}
-	memset(sys_info, 0, sizeof(*sys_info));
 
 	/* Get flash sys info */
 	if (qla4xxx_get_flash(ha, sys_info_dma, FLASH_OFFSET_SYS_INFO,
@@ -767,12 +766,10 @@ int ql4xxx_lock_drvr_wait(struct scsi_qla_host *a)
 	while (drvr_wait) {
 		if (ql4xxx_lock_drvr(a) == 0) {
 			ssleep(QL4_LOCK_DRVR_SLEEP);
-			if (drvr_wait) {
-				DEBUG2(printk("scsi%ld: %s: Waiting for "
-					      "Global Init Semaphore(%d)...\n",
-					      a->host_no,
-					      __func__, drvr_wait));
-			}
+			DEBUG2(printk("scsi%ld: %s: Waiting for "
+				      "Global Init Semaphore(%d)...\n",
+				      a->host_no,
+				      __func__, drvr_wait));
 			drvr_wait -= QL4_LOCK_DRVR_SLEEP;
 		} else {
 			DEBUG2(printk("scsi%ld: %s: Global Init Semaphore "

@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /** -*- linux-c -*- ***********************************************************
  * Linux PPP over Ethernet (PPPoX/PPPoE) Sockets
  *
  * PPPoX --- Generic PPP encapsulation socket family
  * PPPoE --- PPP over Ethernet (RFC 2516)
- *
  *
  * Version:	0.7.0
  *
@@ -50,11 +50,6 @@
  *		David S. Miller (davem@redhat.com)
  *
  * License:
- *		This program is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
- *
  */
 
 #include <linux/string.h>
@@ -725,7 +720,7 @@ err_put:
 }
 
 static int pppoe_getname(struct socket *sock, struct sockaddr *uaddr,
-		  int *usockaddr_len, int peer)
+		  int peer)
 {
 	int len = sizeof(struct sockaddr_pppox);
 	struct sockaddr_pppox sp;
@@ -737,9 +732,7 @@ static int pppoe_getname(struct socket *sock, struct sockaddr *uaddr,
 
 	memcpy(uaddr, &sp, len);
 
-	*usockaddr_len = len;
-
-	return 0;
+	return len;
 }
 
 static int pppoe_ioctl(struct socket *sock, unsigned int cmd,
@@ -1105,21 +1098,6 @@ static const struct seq_operations pppoe_seq_ops = {
 	.stop		= pppoe_seq_stop,
 	.show		= pppoe_seq_show,
 };
-
-static int pppoe_seq_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &pppoe_seq_ops,
-			sizeof(struct seq_net_private));
-}
-
-static const struct file_operations pppoe_seq_fops = {
-	.owner		= THIS_MODULE,
-	.open		= pppoe_seq_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release_net,
-};
-
 #endif /* CONFIG_PROC_FS */
 
 static const struct proto_ops pppoe_ops = {
@@ -1158,7 +1136,8 @@ static __net_init int pppoe_init_net(struct net *net)
 
 	rwlock_init(&pn->hash_lock);
 
-	pde = proc_create("pppoe", S_IRUGO, net->proc_net, &pppoe_seq_fops);
+	pde = proc_create_net("pppoe", 0444, net->proc_net,
+			&pppoe_seq_ops, sizeof(struct seq_net_private));
 #ifdef CONFIG_PROC_FS
 	if (!pde)
 		return -ENOMEM;

@@ -57,7 +57,8 @@
 
 #define PVRDMA_ROCEV1_VERSION		17
 #define PVRDMA_ROCEV2_VERSION		18
-#define PVRDMA_VERSION			PVRDMA_ROCEV2_VERSION
+#define PVRDMA_PPN64_VERSION		19
+#define PVRDMA_VERSION			PVRDMA_PPN64_VERSION
 
 #define PVRDMA_BOARD_ID			1
 #define PVRDMA_REV_ID			1
@@ -279,8 +280,10 @@ struct pvrdma_device_shared_region {
 						/* W: Async ring page info. */
 	struct pvrdma_ring_page_info cq_ring_pages;
 						/* W: CQ ring page info. */
-	u32 uar_pfn;				/* W: UAR pageframe. */
-	u32 pad2;				/* Pad to 8-byte align. */
+	union {
+		u32 uar_pfn;			/* W: UAR pageframe. */
+		u64 uar_pfn64;			/* W: 64-bit UAR page frame. */
+	};
 	struct pvrdma_device_caps caps;		/* R: Device capabilities. */
 };
 
@@ -339,6 +342,10 @@ enum {
 	PVRDMA_CMD_DESTROY_UC,
 	PVRDMA_CMD_CREATE_BIND,
 	PVRDMA_CMD_DESTROY_BIND,
+	PVRDMA_CMD_CREATE_SRQ,
+	PVRDMA_CMD_MODIFY_SRQ,
+	PVRDMA_CMD_QUERY_SRQ,
+	PVRDMA_CMD_DESTROY_SRQ,
 	PVRDMA_CMD_MAX,
 };
 
@@ -361,6 +368,10 @@ enum {
 	PVRDMA_CMD_DESTROY_UC_RESP_NOOP,
 	PVRDMA_CMD_CREATE_BIND_RESP_NOOP,
 	PVRDMA_CMD_DESTROY_BIND_RESP_NOOP,
+	PVRDMA_CMD_CREATE_SRQ_RESP,
+	PVRDMA_CMD_MODIFY_SRQ_RESP,
+	PVRDMA_CMD_QUERY_SRQ_RESP,
+	PVRDMA_CMD_DESTROY_SRQ_RESP,
 	PVRDMA_CMD_MAX_RESP,
 };
 
@@ -403,8 +414,10 @@ struct pvrdma_cmd_query_pkey_resp {
 
 struct pvrdma_cmd_create_uc {
 	struct pvrdma_cmd_hdr hdr;
-	u32 pfn; /* UAR page frame number */
-	u8 reserved[4];
+	union {
+		u32 pfn; /* UAR page frame number */
+		u64 pfn64; /* 64-bit UAR page frame number */
+	};
 };
 
 struct pvrdma_cmd_create_uc_resp {
@@ -492,6 +505,46 @@ struct pvrdma_cmd_resize_cq_resp {
 struct pvrdma_cmd_destroy_cq {
 	struct pvrdma_cmd_hdr hdr;
 	u32 cq_handle;
+	u8 reserved[4];
+};
+
+struct pvrdma_cmd_create_srq {
+	struct pvrdma_cmd_hdr hdr;
+	u64 pdir_dma;
+	u32 pd_handle;
+	u32 nchunks;
+	struct pvrdma_srq_attr attrs;
+	u8 srq_type;
+	u8 reserved[7];
+};
+
+struct pvrdma_cmd_create_srq_resp {
+	struct pvrdma_cmd_resp_hdr hdr;
+	u32 srqn;
+	u8 reserved[4];
+};
+
+struct pvrdma_cmd_modify_srq {
+	struct pvrdma_cmd_hdr hdr;
+	u32 srq_handle;
+	u32 attr_mask;
+	struct pvrdma_srq_attr attrs;
+};
+
+struct pvrdma_cmd_query_srq {
+	struct pvrdma_cmd_hdr hdr;
+	u32 srq_handle;
+	u8 reserved[4];
+};
+
+struct pvrdma_cmd_query_srq_resp {
+	struct pvrdma_cmd_resp_hdr hdr;
+	struct pvrdma_srq_attr attrs;
+};
+
+struct pvrdma_cmd_destroy_srq {
+	struct pvrdma_cmd_hdr hdr;
+	u32 srq_handle;
 	u8 reserved[4];
 };
 
@@ -594,6 +647,10 @@ union pvrdma_cmd_req {
 	struct pvrdma_cmd_destroy_qp destroy_qp;
 	struct pvrdma_cmd_create_bind create_bind;
 	struct pvrdma_cmd_destroy_bind destroy_bind;
+	struct pvrdma_cmd_create_srq create_srq;
+	struct pvrdma_cmd_modify_srq modify_srq;
+	struct pvrdma_cmd_query_srq query_srq;
+	struct pvrdma_cmd_destroy_srq destroy_srq;
 };
 
 union pvrdma_cmd_resp {
@@ -608,6 +665,8 @@ union pvrdma_cmd_resp {
 	struct pvrdma_cmd_create_qp_resp create_qp_resp;
 	struct pvrdma_cmd_query_qp_resp query_qp_resp;
 	struct pvrdma_cmd_destroy_qp_resp destroy_qp_resp;
+	struct pvrdma_cmd_create_srq_resp create_srq_resp;
+	struct pvrdma_cmd_query_srq_resp query_srq_resp;
 };
 
 #endif /* __PVRDMA_DEV_API_H__ */

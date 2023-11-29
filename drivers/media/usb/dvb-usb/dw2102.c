@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* DVB USB framework compliant Linux driver for the
  *	DVBWorld DVB-S 2101, 2102, DVB-S2 2104, DVB-C 3101,
  *	TeVii S421, S480, S482, S600, S630, S632, S650, S660, S662,
@@ -7,13 +8,9 @@
  *	Terratec Cinergy S2 cards
  * Copyright (C) 2008-2012 Igor M. Liplianin (liplianin@me.by)
  *
- *	This program is free software; you can redistribute it and/or modify it
- *	under the terms of the GNU General Public License as published by the
- *	Free Software Foundation, version 2.
- *
- * see Documentation/dvb/README.dvb-usb for more information
+ * see Documentation/media/dvb-drivers/dvb-usb.rst for more information
  */
-#include "dvb-usb-ids.h"
+#include <media/dvb-usb-ids.h>
 #include "dw2102.h"
 #include "si21xx.h"
 #include "stv0299.h"
@@ -61,9 +58,7 @@
 #define P1100_FIRMWARE  "dvb-usb-p1100.fw"
 #define P7500_FIRMWARE  "dvb-usb-p7500.fw"
 
-#define	err_str "did not find the firmware file. (%s) " \
-		"Please see linux/Documentation/dvb/ for more details " \
-		"on firmware-problems."
+#define	err_str "did not find the firmware file '%s'. You can use <kernel_dir>/scripts/get_dvb_firmware to get the firmware"
 
 struct dw2102_state {
 	u8 initialized;
@@ -1615,7 +1610,7 @@ static int tt_s2_4600_frontend_attach(struct dvb_usb_adapter *adap)
 	m88ds3103_pdata.lnb_hv_pol = 1;
 	m88ds3103_pdata.lnb_en_pol = 0;
 	memset(&board_info, 0, sizeof(board_info));
-	strlcpy(board_info.type, "m88ds3103", I2C_NAME_SIZE);
+	strscpy(board_info.type, "m88ds3103", I2C_NAME_SIZE);
 	board_info.addr = 0x68;
 	board_info.platform_data = &m88ds3103_pdata;
 	request_module("m88ds3103");
@@ -1634,7 +1629,7 @@ static int tt_s2_4600_frontend_attach(struct dvb_usb_adapter *adap)
 	/* attach tuner */
 	ts2020_config.fe = adap->fe_adap[0].fe;
 	memset(&board_info, 0, sizeof(board_info));
-	strlcpy(board_info.type, "ts2022", I2C_NAME_SIZE);
+	strscpy(board_info.type, "ts2022", I2C_NAME_SIZE);
 	board_info.addr = 0x60;
 	board_info.platform_data = &ts2020_config;
 	request_module("ts2020");

@@ -10,7 +10,6 @@
 #include <linux/sched/task_stack.h>
 #include <linux/thread_info.h>
 
-#include <asm/compat.h>
 #include <asm/cpufeature.h>
 
 static void ssbd_ssbs_enable(struct task_struct *task)

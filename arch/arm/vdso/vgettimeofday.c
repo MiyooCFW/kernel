@@ -1,18 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2015 Mentor Graphics Corporation.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; version 2 of the
- * License.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/compiler.h>
@@ -35,7 +23,7 @@ static notrace u32 __vdso_read_begin(const struct vdso_data *vdata)
 {
 	u32 seq;
 repeat:
-	seq = ACCESS_ONCE(vdata->seq_count);
+	seq = READ_ONCE(vdata->seq_count);
 	if (seq & 1) {
 		cpu_relax();
 		goto repeat;

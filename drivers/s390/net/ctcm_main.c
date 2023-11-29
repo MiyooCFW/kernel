@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright IBM Corp. 2001, 2009
  * Author(s):
@@ -568,8 +569,7 @@ static int ctcm_transmit_skb(struct channel *ch, struct sk_buff *skb)
 	fsm_addtimer(&ch->timer, CTCM_TIME_5_SEC, CTC_EVENT_TIMER, ch);
 	spin_lock_irqsave(get_ccwdev_lock(ch->cdev), saveflags);
 	ch->prof.send_stamp = jiffies;
-	rc = ccw_device_start(ch->cdev, &ch->ccw[ccw_idx],
-					(unsigned long)ch, 0xff, 0);
+	rc = ccw_device_start(ch->cdev, &ch->ccw[ccw_idx], 0, 0xff, 0);
 	spin_unlock_irqrestore(get_ccwdev_lock(ch->cdev), saveflags);
 	if (ccw_idx == 3)
 		ch->prof.doios_single++;
@@ -832,8 +832,7 @@ static int ctcmpc_transmit_skb(struct channel *ch, struct sk_buff *skb)
 
 	spin_lock_irqsave(get_ccwdev_lock(ch->cdev), saveflags);
 	ch->prof.send_stamp = jiffies;
-	rc = ccw_device_start(ch->cdev, &ch->ccw[ccw_idx],
-					(unsigned long)ch, 0xff, 0);
+	rc = ccw_device_start(ch->cdev, &ch->ccw[ccw_idx], 0, 0xff, 0);
 	spin_unlock_irqrestore(get_ccwdev_lock(ch->cdev), saveflags);
 	if (ccw_idx == 3)
 		ch->prof.doios_single++;
@@ -1066,10 +1065,8 @@ static void ctcm_free_netdevice(struct net_device *dev)
 		if (grp) {
 			if (grp->fsm)
 				kfree_fsm(grp->fsm);
-			if (grp->xid_skb)
-				dev_kfree_skb(grp->xid_skb);
-			if (grp->rcvd_xid_skb)
-				dev_kfree_skb(grp->rcvd_xid_skb);
+			dev_kfree_skb(grp->xid_skb);
+			dev_kfree_skb(grp->rcvd_xid_skb);
 			tasklet_kill(&grp->mpc_tasklet2);
 			kfree(grp);
 			priv->mpcg = NULL;
@@ -1371,7 +1368,7 @@ static int add_channel(struct ccw_device *cdev, enum ctcm_channel_types type,
 	} else
 		ccw_num = 8;
 
-	ch->ccw = kzalloc(ccw_num * sizeof(struct ccw1), GFP_KERNEL | GFP_DMA);
+	ch->ccw = kcalloc(ccw_num, sizeof(struct ccw1), GFP_KERNEL | GFP_DMA);
 	if (ch->ccw == NULL)
 					goto nomem_return;
 
@@ -1755,6 +1752,7 @@ static struct ccwgroup_driver ctcm_group_driver = {
 		.owner	= THIS_MODULE,
 		.name	= CTC_DRIVER_NAME,
 	},
+	.ccw_driver  = &ctcm_ccw_driver,
 	.setup	     = ctcm_probe_device,
 	.remove      = ctcm_remove_device,
 	.set_online  = ctcm_new_device,

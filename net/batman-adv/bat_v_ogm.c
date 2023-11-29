@@ -1,18 +1,7 @@
-/* Copyright (C) 2013-2017  B.A.T.M.A.N. contributors:
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright (C) 2013-2019  B.A.T.M.A.N. contributors:
  *
  * Antonio Quartulli
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "bat_v_ogm.h"
@@ -22,7 +11,7 @@
 #include <linux/byteorder/generic.h>
 #include <linux/errno.h>
 #include <linux/etherdevice.h>
-#include <linux/fs.h>
+#include <linux/gfp.h>
 #include <linux/if_ether.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
@@ -36,24 +25,25 @@
 #include <linux/rcupdate.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
 #include <linux/stddef.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <uapi/linux/batadv_packet.h>
 
 #include "bat_algo.h"
 #include "hard-interface.h"
 #include "hash.h"
 #include "log.h"
 #include "originator.h"
-#include "packet.h"
 #include "routing.h"
 #include "send.h"
 #include "translation-table.h"
 #include "tvlv.h"
 
 /**
- * batadv_v_ogm_orig_get - retrieve and possibly create an originator node
+ * batadv_v_ogm_orig_get() - retrieve and possibly create an originator node
  * @bat_priv: the bat priv with all the soft interface information
  * @addr: the address of the originator
  *
@@ -90,7 +80,21 @@ struct batadv_orig_node *batadv_v_ogm_orig_get(struct batadv_priv *bat_priv,
 }
 
 /**
- * batadv_v_ogm_start_timer - restart the OGM sending timer
+ * batadv_v_ogm_start_queue_timer() - restart the OGM aggregation timer
+ * @hard_iface: the interface to use to send the OGM
+ */
+static void batadv_v_ogm_start_queue_timer(struct batadv_hard_iface *hard_iface)
+{
+	unsigned int msecs = BATADV_MAX_AGGREGATION_MS * 1000;
+
+	/* msecs * [0.9, 1.1] */
+	msecs += prandom_u32() % (msecs / 5) - (msecs / 10);
+	queue_delayed_work(batadv_event_workqueue, &hard_iface->bat_v.aggr_wq,
+			   msecs_to_jiffies(msecs / 1000));
+}
+
+/**
+ * batadv_v_ogm_start_timer() - restart the OGM sending timer
  * @bat_priv: the bat priv with all the soft interface information
  */
 static void batadv_v_ogm_start_timer(struct batadv_priv *bat_priv)
@@ -109,7 +113,7 @@ static void batadv_v_ogm_start_timer(struct batadv_priv *bat_priv)
 }
 
 /**
- * batadv_v_ogm_send_to_if - send a batman ogm using a given interface
+ * batadv_v_ogm_send_to_if() - send a batman ogm using a given interface
  * @skb: the OGM to send
  * @hard_iface: the interface to use to send the OGM
  */
@@ -131,8 +135,132 @@ static void batadv_v_ogm_send_to_if(struct sk_buff *skb,
 }
 
 /**
+ * batadv_v_ogm_len() - OGMv2 packet length
+ * @skb: the OGM to check
+ *
+ * Return: Length of the given OGMv2 packet, including tvlv length, excluding
+ * ethernet header length.
+ */
+static unsigned int batadv_v_ogm_len(struct sk_buff *skb)
+{
+	struct batadv_ogm2_packet *ogm_packet;
+
+	ogm_packet = (struct batadv_ogm2_packet *)skb->data;
+	return BATADV_OGM2_HLEN + ntohs(ogm_packet->tvlv_len);
+}
+
+/**
+ * batadv_v_ogm_queue_left() - check if given OGM still fits aggregation queue
+ * @skb: the OGM to check
+ * @hard_iface: the interface to use to send the OGM
+ *
+ * Caller needs to hold the hard_iface->bat_v.aggr_list_lock.
+ *
+ * Return: True, if the given OGMv2 packet still fits, false otherwise.
+ */
+static bool batadv_v_ogm_queue_left(struct sk_buff *skb,
+				    struct batadv_hard_iface *hard_iface)
+{
+	unsigned int max = min_t(unsigned int, hard_iface->net_dev->mtu,
+				 BATADV_MAX_AGGREGATION_BYTES);
+	unsigned int ogm_len = batadv_v_ogm_len(skb);
+
+	lockdep_assert_held(&hard_iface->bat_v.aggr_list_lock);
+
+	return hard_iface->bat_v.aggr_len + ogm_len <= max;
+}
+
+/**
+ * batadv_v_ogm_aggr_list_free - free all elements in an aggregation queue
+ * @hard_iface: the interface holding the aggregation queue
+ *
+ * Empties the OGMv2 aggregation queue and frees all the skbs it contained.
+ *
+ * Caller needs to hold the hard_iface->bat_v.aggr_list_lock.
+ */
+static void batadv_v_ogm_aggr_list_free(struct batadv_hard_iface *hard_iface)
+{
+	struct sk_buff *skb;
+
+	lockdep_assert_held(&hard_iface->bat_v.aggr_list_lock);
+
+	while ((skb = skb_dequeue(&hard_iface->bat_v.aggr_list)))
+		kfree_skb(skb);
+
+	hard_iface->bat_v.aggr_len = 0;
+}
+
+/**
+ * batadv_v_ogm_aggr_send() - flush & send aggregation queue
+ * @hard_iface: the interface with the aggregation queue to flush
+ *
+ * Aggregates all OGMv2 packets currently in the aggregation queue into a
+ * single OGMv2 packet and transmits this aggregate.
+ *
+ * The aggregation queue is empty after this call.
+ *
+ * Caller needs to hold the hard_iface->bat_v.aggr_list_lock.
+ */
+static void batadv_v_ogm_aggr_send(struct batadv_hard_iface *hard_iface)
+{
+	unsigned int aggr_len = hard_iface->bat_v.aggr_len;
+	struct sk_buff *skb_aggr;
+	unsigned int ogm_len;
+	struct sk_buff *skb;
+
+	lockdep_assert_held(&hard_iface->bat_v.aggr_list_lock);
+
+	if (!aggr_len)
+		return;
+
+	skb_aggr = dev_alloc_skb(aggr_len + ETH_HLEN + NET_IP_ALIGN);
+	if (!skb_aggr) {
+		batadv_v_ogm_aggr_list_free(hard_iface);
+		return;
+	}
+
+	skb_reserve(skb_aggr, ETH_HLEN + NET_IP_ALIGN);
+	skb_reset_network_header(skb_aggr);
+
+	while ((skb = skb_dequeue(&hard_iface->bat_v.aggr_list))) {
+		hard_iface->bat_v.aggr_len -= batadv_v_ogm_len(skb);
+
+		ogm_len = batadv_v_ogm_len(skb);
+		skb_put_data(skb_aggr, skb->data, ogm_len);
+
+		consume_skb(skb);
+	}
+
+	batadv_v_ogm_send_to_if(skb_aggr, hard_iface);
+}
+
+/**
+ * batadv_v_ogm_queue_on_if() - queue a batman ogm on a given interface
+ * @skb: the OGM to queue
+ * @hard_iface: the interface to queue the OGM on
+ */
+static void batadv_v_ogm_queue_on_if(struct sk_buff *skb,
+				     struct batadv_hard_iface *hard_iface)
+{
+	struct batadv_priv *bat_priv = netdev_priv(hard_iface->soft_iface);
+
+	if (!atomic_read(&bat_priv->aggregated_ogms)) {
+		batadv_v_ogm_send_to_if(skb, hard_iface);
+		return;
+	}
+
+	spin_lock_bh(&hard_iface->bat_v.aggr_list_lock);
+	if (!batadv_v_ogm_queue_left(skb, hard_iface))
+		batadv_v_ogm_aggr_send(hard_iface);
+
+	hard_iface->bat_v.aggr_len += batadv_v_ogm_len(skb);
+	skb_queue_tail(&hard_iface->bat_v.aggr_list, skb);
+	spin_unlock_bh(&hard_iface->bat_v.aggr_list_lock);
+}
+
+/**
  * batadv_v_ogm_send_softif() - periodic worker broadcasting the own OGM
- *  @bat_priv: the bat priv with all the soft interface information
+ * @bat_priv: the bat priv with all the soft interface information
  */
 static void batadv_v_ogm_send_softif(struct batadv_priv *bat_priv)
 {
@@ -222,7 +350,7 @@ static void batadv_v_ogm_send_softif(struct batadv_priv *bat_priv)
 			break;
 		}
 
-		batadv_v_ogm_send_to_if(skb_tmp, hard_iface);
+		batadv_v_ogm_queue_on_if(skb_tmp, hard_iface);
 		batadv_hardif_put(hard_iface);
 	}
 	rcu_read_unlock();
@@ -253,7 +381,28 @@ static void batadv_v_ogm_send(struct work_struct *work)
 }
 
 /**
- * batadv_v_ogm_iface_enable - prepare an interface for B.A.T.M.A.N. V
+ * batadv_v_ogm_aggr_work() - OGM queue periodic task per interface
+ * @work: work queue item
+ *
+ * Emits aggregated OGM message in regular intervals.
+ */
+void batadv_v_ogm_aggr_work(struct work_struct *work)
+{
+	struct batadv_hard_iface_bat_v *batv;
+	struct batadv_hard_iface *hard_iface;
+
+	batv = container_of(work, struct batadv_hard_iface_bat_v, aggr_wq.work);
+	hard_iface = container_of(batv, struct batadv_hard_iface, bat_v);
+
+	spin_lock_bh(&hard_iface->bat_v.aggr_list_lock);
+	batadv_v_ogm_aggr_send(hard_iface);
+	spin_unlock_bh(&hard_iface->bat_v.aggr_list_lock);
+
+	batadv_v_ogm_start_queue_timer(hard_iface);
+}
+
+/**
+ * batadv_v_ogm_iface_enable() - prepare an interface for B.A.T.M.A.N. V
  * @hard_iface: the interface to prepare
  *
  * Takes care of scheduling own OGM sending routine for this interface.
@@ -264,13 +413,27 @@ int batadv_v_ogm_iface_enable(struct batadv_hard_iface *hard_iface)
 {
 	struct batadv_priv *bat_priv = netdev_priv(hard_iface->soft_iface);
 
+	batadv_v_ogm_start_queue_timer(hard_iface);
 	batadv_v_ogm_start_timer(bat_priv);
 
 	return 0;
 }
 
 /**
- * batadv_v_ogm_primary_iface_set - set a new primary interface
+ * batadv_v_ogm_iface_disable() - release OGM interface private resources
+ * @hard_iface: interface for which the resources have to be released
+ */
+void batadv_v_ogm_iface_disable(struct batadv_hard_iface *hard_iface)
+{
+	cancel_delayed_work_sync(&hard_iface->bat_v.aggr_wq);
+
+	spin_lock_bh(&hard_iface->bat_v.aggr_list_lock);
+	batadv_v_ogm_aggr_list_free(hard_iface);
+	spin_unlock_bh(&hard_iface->bat_v.aggr_list_lock);
+}
+
+/**
+ * batadv_v_ogm_primary_iface_set() - set a new primary interface
  * @primary_iface: the new primary interface
  */
 void batadv_v_ogm_primary_iface_set(struct batadv_hard_iface *primary_iface)
@@ -290,8 +453,8 @@ unlock:
 }
 
 /**
- * batadv_v_forward_penalty - apply a penalty to the throughput metric forwarded
- *  with B.A.T.M.A.N. V OGMs
+ * batadv_v_forward_penalty() - apply a penalty to the throughput metric
+ *  forwarded with B.A.T.M.A.N. V OGMs
  * @bat_priv: the bat priv with all the soft interface information
  * @if_incoming: the interface where the OGM has been received
  * @if_outgoing: the interface where the OGM has to be forwarded to
@@ -326,8 +489,8 @@ static u32 batadv_v_forward_penalty(struct batadv_priv *bat_priv,
 	 * due to the store & forward characteristics of WIFI.
 	 * Very low throughput values are the exception.
 	 */
-	if ((throughput > 10) &&
-	    (if_incoming == if_outgoing) &&
+	if (throughput > 10 &&
+	    if_incoming == if_outgoing &&
 	    !(if_incoming->bat_v.flags & BATADV_FULL_DUPLEX))
 		return throughput / 2;
 
@@ -336,7 +499,7 @@ static u32 batadv_v_forward_penalty(struct batadv_priv *bat_priv,
 }
 
 /**
- * batadv_v_ogm_forward - check conditions and forward an OGM to the given
+ * batadv_v_ogm_forward() - check conditions and forward an OGM to the given
  *  outgoing interface
  * @bat_priv: the bat priv with all the soft interface information
  * @ogm_received: previously received OGM to be forwarded
@@ -415,7 +578,7 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
 		   if_outgoing->net_dev->name, ntohl(ogm_forward->throughput),
 		   ogm_forward->ttl, if_incoming->net_dev->name);
 
-	batadv_v_ogm_send_to_if(skb, if_outgoing);
+	batadv_v_ogm_queue_on_if(skb, if_outgoing);
 
 out:
 	if (orig_ifinfo)
@@ -427,7 +590,7 @@ out:
 }
 
 /**
- * batadv_v_ogm_metric_update - update route metric based on OGM
+ * batadv_v_ogm_metric_update() - update route metric based on OGM
  * @bat_priv: the bat priv with all the soft interface information
  * @ogm2: OGM2 structure
  * @orig_node: Originator structure for which the OGM has been received
@@ -477,7 +640,7 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
 	/* drop packets with old seqnos, however accept the first packet after
 	 * a host has been rebooted.
 	 */
-	if ((seq_diff < 0) && !protection_started)
+	if (seq_diff < 0 && !protection_started)
 		goto out;
 
 	neigh_node->last_seen = jiffies;
@@ -512,7 +675,7 @@ out:
 }
 
 /**
- * batadv_v_ogm_route_update - update routes based on OGM
+ * batadv_v_ogm_route_update() - update routes based on OGM
  * @bat_priv: the bat priv with all the soft interface information
  * @ethhdr: the Ethernet header of the OGM2
  * @ogm2: OGM2 structure
@@ -590,8 +753,8 @@ static bool batadv_v_ogm_route_update(struct batadv_priv *bat_priv,
 		router_throughput = router_ifinfo->bat_v.throughput;
 		neigh_throughput = neigh_ifinfo->bat_v.throughput;
 
-		if ((neigh_seq_diff < BATADV_OGM_MAX_ORIGDIFF) &&
-		    (router_throughput >= neigh_throughput))
+		if (neigh_seq_diff < BATADV_OGM_MAX_ORIGDIFF &&
+		    router_throughput >= neigh_throughput)
 			goto out;
 	}
 
@@ -612,7 +775,7 @@ out:
 }
 
 /**
- * batadv_v_ogm_process_per_outif - process a batman v OGM for an outgoing if
+ * batadv_v_ogm_process_per_outif() - process a batman v OGM for an outgoing if
  * @bat_priv: the bat priv with all the soft interface information
  * @ethhdr: the Ethernet header of the OGM2
  * @ogm2: OGM2 structure
@@ -643,7 +806,7 @@ batadv_v_ogm_process_per_outif(struct batadv_priv *bat_priv,
 		return;
 
 	/* only unknown & newer OGMs contain TVLVs we are interested in */
-	if ((seqno_age > 0) && (if_outgoing == BATADV_IF_DEFAULT))
+	if (seqno_age > 0 && if_outgoing == BATADV_IF_DEFAULT)
 		batadv_tvlv_containers_process(bat_priv, true, orig_node,
 					       NULL, NULL,
 					       (unsigned char *)(ogm2 + 1),
@@ -661,7 +824,7 @@ batadv_v_ogm_process_per_outif(struct batadv_priv *bat_priv,
 }
 
 /**
- * batadv_v_ogm_aggr_packet - checks if there is another OGM aggregated
+ * batadv_v_ogm_aggr_packet() - checks if there is another OGM aggregated
  * @buff_pos: current position in the skb
  * @packet_len: total length of the skb
  * @ogm2_packet: potential OGM2 in buffer
@@ -687,7 +850,7 @@ batadv_v_ogm_aggr_packet(int buff_pos, int packet_len,
 }
 
 /**
- * batadv_v_ogm_process - process an incoming batman v OGM
+ * batadv_v_ogm_process() - process an incoming batman v OGM
  * @skb: the skb containing the OGM
  * @ogm_offset: offset to the OGM which should be processed (for aggregates)
  * @if_incoming: the interface where this packet was receved
@@ -821,7 +984,7 @@ out:
 }
 
 /**
- * batadv_v_ogm_packet_recv - OGM2 receiving handler
+ * batadv_v_ogm_packet_recv() - OGM2 receiving handler
  * @skb: the received OGM
  * @if_incoming: the interface where this OGM has been received
  *
@@ -881,7 +1044,7 @@ free_skb:
 }
 
 /**
- * batadv_v_ogm_init - initialise the OGM2 engine
+ * batadv_v_ogm_init() - initialise the OGM2 engine
  * @bat_priv: the bat priv with all the soft interface information
  *
  * Return: 0 on success or a negative error code in case of failure
@@ -916,7 +1079,7 @@ int batadv_v_ogm_init(struct batadv_priv *bat_priv)
 }
 
 /**
- * batadv_v_ogm_free - free OGM private resources
+ * batadv_v_ogm_free() - free OGM private resources
  * @bat_priv: the bat priv with all the soft interface information
  */
 void batadv_v_ogm_free(struct batadv_priv *bat_priv)

@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /* cassini.c: Sun Microsystems Cassini(+) ethernet driver.
  *
  * Copyright (C) 2004 Sun Microsystems Inc.
  * Copyright (C) 2003 Adrian Sun (asun@darksunrising.com)
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * This driver uses the sungem driver (c) David Miller
  * (davem@redhat.com) as its basis.
@@ -1910,7 +1898,7 @@ static inline void cas_tx_ringN(struct cas *cp, int ring, int limit)
 		cp->net_stats[ring].tx_packets++;
 		cp->net_stats[ring].tx_bytes += skb->len;
 		spin_unlock(&cp->stat_lock[ring]);
-		dev_kfree_skb_irq(skb);
+		dev_consume_skb_irq(skb);
 	}
 	cp->tx_old[ring] = entry;
 
@@ -2046,7 +2034,7 @@ static int cas_rx_process_pkt(struct cas *cp, struct cas_rx_comp *rxc,
 
 		__skb_frag_set_page(frag, page->buffer);
 		__skb_frag_ref(frag);
-		frag->page_offset = off;
+		skb_frag_off_set(frag, off);
 		skb_frag_size_set(frag, hlen - swivel);
 
 		/* any more data? */
@@ -2070,7 +2058,7 @@ static int cas_rx_process_pkt(struct cas *cp, struct cas_rx_comp *rxc,
 
 			__skb_frag_set_page(frag, page->buffer);
 			__skb_frag_ref(frag);
-			frag->page_offset = 0;
+			skb_frag_off_set(frag, 0);
 			skb_frag_size_set(frag, hlen);
 			RX_USED_ADD(page, hlen + cp->crc_size);
 		}
@@ -2828,7 +2816,7 @@ static inline int cas_xmit_tx_ringN(struct cas *cp, int ring,
 		mapping = skb_frag_dma_map(&cp->pdev->dev, fragp, 0, len,
 					   DMA_TO_DEVICE);
 
-		tabort = cas_calc_tabort(cp, fragp->page_offset, len);
+		tabort = cas_calc_tabort(cp, skb_frag_off(fragp), len);
 		if (unlikely(tabort)) {
 			void *addr;
 
@@ -2839,7 +2827,7 @@ static inline int cas_xmit_tx_ringN(struct cas *cp, int ring,
 
 			addr = cas_page_map(skb_frag_page(fragp));
 			memcpy(tx_tiny_buf(cp, ring, entry),
-			       addr + fragp->page_offset + len - tabort,
+			       addr + skb_frag_off(fragp) + len - tabort,
 			       tabort);
 			cas_page_unmap(addr);
 			mapping = tx_tiny_map(cp, ring, entry, tentry);
@@ -4079,9 +4067,9 @@ done:
 #endif
 }
 
-static void cas_link_timer(unsigned long data)
+static void cas_link_timer(struct timer_list *t)
 {
-	struct cas *cp = (struct cas *) data;
+	struct cas *cp = from_timer(cp, t, link_timer);
 	int mask, pending = 0, reset = 0;
 	unsigned long flags;
 
@@ -5039,9 +5027,7 @@ static int cas_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	spin_lock_init(&cp->stat_lock[N_TX_RINGS]);
 	mutex_init(&cp->pm_mutex);
 
-	init_timer(&cp->link_timer);
-	cp->link_timer.function = cas_link_timer;
-	cp->link_timer.data = (unsigned long) cp;
+	timer_setup(&cp->link_timer, cas_link_timer, 0);
 
 #if 1
 	/* Just in case the implementation of atomic operations

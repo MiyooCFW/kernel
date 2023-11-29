@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  libata-scsi.c - helper library for ATA
  *
@@ -8,29 +9,12 @@
  *  Copyright 2003-2004 Red Hat, Inc.  All rights reserved.
  *  Copyright 2003-2004 Jeff Garzik
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; see the file COPYING.  If not, write to
- *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
- *
- *
  *  libata documentation is available via 'make {ps|pdf}docs',
  *  as Documentation/driver-api/libata.rst
  *
  *  Hardware documentation available from
  *  - http://www.t10.org/
  *  - http://www.t13.org/
- *
  */
 
 #include <linux/slab.h>
@@ -106,10 +90,12 @@ static const u8 def_control_mpage[CONTROL_MPAGE_LEN] = {
 };
 
 static const char *ata_lpm_policy_names[] = {
-	[ATA_LPM_UNKNOWN]	= "max_performance",
-	[ATA_LPM_MAX_POWER]	= "max_performance",
-	[ATA_LPM_MED_POWER]	= "medium_power",
-	[ATA_LPM_MIN_POWER]	= "min_power",
+	[ATA_LPM_UNKNOWN]		= "max_performance",
+	[ATA_LPM_MAX_POWER]		= "max_performance",
+	[ATA_LPM_MED_POWER]		= "medium_power",
+	[ATA_LPM_MED_POWER_WITH_DIPM]	= "med_power_with_dipm",
+	[ATA_LPM_MIN_POWER_WITH_PARTIAL] = "min_power_with_partial",
+	[ATA_LPM_MIN_POWER]		= "min_power",
 };
 
 static ssize_t ata_scsi_lpm_store(struct device *device,
@@ -596,8 +582,9 @@ static int ata_get_identity(struct ata_port *ap, struct scsi_device *sdev,
 int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 {
 	int rc = 0;
+	u8 sensebuf[SCSI_SENSE_BUFFERSIZE];
 	u8 scsi_cmd[MAX_COMMAND_SIZE];
-	u8 args[4], *argbuf = NULL, *sensebuf = NULL;
+	u8 args[4], *argbuf = NULL;
 	int argsize = 0;
 	enum dma_data_direction data_dir;
 	struct scsi_sense_hdr sshdr;
@@ -609,10 +596,7 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 	if (copy_from_user(args, arg, sizeof(args)))
 		return -EFAULT;
 
-	sensebuf = kzalloc(SCSI_SENSE_BUFFERSIZE, GFP_NOIO);
-	if (!sensebuf)
-		return -ENOMEM;
-
+	memset(sensebuf, 0, sizeof(sensebuf));
 	memset(scsi_cmd, 0, sizeof(scsi_cmd));
 
 	if (args[3]) {
@@ -639,8 +623,8 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 	if (args[0] == ATA_CMD_SMART) { /* hack -- ide driver does this too */
 		scsi_cmd[6]  = args[3];
 		scsi_cmd[8]  = args[1];
-		scsi_cmd[10] = 0x4f;
-		scsi_cmd[12] = 0xc2;
+		scsi_cmd[10] = ATA_SMART_LBAM_PASS;
+		scsi_cmd[12] = ATA_SMART_LBAH_PASS;
 	} else {
 		scsi_cmd[6]  = args[1];
 	}
@@ -684,7 +668,6 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 	 && copy_to_user(arg + sizeof(args), argbuf, argsize))
 		rc = -EFAULT;
 error:
-	kfree(sensebuf);
 	kfree(argbuf);
 	return rc;
 }
@@ -703,8 +686,9 @@ error:
 int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg)
 {
 	int rc = 0;
+	u8 sensebuf[SCSI_SENSE_BUFFERSIZE];
 	u8 scsi_cmd[MAX_COMMAND_SIZE];
-	u8 args[7], *sensebuf = NULL;
+	u8 args[7];
 	struct scsi_sense_hdr sshdr;
 	int cmd_result;
 
@@ -714,10 +698,7 @@ int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg)
 	if (copy_from_user(args, arg, sizeof(args)))
 		return -EFAULT;
 
-	sensebuf = kzalloc(SCSI_SENSE_BUFFERSIZE, GFP_NOIO);
-	if (!sensebuf)
-		return -ENOMEM;
-
+	memset(sensebuf, 0, sizeof(sensebuf));
 	memset(scsi_cmd, 0, sizeof(scsi_cmd));
 	scsi_cmd[0]  = ATA_16;
 	scsi_cmd[1]  = (3 << 1); /* Non-data */
@@ -768,7 +749,6 @@ int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg)
 	}
 
  error:
-	kfree(sensebuf);
 	return rc;
 }
 
@@ -782,7 +762,7 @@ static int ata_ioc32(struct ata_port *ap)
 }
 
 int ata_sas_scsi_ioctl(struct ata_port *ap, struct scsi_device *scsidev,
-		     int cmd, void __user *arg)
+		     unsigned int cmd, void __user *arg)
 {
 	unsigned long val;
 	int rc = -EINVAL;
@@ -833,7 +813,8 @@ int ata_sas_scsi_ioctl(struct ata_port *ap, struct scsi_device *scsidev,
 }
 EXPORT_SYMBOL_GPL(ata_sas_scsi_ioctl);
 
-int ata_scsi_ioctl(struct scsi_device *scsidev, int cmd, void __user *arg)
+int ata_scsi_ioctl(struct scsi_device *scsidev, unsigned int cmd,
+		   void __user *arg)
 {
 	return ata_sas_scsi_ioctl(ata_shost_to_port(scsidev->host),
 				scsidev, cmd, arg);
@@ -871,6 +852,9 @@ static struct ata_queued_cmd *ata_scsi_qc_new(struct ata_device *dev,
 
 		qc->sg = scsi_sglist(cmd);
 		qc->n_elem = scsi_sg_count(cmd);
+
+		if (cmd->request->rq_flags & RQF_QUIET)
+			qc->flags |= ATA_QCFLAG_QUIET;
 	} else {
 		cmd->result = (DID_OK << 16) | (QUEUE_FULL << 1);
 		cmd->scsi_done(cmd);
@@ -1315,11 +1299,9 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 		int depth;
 
 		depth = min(sdev->host->can_queue, ata_id_queue_depth(dev->id));
-		depth = min(ATA_MAX_QUEUE - 1, depth);
+		depth = min(ATA_MAX_QUEUE, depth);
 		scsi_change_queue_depth(sdev, depth);
 	}
-
-	blk_queue_flush_queueable(q, false);
 
 	if (dev->flags & ATA_DFLAG_TRUSTED)
 		sdev->security_supported = 1;
@@ -1428,7 +1410,7 @@ int __ata_change_queue_depth(struct ata_port *ap, struct scsi_device *sdev,
 	/* limit and apply queue depth */
 	queue_depth = min(queue_depth, sdev->host->can_queue);
 	queue_depth = min(queue_depth, ata_id_queue_depth(dev->id));
-	queue_depth = min(queue_depth, ATA_MAX_QUEUE - 1);
+	queue_depth = min(queue_depth, ATA_MAX_QUEUE);
 
 	if (sdev->queue_depth == queue_depth)
 		return -EINVAL;
@@ -1915,7 +1897,7 @@ static unsigned int ata_scsi_rw_xlat(struct ata_queued_cmd *qc)
 	qc->nbytes = n_block * scmd->device->sector_size;
 
 	rc = ata_build_rw_tf(&qc->tf, qc->dev, block, n_block, tf_flags,
-			     qc->tag, class);
+			     qc->hw_tag, class);
 
 	if (likely(rc == 0))
 		return 0;
@@ -2166,7 +2148,7 @@ static void ata_scsi_rbuf_fill(struct ata_scsi_args *args,
  */
 static unsigned int ata_scsiop_inq_std(struct ata_scsi_args *args, u8 *rbuf)
 {
-	const u8 versions[] = {
+	static const u8 versions[] = {
 		0x00,
 		0x60,	/* SAM-3 (no version claimed) */
 
@@ -2176,7 +2158,7 @@ static unsigned int ata_scsiop_inq_std(struct ata_scsi_args *args, u8 *rbuf)
 		0x03,
 		0x00	/* SPC-3 (no version claimed) */
 	};
-	const u8 versions_zbc[] = {
+	static const u8 versions_zbc[] = {
 		0x00,
 		0xA0,	/* SAM-5 (no version claimed) */
 
@@ -2248,7 +2230,7 @@ static unsigned int ata_scsiop_inq_std(struct ata_scsi_args *args, u8 *rbuf)
 static unsigned int ata_scsiop_inq_00(struct ata_scsi_args *args, u8 *rbuf)
 {
 	int num_pages;
-	const u8 pages[] = {
+	static const u8 pages[] = {
 		0x00,	/* page 0x00, this page */
 		0x80,	/* page 0x80, unit serial no page */
 		0x83,	/* page 0x83, device ident page */
@@ -2279,7 +2261,7 @@ static unsigned int ata_scsiop_inq_00(struct ata_scsi_args *args, u8 *rbuf)
  */
 static unsigned int ata_scsiop_inq_80(struct ata_scsi_args *args, u8 *rbuf)
 {
-	const u8 hdr[] = {
+	static const u8 hdr[] = {
 		0,
 		0x80,			/* this page code */
 		0,
@@ -2607,7 +2589,7 @@ static unsigned int ata_scsiop_mode_sense(struct ata_scsi_args *args, u8 *rbuf)
 {
 	struct ata_device *dev = args->dev;
 	u8 *scsicmd = args->cmd->cmnd, *p = rbuf;
-	const u8 sat_blk_desc[] = {
+	static const u8 sat_blk_desc[] = {
 		0, 0, 0, 0,	/* number of blocks: sat unspecified */
 		0,
 		0, 0x2, 0x0	/* block length: 512 bytes */
@@ -3018,7 +3000,7 @@ static unsigned int atapi_xlat(struct ata_queued_cmd *qc)
 	 * This inconsistency confuses several controllers which
 	 * perform PIO using DMA such as Intel AHCIs and sil3124/32.
 	 * These controllers use actual number of transferred bytes to
-	 * update DMA poitner and transfer of 4n+2 bytes make those
+	 * update DMA pointer and transfer of 4n+2 bytes make those
 	 * controller push DMA pointer by 4n+4 bytes because SATA data
 	 * FISes are aligned to 4 bytes.  This causes data corruption
 	 * and buffer overrun.
@@ -3288,7 +3270,7 @@ static unsigned int ata_scsi_pass_thru(struct ata_queued_cmd *qc)
 
 	/* For NCQ commands copy the tag value */
 	if (ata_is_ncq(tf->protocol))
-		tf->nsect = qc->tag << 3;
+		tf->nsect = qc->hw_tag << 3;
 
 	/* enforce correct master/slave bit */
 	tf->device = dev->devno ?
@@ -3568,7 +3550,7 @@ static unsigned int ata_scsi_write_same_xlat(struct ata_queued_cmd *qc)
 		tf->protocol = ATA_PROT_NCQ;
 		tf->command = ATA_CMD_FPDMA_SEND;
 		tf->hob_nsect = ATA_SUBCMD_FPDMA_SEND_DSM & 0x1f;
-		tf->nsect = qc->tag << 3;
+		tf->nsect = qc->hw_tag << 3;
 		tf->hob_feature = (size / 512) >> 8;
 		tf->feature = size / 512;
 
@@ -3788,7 +3770,7 @@ static unsigned int ata_scsi_zbc_in_xlat(struct ata_queued_cmd *qc)
 		tf->protocol = ATA_PROT_NCQ;
 		tf->command = ATA_CMD_FPDMA_RECV;
 		tf->hob_nsect = ATA_SUBCMD_FPDMA_RECV_ZAC_MGMT_IN & 0x1f;
-		tf->nsect = qc->tag << 3;
+		tf->nsect = qc->hw_tag << 3;
 		tf->feature = sect & 0xff;
 		tf->hob_feature = (sect >> 8) & 0xff;
 		tf->auxiliary = ATA_SUBCMD_ZAC_MGMT_IN_REPORT_ZONES | (options << 8);
@@ -3877,7 +3859,7 @@ static unsigned int ata_scsi_zbc_out_xlat(struct ata_queued_cmd *qc)
 		tf->protocol = ATA_PROT_NCQ_NODATA;
 		tf->command = ATA_CMD_NCQ_NON_DATA;
 		tf->feature = ATA_SUBCMD_NCQ_NON_DATA_ZAC_MGMT_OUT;
-		tf->nsect = qc->tag << 3;
+		tf->nsect = qc->hw_tag << 3;
 		tf->auxiliary = sa | ((u16)all << 8);
 	} else {
 		tf->protocol = ATA_PROT_NODATA;
@@ -4349,10 +4331,10 @@ static inline ata_xlat_func_t ata_get_xlat_func(struct ata_device *dev, u8 cmd)
 static inline void ata_scsi_dump_cdb(struct ata_port *ap,
 				     struct scsi_cmnd *cmd)
 {
-#ifdef ATA_DEBUG
+#ifdef ATA_VERBOSE_DEBUG
 	struct scsi_device *scsidev = cmd->device;
 
-	DPRINTK("CDB (%u:%d,%d,%lld) %9ph\n",
+	VPRINTK("CDB (%u:%d,%d,%lld) %9ph\n",
 		ap->print_id,
 		scsidev->channel, scsidev->id, scsidev->lun,
 		cmd->cmnd);
@@ -4844,27 +4826,6 @@ void ata_scsi_hotplug(struct work_struct *work)
 		return;
 	}
 
-	/*
-	 * XXX - UGLY HACK
-	 *
-	 * The block layer suspend/resume path is fundamentally broken due
-	 * to freezable kthreads and workqueue and may deadlock if a block
-	 * device gets removed while resume is in progress.  I don't know
-	 * what the solution is short of removing freezable kthreads and
-	 * workqueues altogether.
-	 *
-	 * The following is an ugly hack to avoid kicking off device
-	 * removal while freezer is active.  This is a joke but does avoid
-	 * this particular deadlock scenario.
-	 *
-	 * https://bugzilla.kernel.org/show_bug.cgi?id=62801
-	 * http://marc.info/?l=linux-kernel&m=138695698516487
-	 */
-#ifdef CONFIG_FREEZER
-	while (pm_freezing)
-		msleep(10);
-#endif
-
 	DPRINTK("ENTER\n");
 	mutex_lock(&ap->scsi_scan_mutex);
 
@@ -5112,6 +5073,18 @@ int ata_sas_port_init(struct ata_port *ap)
 }
 EXPORT_SYMBOL_GPL(ata_sas_port_init);
 
+int ata_sas_tport_add(struct device *parent, struct ata_port *ap)
+{
+	return ata_tport_add(parent, ap);
+}
+EXPORT_SYMBOL_GPL(ata_sas_tport_add);
+
+void ata_sas_tport_delete(struct ata_port *ap)
+{
+	ata_tport_delete(ap);
+}
+EXPORT_SYMBOL_GPL(ata_sas_tport_delete);
+
 /**
  *	ata_sas_port_destroy - Destroy a SATA port allocated by ata_sas_port_alloc
  *	@ap: SATA port to destroy
@@ -5178,7 +5151,7 @@ int ata_sas_allocate_tag(struct ata_port *ap)
 		tag = tag < max_queue ? tag : 0;
 
 		/* the last tag is reserved for internal command. */
-		if (tag == ATA_TAG_INTERNAL)
+		if (ata_tag_internal(tag))
 			continue;
 
 		if (!test_and_set_bit(tag, &ap->sas_tag_allocated)) {

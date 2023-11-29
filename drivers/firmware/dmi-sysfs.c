@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * dmi-sysfs.c
  *
@@ -652,7 +653,7 @@ static int __init dmi_sysfs_init(void)
 	int val;
 
 	if (!dmi_kobj) {
-		pr_err("dmi-sysfs: dmi entry is absent.\n");
+		pr_debug("dmi-sysfs: dmi entry is absent.\n");
 		error = -ENODATA;
 		goto err;
 	}

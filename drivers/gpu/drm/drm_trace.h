@@ -6,6 +6,8 @@
 #include <linux/types.h>
 #include <linux/tracepoint.h>
 
+struct drm_file;
+
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM drm
 #define TRACE_INCLUDE_FILE drm_trace
@@ -62,5 +64,5 @@ TRACE_EVENT(drm_vblank_event_delivered,
 
 /* This part must be outside protection */
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH .
+#define TRACE_INCLUDE_PATH ../../drivers/gpu/drm
 #include <trace/define_trace.h>

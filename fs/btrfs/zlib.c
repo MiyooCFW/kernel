@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2008 Oracle.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License v2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  *
  * Based on jffs2 zlib code:
  * Copyright © 2001-2007 Red Hat, Inc.
@@ -37,7 +24,35 @@ struct workspace {
 	z_stream strm;
 	char *buf;
 	struct list_head list;
+	int level;
 };
+
+static struct workspace_manager wsm;
+
+static void zlib_init_workspace_manager(void)
+{
+	btrfs_init_workspace_manager(&wsm, &btrfs_zlib_compress);
+}
+
+static void zlib_cleanup_workspace_manager(void)
+{
+	btrfs_cleanup_workspace_manager(&wsm);
+}
+
+static struct list_head *zlib_get_workspace(unsigned int level)
+{
+	struct list_head *ws = btrfs_get_workspace(&wsm, level);
+	struct workspace *workspace = list_entry(ws, struct workspace, list);
+
+	workspace->level = level;
+
+	return ws;
+}
+
+static void zlib_put_workspace(struct list_head *ws)
+{
+	btrfs_put_workspace(&wsm, ws);
+}
 
 static void zlib_free_workspace(struct list_head *ws)
 {
@@ -48,7 +63,7 @@ static void zlib_free_workspace(struct list_head *ws)
 	kfree(workspace);
 }
 
-static struct list_head *zlib_alloc_workspace(void)
+static struct list_head *zlib_alloc_workspace(unsigned int level)
 {
 	struct workspace *workspace;
 	int workspacesize;
@@ -59,7 +74,8 @@ static struct list_head *zlib_alloc_workspace(void)
 
 	workspacesize = max(zlib_deflate_workspacesize(MAX_WBITS, MAX_MEM_LEVEL),
 			zlib_inflate_workspacesize());
-	workspace->strm.workspace = kvmalloc(workspacesize, GFP_KERNEL);
+	workspace->strm.workspace = kvzalloc(workspacesize, GFP_KERNEL);
+	workspace->level = level;
 	workspace->buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!workspace->strm.workspace || !workspace->buf)
 		goto fail;
@@ -96,7 +112,7 @@ static int zlib_compress_pages(struct list_head *ws,
 	*total_out = 0;
 	*total_in = 0;
 
-	if (Z_OK != zlib_deflateInit(&workspace->strm, 3)) {
+	if (Z_OK != zlib_deflateInit(&workspace->strm, workspace->level)) {
 		pr_warn("BTRFS: deflateInit failed\n");
 		ret = -EIO;
 		goto out;
@@ -403,9 +419,15 @@ next:
 }
 
 const struct btrfs_compress_op btrfs_zlib_compress = {
+	.init_workspace_manager	= zlib_init_workspace_manager,
+	.cleanup_workspace_manager = zlib_cleanup_workspace_manager,
+	.get_workspace		= zlib_get_workspace,
+	.put_workspace		= zlib_put_workspace,
 	.alloc_workspace	= zlib_alloc_workspace,
 	.free_workspace		= zlib_free_workspace,
 	.compress_pages		= zlib_compress_pages,
 	.decompress_bio		= zlib_decompress_bio,
 	.decompress		= zlib_decompress,
+	.max_level		= 9,
+	.default_level		= BTRFS_ZLIB_DEFAULT_LEVEL,
 };

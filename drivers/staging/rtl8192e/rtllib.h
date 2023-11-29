@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Merged with mainline rtllib.h in Aug 2004.  Original ieee802_11
  * remains copyright by the original authors
@@ -15,11 +16,6 @@
  *
  * Modified for Realtek's wi-fi cards by Andrea Merello
  * <andrea.merello@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation. See README and COPYING for
- * more details.
  */
 #ifndef RTLLIB_H
 #define RTLLIB_H
@@ -483,7 +479,6 @@ enum wireless_mode {
 #define P80211_OUI_LEN 3
 
 struct rtllib_snap_hdr {
-
 	u8    dsap;   /* always 0xAA */
 	u8    ssap;   /* always 0xAA */
 	u8    ctrl;   /* always 0x03 */
@@ -1560,11 +1555,11 @@ struct rtllib_device {
 	u16 scan_watch_dog;
 
 	/* map of allowed channels. 0 is dummy */
-	void *pDot11dInfo;
-	bool bGlobalDomain;
+	void *dot11d_info;
+	bool global_domain;
 	u8 active_channel_map[MAX_CHANNEL_NUMBER+1];
 
-	u8   IbssStartChnl;
+	u8   bss_start_channel;
 	u8   ibss_maxjoin_chal;
 
 	int rate;       /* current rate */
@@ -1944,7 +1939,7 @@ int rtllib_encrypt_fragment(
 	int hdr_len);
 
 int rtllib_xmit(struct sk_buff *skb,  struct net_device *dev);
-void rtllib_txb_free(struct rtllib_txb *);
+void rtllib_txb_free(struct rtllib_txb *txb);
 
 /* rtllib_rx.c */
 int rtllib_rx(struct rtllib_device *ieee, struct sk_buff *skb,
@@ -1987,7 +1982,7 @@ void rtllib_softmac_xmit(struct rtllib_txb *txb, struct rtllib_device *ieee);
 void rtllib_stop_send_beacons(struct rtllib_device *ieee);
 void notify_wx_assoc_event(struct rtllib_device *ieee);
 void rtllib_start_ibss(struct rtllib_device *ieee);
-void rtllib_softmac_init(struct rtllib_device *ieee);
+int rtllib_softmac_init(struct rtllib_device *ieee);
 void rtllib_softmac_free(struct rtllib_device *ieee);
 void rtllib_disassociate(struct rtllib_device *ieee);
 void rtllib_stop_scan(struct rtllib_device *ieee);
@@ -2113,9 +2108,9 @@ void TsInitAddBA(struct rtllib_device *ieee, struct tx_ts_record *pTS,
 void TsInitDelBA(struct rtllib_device *ieee,
 		 struct ts_common_info *pTsCommonInfo,
 		 enum tr_select TxRxSelect);
-void BaSetupTimeOut(unsigned long data);
-void TxBaInactTimeout(unsigned long data);
-void RxBaInactTimeout(unsigned long data);
+void BaSetupTimeOut(struct timer_list *t);
+void TxBaInactTimeout(struct timer_list *t);
+void RxBaInactTimeout(struct timer_list *t);
 void ResetBaEntry(struct ba_record *pBA);
 bool GetTs(struct rtllib_device *ieee, struct ts_common_info **ppTS, u8 *Addr,
 	   u8 TID, enum tr_select TxRxSelect, bool bAddNewTs);
@@ -2136,7 +2131,7 @@ static inline const char *escape_essid(const char *essid, u8 essid_len)
 		return escaped;
 	}
 
-	snprintf(escaped, sizeof(escaped), "%*pEn", essid_len, essid);
+	snprintf(escaped, sizeof(escaped), "%*pE", essid_len, essid);
 	return escaped;
 }
 

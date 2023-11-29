@@ -1,39 +1,30 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Texas Instruments
  * Author: Rob Clark <robdclark@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef __TILCDC_DRV_H__
 #define __TILCDC_DRV_H__
 
-#include <linux/clk.h>
 #include <linux/cpufreq.h>
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/pm.h>
-#include <linux/pm_runtime.h>
-#include <linux/slab.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/list.h>
+#include <linux/irqreturn.h>
 
-#include <drm/drmP.h>
-#include <drm/drm_crtc_helper.h>
-#include <drm/drm_gem_cma_helper.h>
-#include <drm/drm_fb_cma_helper.h>
-#include <drm/drm_bridge.h>
+#include <drm/drm_print.h>
+
+struct clk;
+struct workqueue_struct;
+
+struct drm_connector;
+struct drm_connector_helper_funcs;
+struct drm_crtc;
+struct drm_device;
+struct drm_display_mode;
+struct drm_encoder;
+struct drm_framebuffer;
+struct drm_minor;
+struct drm_pending_vblank_event;
+struct drm_plane;
 
 /* Defaulting to pixel clock defined on AM335x */
 #define TILCDC_DEFAULT_MAX_PIXELCLOCK  126000
@@ -70,16 +61,11 @@ struct tilcdc_drm_private {
 	const uint32_t *pixelformats;
 	uint32_t num_pixelformats;
 
-	/* The context for pm susped/resume cycle is stored here */
-	struct drm_atomic_state *saved_state;
-
 #ifdef CONFIG_CPU_FREQ
 	struct notifier_block freq_transition;
 #endif
 
 	struct workqueue_struct *wq;
-
-	struct drm_fbdev_cma *fbdev;
 
 	struct drm_crtc *crtc;
 

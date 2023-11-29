@@ -1,22 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Driver for Rio Karma
  *
  *   (c) 2006 Bob Copeland <me@bobcopeland.com>
  *   (c) 2006 Keith Bennett <keith@mcs.st-and.ac.uk>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2, or (at your option) any
- * later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/module.h>
@@ -36,6 +23,7 @@
 MODULE_DESCRIPTION("Driver for Rio Karma");
 MODULE_AUTHOR("Bob Copeland <me@bobcopeland.com>, Keith Bennett <keith@mcs.st-and.ac.uk>");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(USB_STORAGE);
 
 #define RIO_PREFIX "RIOP\x00"
 #define RIO_PREFIX_LEN 5
@@ -180,12 +168,14 @@ static int rio_karma_transport(struct scsi_cmnd *srb, struct us_data *us)
 static void rio_karma_destructor(void *extra)
 {
 	struct karma_data *data = (struct karma_data *) extra;
+
 	kfree(data->recv);
 }
 
 static int rio_karma_init(struct us_data *us)
 {
 	struct karma_data *data = kzalloc(sizeof(struct karma_data), GFP_NOIO);
+
 	if (!data)
 		return -ENOMEM;
 

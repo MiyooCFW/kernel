@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) STRATO AG 2011.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License v2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  */
 
 /*
@@ -96,9 +83,9 @@
 #include <linux/blkdev.h>
 #include <linux/mm.h>
 #include <linux/string.h>
+#include <crypto/hash.h>
 #include "ctree.h"
 #include "disk-io.h"
-#include "hash.h"
 #include "transaction.h"
 #include "extent_io.h"
 #include "volumes.h"
@@ -613,7 +600,7 @@ static void btrfsic_dev_state_hashtable_add(
 		struct btrfsic_dev_state_hashtable *h)
 {
 	const unsigned int hashval =
-	    (((unsigned int)((uintptr_t)ds->bdev)) &
+	    (((unsigned int)((uintptr_t)ds->bdev->bd_dev)) &
 	     (BTRFSIC_DEV2STATE_HASHTABLE_SIZE - 1));
 
 	list_add(&ds->collision_resolving_node, h->table + hashval);
@@ -952,7 +939,7 @@ static void btrfsic_stack_frame_free(struct btrfsic_stack_frame *sf)
 	kfree(sf);
 }
 
-static int btrfsic_process_metablock(
+static noinline_for_stack int btrfsic_process_metablock(
 		struct btrfsic_state *state,
 		struct btrfsic_block *const first_block,
 		struct btrfsic_block_data_ctx *const first_block_ctx,
@@ -1214,24 +1201,24 @@ static void btrfsic_read_from_block_data(
 	void *dstv, u32 offset, size_t len)
 {
 	size_t cur;
-	size_t offset_in_page;
+	size_t pgoff;
 	char *kaddr;
 	char *dst = (char *)dstv;
-	size_t start_offset = block_ctx->start & ((u64)PAGE_SIZE - 1);
+	size_t start_offset = offset_in_page(block_ctx->start);
 	unsigned long i = (start_offset + offset) >> PAGE_SHIFT;
 
 	WARN_ON(offset + len > block_ctx->len);
-	offset_in_page = (start_offset + offset) & (PAGE_SIZE - 1);
+	pgoff = offset_in_page(start_offset + offset);
 
 	while (len > 0) {
-		cur = min(len, ((size_t)PAGE_SIZE - offset_in_page));
+		cur = min(len, ((size_t)PAGE_SIZE - pgoff));
 		BUG_ON(i >= DIV_ROUND_UP(block_ctx->len, PAGE_SIZE));
 		kaddr = block_ctx->datav[i];
-		memcpy(dst, kaddr + offset_in_page, cur);
+		memcpy(dst, kaddr + pgoff, cur);
 
 		dst += cur;
 		len -= cur;
-		offset_in_page = 0;
+		pgoff = 0;
 		i++;
 	}
 }
@@ -1551,7 +1538,12 @@ static int btrfsic_map_block(struct btrfsic_state *state, u64 bytenr, u32 len,
 	}
 
 	device = multi->stripes[0].dev;
-	block_ctx_out->dev = btrfsic_dev_state_lookup(device->bdev->bd_dev);
+	if (test_bit(BTRFS_DEV_STATE_MISSING, &device->dev_state) ||
+	    !device->bdev || !device->name)
+		block_ctx_out->dev = NULL;
+	else
+		block_ctx_out->dev = btrfsic_dev_state_lookup(
+							device->bdev->bd_dev);
 	block_ctx_out->dev_bytenr = multi->stripes[0].physical;
 	block_ctx_out->start = bytenr;
 	block_ctx_out->len = len;
@@ -1601,13 +1593,14 @@ static int btrfsic_read_block(struct btrfsic_state *state,
 {
 	unsigned int num_pages;
 	unsigned int i;
+	size_t size;
 	u64 dev_bytenr;
 	int ret;
 
 	BUG_ON(block_ctx->datav);
 	BUG_ON(block_ctx->pagev);
 	BUG_ON(block_ctx->mem_to_free);
-	if (block_ctx->dev_bytenr & ((u64)PAGE_SIZE - 1)) {
+	if (!PAGE_ALIGNED(block_ctx->dev_bytenr)) {
 		pr_info("btrfsic: read_block() with unaligned bytenr %llu\n",
 		       block_ctx->dev_bytenr);
 		return -1;
@@ -1615,9 +1608,8 @@ static int btrfsic_read_block(struct btrfsic_state *state,
 
 	num_pages = (block_ctx->len + (u64)PAGE_SIZE - 1) >>
 		    PAGE_SHIFT;
-	block_ctx->mem_to_free = kzalloc((sizeof(*block_ctx->datav) +
-					  sizeof(*block_ctx->pagev)) *
-					 num_pages, GFP_NOFS);
+	size = sizeof(*block_ctx->datav) + sizeof(*block_ctx->pagev);
+	block_ctx->mem_to_free = kcalloc(num_pages, size, GFP_NOFS);
 	if (!block_ctx->mem_to_free)
 		return -ENOMEM;
 	block_ctx->datav = block_ctx->mem_to_free;
@@ -1636,7 +1628,7 @@ static int btrfsic_read_block(struct btrfsic_state *state,
 		bio = btrfs_io_bio_alloc(num_pages - i);
 		bio_set_dev(bio, block_ctx->dev->bdev);
 		bio->bi_iter.bi_sector = dev_bytenr >> 9;
-		bio_set_op_attrs(bio, REQ_OP_READ, 0);
+		bio->bi_opf = REQ_OP_READ;
 
 		for (j = i; j < num_pages; j++) {
 			ret = bio_add_page(bio, block_ctx->pagev[j],
@@ -1713,13 +1705,14 @@ static void btrfsic_dump_database(struct btrfsic_state *state)
  * Test whether the disk block contains a tree block (leaf or node)
  * (note that this test fails for the super block)
  */
-static int btrfsic_test_for_metadata(struct btrfsic_state *state,
-				     char **datav, unsigned int num_pages)
+static noinline_for_stack int btrfsic_test_for_metadata(
+		struct btrfsic_state *state,
+		char **datav, unsigned int num_pages)
 {
 	struct btrfs_fs_info *fs_info = state->fs_info;
+	SHASH_DESC_ON_STACK(shash, fs_info->csum_shash);
 	struct btrfs_header *h;
 	u8 csum[BTRFS_CSUM_SIZE];
-	u32 crc = ~(u32)0;
 	unsigned int i;
 
 	if (num_pages * PAGE_SIZE < state->metablock_size)
@@ -1727,17 +1720,20 @@ static int btrfsic_test_for_metadata(struct btrfsic_state *state,
 	num_pages = state->metablock_size >> PAGE_SHIFT;
 	h = (struct btrfs_header *)datav[0];
 
-	if (memcmp(h->fsid, fs_info->fsid, BTRFS_FSID_SIZE))
+	if (memcmp(h->fsid, fs_info->fs_devices->fsid, BTRFS_FSID_SIZE))
 		return 1;
+
+	shash->tfm = fs_info->csum_shash;
+	crypto_shash_init(shash);
 
 	for (i = 0; i < num_pages; i++) {
 		u8 *data = i ? datav[i] : (datav[i] + BTRFS_CSUM_SIZE);
 		size_t sublen = i ? PAGE_SIZE :
 				    (PAGE_SIZE - BTRFS_CSUM_SIZE);
 
-		crc = btrfs_crc32c(crc, data, sublen);
+		crypto_shash_update(shash, data, sublen);
 	}
-	btrfs_csum_final(crc, csum);
+	crypto_shash_final(shash, csum);
 	if (memcmp(csum, h->csum, state->csum_size))
 		return 1;
 
@@ -1785,7 +1781,7 @@ again:
 				return;
 			}
 			is_metadata = 1;
-			BUG_ON(BTRFS_SUPER_INFO_SIZE & (PAGE_SIZE - 1));
+			BUG_ON(!PAGE_ALIGNED(BTRFS_SUPER_INFO_SIZE));
 			processed_len = BTRFS_SUPER_INFO_SIZE;
 			if (state->print_mask &
 			    BTRFSIC_PRINT_MASK_TREE_BEFORE_SB_WRITE) {
@@ -2334,7 +2330,7 @@ static int btrfsic_check_all_ref_blocks(struct btrfsic_state *state,
 		 * write operations. Therefore it keeps the linkage
 		 * information for a block until a block is
 		 * rewritten. This can temporarily cause incorrect
-		 * and even circular linkage informations. This
+		 * and even circular linkage information. This
 		 * causes no harm unless such blocks are referenced
 		 * by the most recent super block.
 		 */
@@ -2802,7 +2798,7 @@ static void __btrfsic_submit_bio(struct bio *bio)
 	mutex_lock(&btrfsic_mutex);
 	/* since btrfsic_submit_bio() is also called before
 	 * btrfsic_mount(), this might return NULL */
-	dev_state = btrfsic_dev_state_lookup(bio_dev(bio));
+	dev_state = btrfsic_dev_state_lookup(bio_dev(bio) + bio->bi_partno);
 	if (NULL != dev_state &&
 	    (bio_op(bio) == REQ_OP_WRITE) && bio_has_data(bio)) {
 		unsigned int i = 0;
@@ -2899,12 +2895,12 @@ int btrfsic_mount(struct btrfs_fs_info *fs_info,
 	struct list_head *dev_head = &fs_devices->devices;
 	struct btrfs_device *device;
 
-	if (fs_info->nodesize & ((u64)PAGE_SIZE - 1)) {
+	if (!PAGE_ALIGNED(fs_info->nodesize)) {
 		pr_info("btrfsic: cannot handle nodesize %d not being a multiple of PAGE_SIZE %ld!\n",
 		       fs_info->nodesize, PAGE_SIZE);
 		return -1;
 	}
-	if (fs_info->sectorsize & ((u64)PAGE_SIZE - 1)) {
+	if (!PAGE_ALIGNED(fs_info->sectorsize)) {
 		pr_info("btrfsic: cannot handle sectorsize %d not being a multiple of PAGE_SIZE %ld!\n",
 		       fs_info->sectorsize, PAGE_SIZE);
 		return -1;
@@ -2912,7 +2908,7 @@ int btrfsic_mount(struct btrfs_fs_info *fs_info,
 	state = kvzalloc(sizeof(*state), GFP_KERNEL);
 	if (!state) {
 		pr_info("btrfs check-integrity: allocation failed!\n");
-		return -1;
+		return -ENOMEM;
 	}
 
 	if (!btrfsic_is_initialized) {
@@ -2944,7 +2940,7 @@ int btrfsic_mount(struct btrfs_fs_info *fs_info,
 		if (NULL == ds) {
 			pr_info("btrfs check-integrity: kmalloc() failed!\n");
 			mutex_unlock(&btrfsic_mutex);
-			return -1;
+			return -ENOMEM;
 		}
 		ds->bdev = device->bdev;
 		ds->state = state;

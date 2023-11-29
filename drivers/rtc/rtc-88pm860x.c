@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Real Time Clock driver for Marvell 88PM860x PMIC
  *
  * Copyright (c) 2010 Marvell International Ltd.
  * Author:	Haojian Zhuang <haojian.zhuang@marvell.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -137,9 +134,9 @@ static int pm860x_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	unsigned char buf[4];
 	unsigned long ticks, base, data;
 
-	if ((tm->tm_year < 70) || (tm->tm_year > 138)) {
+	if (tm->tm_year > 206) {
 		dev_dbg(info->dev, "Set time %d out of range. "
-			"Please set time between 1970 to 2038.\n",
+			"Please set time between 1970 to 2106.\n",
 			1900 + tm->tm_year);
 		return -EINVAL;
 	}
@@ -331,10 +328,8 @@ static int pm860x_rtc_probe(struct platform_device *pdev)
 	if (!info)
 		return -ENOMEM;
 	info->irq = platform_get_irq(pdev, 0);
-	if (info->irq < 0) {
-		dev_err(&pdev->dev, "No IRQ resource!\n");
+	if (info->irq < 0)
 		return info->irq;
-	}
 
 	info->chip = chip;
 	info->i2c = (chip->id == CHIP_PM8607) ? chip->client : chip->companion;

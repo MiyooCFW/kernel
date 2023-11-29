@@ -285,7 +285,7 @@ static struct rvt_mr *__rvt_alloc_mr(int count, struct ib_pd *pd)
 
 	/* Allocate struct plus pointers to first level page tables. */
 	m = (count + RVT_SEGSZ - 1) / RVT_SEGSZ;
-	mr = kzalloc(sizeof(*mr) + m * sizeof(mr->mr.map[0]), GFP_KERNEL);
+	mr = kzalloc(struct_size(mr, mr.map, m), GFP_KERNEL);
 	if (!mr)
 		goto bail;
 
@@ -383,19 +383,18 @@ struct ib_mr *rvt_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 {
 	struct rvt_mr *mr;
 	struct ib_umem *umem;
-	struct scatterlist *sg;
-	int n, m, entry;
+	struct sg_page_iter sg_iter;
+	int n, m;
 	struct ib_mr *ret;
 
 	if (length == 0)
 		return ERR_PTR(-EINVAL);
 
-	umem = ib_umem_get(pd->uobject->context, start, length,
-			   mr_access_flags, 0);
+	umem = ib_umem_get(udata, start, length, mr_access_flags, 0);
 	if (IS_ERR(umem))
 		return (void *)umem;
 
-	n = umem->nmap;
+	n = ib_umem_num_pages(umem);
 
 	mr = __rvt_alloc_mr(n, pd);
 	if (IS_ERR(mr)) {
@@ -410,23 +409,21 @@ struct ib_mr *rvt_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 	mr->mr.access_flags = mr_access_flags;
 	mr->umem = umem;
 
-	mr->mr.page_shift = umem->page_shift;
+	mr->mr.page_shift = PAGE_SHIFT;
 	m = 0;
 	n = 0;
-	for_each_sg(umem->sg_head.sgl, sg, umem->nmap, entry) {
+	for_each_sg_page (umem->sg_head.sgl, &sg_iter, umem->nmap, 0) {
 		void *vaddr;
 
-		vaddr = page_address(sg_page(sg));
+		vaddr = page_address(sg_page_iter_page(&sg_iter));
 		if (!vaddr) {
 			ret = ERR_PTR(-EINVAL);
 			goto bail_inval;
 		}
 		mr->mr.map[m]->segs[n].vaddr = vaddr;
-		mr->mr.map[m]->segs[n].length = BIT(umem->page_shift);
-		trace_rvt_mr_user_seg(&mr->mr, m, n, vaddr,
-				      BIT(umem->page_shift));
-		n++;
-		if (n == RVT_SEGSZ) {
+		mr->mr.map[m]->segs[n].length = PAGE_SIZE;
+		trace_rvt_mr_user_seg(&mr->mr, m, n, vaddr, PAGE_SIZE);
+		if (++n == RVT_SEGSZ) {
 			m++;
 			n = 0;
 		}
@@ -553,7 +550,7 @@ bool rvt_ss_has_lkey(struct rvt_sge_state *ss, u32 lkey)
  *
  * Returns 0 on success.
  */
-int rvt_dereg_mr(struct ib_mr *ibmr)
+int rvt_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
 {
 	struct rvt_mr *mr = to_imr(ibmr);
 	int ret;
@@ -565,8 +562,7 @@ int rvt_dereg_mr(struct ib_mr *ibmr)
 	if (ret)
 		goto out;
 	rvt_deinit_mregion(&mr->mr);
-	if (mr->umem)
-		ib_umem_release(mr->umem);
+	ib_umem_release(mr->umem);
 	kfree(mr);
 out:
 	return ret;
@@ -580,9 +576,8 @@ out:
  *
  * Return: the memory region on success, otherwise return an errno.
  */
-struct ib_mr *rvt_alloc_mr(struct ib_pd *pd,
-			   enum ib_mr_type mr_type,
-			   u32 max_num_sg)
+struct ib_mr *rvt_alloc_mr(struct ib_pd *pd, enum ib_mr_type mr_type,
+			   u32 max_num_sg, struct ib_udata *udata)
 {
 	struct rvt_mr *mr;
 
@@ -617,8 +612,8 @@ static int rvt_set_page(struct ib_mr *ibmr, u64 addr)
 	n = mapped_segs % RVT_SEGSZ;
 	mr->mr.map[m]->segs[n].vaddr = (void *)addr;
 	mr->mr.map[m]->segs[n].length = ps;
-	trace_rvt_mr_page_seg(&mr->mr, m, n, (void *)addr, ps);
 	mr->mr.length += ps;
+	trace_rvt_mr_page_seg(&mr->mr, m, n, (void *)addr, ps);
 
 	return 0;
 }
@@ -647,6 +642,7 @@ int rvt_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg,
 	mr->mr.iova = ibmr->iova;
 	mr->mr.offset = ibmr->iova - (u64)mr->mr.map[0]->segs[0].vaddr;
 	mr->mr.length = (size_t)ibmr->length;
+	trace_rvt_map_mr_sg(ibmr, sg_nents, sg_offset);
 	return ret;
 }
 
@@ -735,7 +731,7 @@ struct ib_fmr *rvt_alloc_fmr(struct ib_pd *pd, int mr_access_flags,
 
 	/* Allocate struct plus pointers to first level page tables. */
 	m = (fmr_attr->max_pages + RVT_SEGSZ - 1) / RVT_SEGSZ;
-	fmr = kzalloc(sizeof(*fmr) + m * sizeof(fmr->mr.map[0]), GFP_KERNEL);
+	fmr = kzalloc(struct_size(fmr, mr.map, m), GFP_KERNEL);
 	if (!fmr)
 		goto bail;
 
@@ -775,7 +771,7 @@ bail:
 
 /**
  * rvt_map_phys_fmr - set up a fast memory region
- * @ibmfr: the fast memory region to set up
+ * @ibfmr: the fast memory region to set up
  * @page_list: the list of pages to associate with the fast memory region
  * @list_len: the number of pages to associate with the fast memory region
  * @iova: the virtual address of the start of the fast memory region

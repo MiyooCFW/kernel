@@ -1,15 +1,9 @@
-/*
- * Driver for the IMX SNVS ON/OFF Power Key
- * Copyright (C) 2015 Freescale Semiconductor, Inc. All Rights Reserved.
- *
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
- */
+// SPDX-License-Identifier: GPL-2.0+
+//
+// Driver for the IMX SNVS ON/OFF Power Key
+// Copyright (C) 2015 Freescale Semiconductor, Inc. All Rights Reserved.
 
+#include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/init.h>
@@ -22,6 +16,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 
@@ -45,9 +40,9 @@ struct pwrkey_drv_data {
 	struct input_dev *input;
 };
 
-static void imx_imx_snvs_check_for_events(unsigned long data)
+static void imx_imx_snvs_check_for_events(struct timer_list *t)
 {
-	struct pwrkey_drv_data *pdata = (struct pwrkey_drv_data *) data;
+	struct pwrkey_drv_data *pdata = from_timer(pdata, t, check_timer);
 	struct input_dev *input = pdata->input;
 	u32 state;
 
@@ -87,6 +82,11 @@ static irqreturn_t imx_snvs_pwrkey_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static void imx_snvs_pwrkey_disable_clk(void *data)
+{
+	clk_disable_unprepare(data);
+}
+
 static void imx_snvs_pwrkey_act(void *pdata)
 {
 	struct pwrkey_drv_data *pd = pdata;
@@ -99,6 +99,7 @@ static int imx_snvs_pwrkey_probe(struct platform_device *pdev)
 	struct pwrkey_drv_data *pdata = NULL;
 	struct input_dev *input = NULL;
 	struct device_node *np;
+	struct clk *clk;
 	int error;
 
 	/* Get SNVS register Page */
@@ -121,21 +122,40 @@ static int imx_snvs_pwrkey_probe(struct platform_device *pdev)
 		dev_warn(&pdev->dev, "KEY_POWER without setting in dts\n");
 	}
 
+	clk = devm_clk_get_optional(&pdev->dev, NULL);
+	if (IS_ERR(clk)) {
+		dev_err(&pdev->dev, "Failed to get snvs clock (%pe)\n", clk);
+		return PTR_ERR(clk);
+	}
+
+	error = clk_prepare_enable(clk);
+	if (error) {
+		dev_err(&pdev->dev, "Failed to enable snvs clock (%pe)\n",
+			ERR_PTR(error));
+		return error;
+	}
+
+	error = devm_add_action_or_reset(&pdev->dev,
+					 imx_snvs_pwrkey_disable_clk, clk);
+	if (error) {
+		dev_err(&pdev->dev,
+			"Failed to register clock cleanup handler (%pe)\n",
+			ERR_PTR(error));
+		return error;
+	}
+
 	pdata->wakeup = of_property_read_bool(np, "wakeup-source");
 
 	pdata->irq = platform_get_irq(pdev, 0);
-	if (pdata->irq < 0) {
-		dev_err(&pdev->dev, "no irq defined in platform data\n");
+	if (pdata->irq < 0)
 		return -EINVAL;
-	}
 
 	regmap_update_bits(pdata->snvs, SNVS_LPCR_REG, SNVS_LPCR_DEP_EN, SNVS_LPCR_DEP_EN);
 
 	/* clear the unexpected interrupt before driver ready */
 	regmap_write(pdata->snvs, SNVS_LPSR_REG, SNVS_LPSR_SPO);
 
-	setup_timer(&pdata->check_timer,
-		    imx_imx_snvs_check_for_events, (unsigned long) pdata);
+	timer_setup(&pdata->check_timer, imx_imx_snvs_check_for_events, 0);
 
 	input = devm_input_allocate_device(&pdev->dev);
 	if (!input) {
@@ -175,28 +195,9 @@ static int imx_snvs_pwrkey_probe(struct platform_device *pdev)
 	}
 
 	device_init_wakeup(&pdev->dev, pdata->wakeup);
-
-	return 0;
-}
-
-static int __maybe_unused imx_snvs_pwrkey_suspend(struct device *dev)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct pwrkey_drv_data *pdata = platform_get_drvdata(pdev);
-
-	if (device_may_wakeup(&pdev->dev))
-		enable_irq_wake(pdata->irq);
-
-	return 0;
-}
-
-static int __maybe_unused imx_snvs_pwrkey_resume(struct device *dev)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct pwrkey_drv_data *pdata = platform_get_drvdata(pdev);
-
-	if (device_may_wakeup(&pdev->dev))
-		disable_irq_wake(pdata->irq);
+	error = dev_pm_set_wake_irq(&pdev->dev, pdata->irq);
+	if (error)
+		dev_err(&pdev->dev, "irq wake enable failed.\n");
 
 	return 0;
 }
@@ -207,13 +208,9 @@ static const struct of_device_id imx_snvs_pwrkey_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, imx_snvs_pwrkey_ids);
 
-static SIMPLE_DEV_PM_OPS(imx_snvs_pwrkey_pm_ops, imx_snvs_pwrkey_suspend,
-				imx_snvs_pwrkey_resume);
-
 static struct platform_driver imx_snvs_pwrkey_driver = {
 	.driver = {
 		.name = "snvs_pwrkey",
-		.pm     = &imx_snvs_pwrkey_pm_ops,
 		.of_match_table = imx_snvs_pwrkey_ids,
 	},
 	.probe = imx_snvs_pwrkey_probe,

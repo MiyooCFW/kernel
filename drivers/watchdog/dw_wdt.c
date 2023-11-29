@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2010-2011 Picochip Ltd., Jamie Iles
  * http://www.picochip.com
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  *
  * This file implements a driver for the Synopsys DesignWare watchdog device
  * in the many subsystems. The watchdog has 16 different timeout periods
@@ -15,8 +11,6 @@
  * do not implement a stop function. The watchdog core will continue to send
  * heartbeat requests after the watchdog device has been closed.
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/bitops.h>
 #include <linux/clk.h>
@@ -57,6 +51,9 @@ struct dw_wdt {
 	unsigned long		rate;
 	struct watchdog_device	wdd;
 	struct reset_control	*rst;
+	/* Save/restore */
+	u32			control;
+	u32			timeout;
 };
 
 #define to_dw_wdt(wdd)	container_of(wdd, struct dw_wdt, wdd)
@@ -205,6 +202,9 @@ static int dw_wdt_suspend(struct device *dev)
 {
 	struct dw_wdt *dw_wdt = dev_get_drvdata(dev);
 
+	dw_wdt->control = readl(dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
+	dw_wdt->timeout = readl(dw_wdt->regs + WDOG_TIMEOUT_RANGE_REG_OFFSET);
+
 	clk_disable_unprepare(dw_wdt->clk);
 
 	return 0;
@@ -217,6 +217,9 @@ static int dw_wdt_resume(struct device *dev)
 
 	if (err)
 		return err;
+
+	writel(dw_wdt->timeout, dw_wdt->regs + WDOG_TIMEOUT_RANGE_REG_OFFSET);
+	writel(dw_wdt->control, dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
 
 	dw_wdt_ping(&dw_wdt->wdd);
 
@@ -231,15 +234,13 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct watchdog_device *wdd;
 	struct dw_wdt *dw_wdt;
-	struct resource *mem;
 	int ret;
 
 	dw_wdt = devm_kzalloc(dev, sizeof(*dw_wdt), GFP_KERNEL);
 	if (!dw_wdt)
 		return -ENOMEM;
 
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	dw_wdt->regs = devm_ioremap_resource(dev, mem);
+	dw_wdt->regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(dw_wdt->regs))
 		return PTR_ERR(dw_wdt->regs);
 

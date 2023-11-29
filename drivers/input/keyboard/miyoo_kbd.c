@@ -230,7 +230,7 @@ static void report_key(uint32_t btn, uint32_t mask, uint8_t key)
   }
 }
 
-static void scan_handler(unsigned long unused)
+static void scan_handler(struct timer_list *timer)
 {
   static uint32_t pre=0;
   uint32_t scan=0, val=0, debounce=0;
@@ -1097,14 +1097,14 @@ static int __init kbd_init(void)
   mydev->name = "miyoo_keypad";
   mydev->id.bustype = BUS_HOST;
   ret = input_register_device(mydev);
- 
+
   alloc_chrdev_region(&major, 0, 1, "miyoo_kbd");
   myclass = class_create(THIS_MODULE, "miyoo_kbd");
   device_create(myclass, NULL, major, NULL, "miyoo_kbd");
   cdev_init(&mycdev, &myfops);
   cdev_add(&mycdev, major, 1);
   
-	setup_timer(&mytimer, scan_handler, 0);
+	timer_setup(&mytimer, scan_handler, 0);
   mod_timer(&mytimer, jiffies + msecs_to_jiffies(myperiod));
   return 0;
 }

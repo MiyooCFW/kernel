@@ -1,8 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  AMD K7 Powernow driver.
  *  (C) 2003 Dave Jones on behalf of SuSE Labs.
  *
- *  Licensed under the terms of the GNU GPL License version 2.
  *  Based upon datasheets & sample CPUs kindly provided by AMD.
  *
  * Errata 5:
@@ -639,8 +639,9 @@ static int powernow_cpu_init(struct cpufreq_policy *policy)
 
 	policy->cpuinfo.transition_latency =
 		cpufreq_scale(2000000UL, fsb, latency);
+	policy->freq_table = powernow_table;
 
-	return cpufreq_table_validate_and_show(policy, powernow_table);
+	return 0;
 }
 
 static int powernow_cpu_exit(struct cpufreq_policy *policy)

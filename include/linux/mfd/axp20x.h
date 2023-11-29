@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Functions and registers to access AXP20X power management chip.
  *
  * Copyright (C) 2013, Carlo Caione <carlo@caione.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __LINUX_MFD_AXP20X_H
@@ -15,6 +12,7 @@
 
 enum axp20x_variants {
 	AXP152_ID = 0,
+	AXP199_ID,
 	AXP202_ID,
 	AXP209_ID,
 	AXP221_ID,
@@ -28,6 +26,7 @@ enum axp20x_variants {
 };
 
 #define AXP20X_DATACACHE(m)		(0x04 + (m))
+#define AXP199_DATACACHE(m)		(0x06 + (m))
 
 /* Power supply */
 #define AXP152_PWR_OP_MODE		0x01
@@ -35,7 +34,7 @@ enum axp20x_variants {
 #define AXP152_ALDO_OP_MODE		0x13
 #define AXP152_LDO0_CTRL		0x15
 #define AXP152_DCDC2_V_OUT		0x23
-#define AXP152_DCDC2_V_SCAL		0x25
+#define AXP152_DCDC2_V_RAMP		0x25
 #define AXP152_DCDC1_V_OUT		0x26
 #define AXP152_DCDC3_V_OUT		0x27
 #define AXP152_ALDO12_V_OUT		0x28
@@ -48,12 +47,15 @@ enum axp20x_variants {
 #define AXP152_DCDC_FREQ		0x37
 #define AXP152_DCDC_MODE		0x80
 
+#define AXP199_USB_OTG_STATUS	0x04
+#define AXP199_DCDC1_V_OUT		0x26
+
 #define AXP20X_PWR_INPUT_STATUS		0x00
 #define AXP20X_PWR_OP_MODE		0x01
 #define AXP20X_USB_OTG_STATUS		0x02
 #define AXP20X_PWR_OUT_CTRL		0x12
 #define AXP20X_DCDC2_V_OUT		0x23
-#define AXP20X_DCDC2_LDO3_V_SCAL	0x25
+#define AXP20X_DCDC2_LDO3_V_RAMP	0x25
 #define AXP20X_DCDC3_V_OUT		0x27
 #define AXP20X_LDO24_V_OUT		0x28
 #define AXP20X_LDO3_V_OUT		0x29
@@ -131,6 +133,9 @@ enum axp20x_variants {
 #define AXP803_DCDC6_V_OUT		0x25
 #define AXP803_DCDC_FREQ_CTRL		0x3b
 
+/* Other DCDC regulator control registers are the same as AXP803 */
+#define AXP813_DCDC7_V_OUT		0x26
+
 /* Interrupt */
 #define AXP152_IRQ1_EN			0x40
 #define AXP152_IRQ2_EN			0x41
@@ -138,6 +143,15 @@ enum axp20x_variants {
 #define AXP152_IRQ1_STATE		0x48
 #define AXP152_IRQ2_STATE		0x49
 #define AXP152_IRQ3_STATE		0x4a
+
+#define AXP199_IRQ1_EN			0x40
+#define AXP199_IRQ2_EN			0x41
+#define AXP199_IRQ3_EN			0x42
+#define AXP199_IRQ4_EN			0x43
+#define AXP199_IRQ1_STATE		0x44
+#define AXP199_IRQ2_STATE		0x45
+#define AXP199_IRQ3_STATE		0x46
+#define AXP199_IRQ4_STATE		0x47
 
 #define AXP20X_IRQ1_EN			0x40
 #define AXP20X_IRQ2_EN			0x41
@@ -262,6 +276,9 @@ enum axp20x_variants {
 #define AXP288_ADC_TS_PIN_CTRL          0x84
 #define AXP288_RT_BATT_V_H		0xa0
 #define AXP288_RT_BATT_V_L		0xa1
+
+#define AXP813_ACIN_PATH_CTRL		0x3a
+#define AXP813_ADC_RATE			0x85
 
 /* Fuel Gauge */
 #define AXP288_FG_RDC1_REG          0xba
@@ -587,11 +604,11 @@ enum axp806_irqs {
 	AXP806_IRQ_DCDCC_V_LOW,
 	AXP806_IRQ_DCDCD_V_LOW,
 	AXP806_IRQ_DCDCE_V_LOW,
-	AXP806_IRQ_PWROK_LONG,
-	AXP806_IRQ_PWROK_SHORT,
+	AXP806_IRQ_POK_LONG,
+	AXP806_IRQ_POK_SHORT,
 	AXP806_IRQ_WAKEUP,
-	AXP806_IRQ_PWROK_FALL,
-	AXP806_IRQ_PWROK_RISE,
+	AXP806_IRQ_POK_FALL,
+	AXP806_IRQ_POK_RISE,
 };
 
 enum axp809_irqs {
@@ -637,14 +654,9 @@ struct axp20x_dev {
 	struct regmap_irq_chip_data	*regmap_irqc;
 	long				variant;
 	int                             nr_cells;
-	struct mfd_cell                 *cells;
+	const struct mfd_cell           *cells;
 	const struct regmap_config	*regmap_cfg;
 	const struct regmap_irq_chip	*regmap_irq_chip;
-};
-
-struct axp288_extcon_pdata {
-	/* GPIO pin control to switch D+/D- lines b/w PMIC and SOC */
-	struct gpio_desc *gpio_mux_cntl;
 };
 
 /* generic helper function for reading 9-16 bit wide regs */

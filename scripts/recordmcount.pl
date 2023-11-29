@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
+# SPDX-License-Identifier: GPL-2.0-only
 # (c) 2008, Steven Rostedt <srostedt@redhat.com>
-# Licensed under the terms of the GNU GPL License version 2
 #
 # recordmcount.pl - makes a section called __mcount_loc that holds
 #                   all the offsets to the calls to mcount.
@@ -222,7 +222,7 @@ if ($arch =~ /(x86(_64)?)|(i386)/) {
 $local_regex = "^[0-9a-fA-F]+\\s+t\\s+(\\S+)";
 $weak_regex = "^[0-9a-fA-F]+\\s+([wW])\\s+(\\S+)";
 $section_regex = "Disassembly of section\\s+(\\S+):";
-$function_regex = "^([0-9a-fA-F]+)\\s+<(.*?)>:";
+$function_regex = "^([0-9a-fA-F]+)\\s+<([^^]*?)>:";
 $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\s(mcount|__fentry__)\$";
 $section_type = '@progbits';
 $mcount_adjust = 0;
@@ -275,13 +275,29 @@ if ($arch eq "x86_64") {
     }
 
 } elsif ($arch eq "powerpc") {
+    my $ldemulation;
+
     $local_regex = "^[0-9a-fA-F]+\\s+t\\s+(\\.?\\S+)";
     # See comment in the sparc64 section for why we use '\w'.
     $function_regex = "^([0-9a-fA-F]+)\\s+<(\\.?\\w*?)>:";
     $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\s\\.?_mcount\$";
 
+    if ($endian eq "big") {
+	    $cc .= " -mbig-endian ";
+	    $ld .= " -EB ";
+	    $ldemulation = "ppc"
+    } else {
+	    $cc .= " -mlittle-endian ";
+	    $ld .= " -EL ";
+	    $ldemulation = "lppc"
+    }
     if ($bits == 64) {
-	$type = ".quad";
+        $type = ".quad";
+        $cc .= " -m64 ";
+        $ld .= " -m elf64".$ldemulation." ";
+    } else {
+        $cc .= " -m32 ";
+        $ld .= " -m elf32".$ldemulation." ";
     }
 
 } elsif ($arch eq "arm") {
@@ -377,14 +393,17 @@ if ($arch eq "x86_64") {
 } elsif ($arch eq "microblaze") {
     # Microblaze calls '_mcount' instead of plain 'mcount'.
     $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\s_mcount\$";
-} elsif ($arch eq "blackfin") {
-    $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\s__mcount\$";
-    $mcount_adjust = -4;
-} elsif ($arch eq "tilegx" || $arch eq "tile") {
-    # Default to the newer TILE-Gx architecture if only "tile" is given.
-    $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\s__mcount\$";
+} elsif ($arch eq "riscv") {
+    $function_regex = "^([0-9a-fA-F]+)\\s+<([^.0-9][0-9a-zA-Z_\\.]+)>:";
+    $mcount_regex = "^\\s*([0-9a-fA-F]+):\\sR_RISCV_CALL(_PLT)?\\s_?mcount\$";
     $type = ".quad";
-    $alignment = 8;
+    $alignment = 2;
+} elsif ($arch eq "nds32") {
+    $mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*R_NDS32_HI20_RELA\\s+_mcount\$";
+    $alignment = 2;
+} elsif ($arch eq "csky") {
+    $mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*R_CKCORE_PCREL_JSR_IMM26BY2\\s+_mcount\$";
+    $alignment = 2;
 } else {
     die "Arch $arch is not supported with CONFIG_FTRACE_MCOUNT_RECORD";
 }
@@ -481,7 +500,7 @@ sub update_funcs
 #
 # Step 2: find the sections and mcount call sites
 #
-open(IN, "$objdump -hdr $inputfile|") || die "error running $objdump";
+open(IN, "LANG=C $objdump -hdr $inputfile|") || die "error running $objdump";
 
 my $text;
 

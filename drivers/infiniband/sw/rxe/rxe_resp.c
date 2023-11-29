@@ -104,8 +104,7 @@ static char *resp_state_name[] = {
 };
 
 /* rxe_recv calls here to add a request packet to the input queue */
-void rxe_resp_queue_pkt(struct rxe_dev *rxe, struct rxe_qp *qp,
-			struct sk_buff *skb)
+void rxe_resp_queue_pkt(struct rxe_qp *qp, struct sk_buff *skb)
 {
 	int must_sched;
 	struct rxe_pkt_info *pkt = SKB_TO_PKT(skb);
@@ -124,12 +123,9 @@ static inline enum resp_states get_req(struct rxe_qp *qp,
 	struct sk_buff *skb;
 
 	if (qp->resp.state == QP_STATE_ERROR) {
-		skb = skb_dequeue(&qp->req_pkts);
-		if (skb) {
-			/* drain request packet queue */
+		while ((skb = skb_dequeue(&qp->req_pkts))) {
 			rxe_drop_ref(qp);
 			kfree_skb(skb);
-			return RESPST_GET_REQ;
 		}
 
 		/* go drain recv wr queue */
@@ -512,9 +508,8 @@ static enum resp_states send_data_in(struct rxe_qp *qp, void *data_addr,
 				     int data_len)
 {
 	int err;
-	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 
-	err = copy_data(rxe, qp->pd, IB_ACCESS_LOCAL_WRITE, &qp->resp.wqe->dma,
+	err = copy_data(qp->pd, IB_ACCESS_LOCAL_WRITE, &qp->resp.wqe->dma,
 			data_addr, data_len, to_mem_obj, NULL);
 	if (unlikely(err))
 		return (err == -ENOSPC) ? RESPST_ERR_LENGTH
@@ -639,7 +634,7 @@ static struct sk_buff *prepare_ack_packet(struct rxe_qp *qp,
 	if (ack->mask & RXE_ATMACK_MASK)
 		atmack_set_orig(ack, qp->resp.atomic_orig);
 
-	err = rxe_prepare(rxe, ack, skb, &crc);
+	err = rxe_prepare(ack, skb, &crc);
 	if (err) {
 		kfree_skb(skb);
 		return NULL;
@@ -662,7 +657,6 @@ static struct sk_buff *prepare_ack_packet(struct rxe_qp *qp,
 static enum resp_states read_reply(struct rxe_qp *qp,
 				   struct rxe_pkt_info *req_pkt)
 {
-	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 	struct rxe_pkt_info ack_pkt;
 	struct sk_buff *skb;
 	int mtu = qp->mtu;
@@ -748,7 +742,7 @@ static enum resp_states read_reply(struct rxe_qp *qp,
 	p = payload_addr(&ack_pkt) + payload + bth_pad(&ack_pkt);
 	*p = ~icrc;
 
-	err = rxe_xmit_packet(rxe, qp, &ack_pkt, skb);
+	err = rxe_xmit_packet(qp, &ack_pkt, skb);
 	if (err) {
 		pr_err("Failed sending RDMA reply.\n");
 		return RESPST_ERR_RNR;
@@ -847,6 +841,7 @@ static enum resp_states do_complete(struct rxe_qp *qp,
 	struct ib_wc *wc = &cqe.ibwc;
 	struct ib_uverbs_wc *uwc = &cqe.uibwc;
 	struct rxe_recv_wqe *wqe = qp->resp.wqe;
+	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 
 	if (unlikely(!wqe))
 		return RESPST_CLEANUP;
@@ -864,6 +859,7 @@ static enum resp_states do_complete(struct rxe_qp *qp,
 	}
 
 	if (wc->status == IB_WC_SUCCESS) {
+		rxe_counter_inc(rxe, RXE_CNT_RDMA_RECV);
 		wc->opcode = (pkt->mask & RXE_IMMDT_MASK &&
 				pkt->mask & RXE_WRITE_MASK) ?
 					IB_WC_RECV_RDMA_WITH_IMM : IB_WC_RECV;
@@ -880,8 +876,7 @@ static enum resp_states do_complete(struct rxe_qp *qp,
 
 			if (pkt->mask & RXE_IMMDT_MASK) {
 				uwc->wc_flags |= IB_WC_WITH_IMM;
-				uwc->ex.imm_data =
-					(__u32 __force)immdt_imm(pkt);
+				uwc->ex.imm_data = immdt_imm(pkt);
 			}
 
 			if (pkt->mask & RXE_IETH_MASK) {
@@ -904,13 +899,17 @@ static enum resp_states do_complete(struct rxe_qp *qp,
 			else
 				wc->network_hdr_type = RDMA_NETWORK_IPV6;
 
+			if (is_vlan_dev(skb->dev)) {
+				wc->wc_flags |= IB_WC_WITH_VLAN;
+				wc->vlan_id = vlan_dev_vlan_id(skb->dev);
+			}
+
 			if (pkt->mask & RXE_IMMDT_MASK) {
 				wc->wc_flags |= IB_WC_WITH_IMM;
 				wc->ex.imm_data = immdt_imm(pkt);
 			}
 
 			if (pkt->mask & RXE_IETH_MASK) {
-				struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 				struct rxe_mem *rmr;
 
 				wc->wc_flags |= IB_WC_WITH_INVALIDATE;
@@ -962,7 +961,6 @@ static int send_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
 	int err = 0;
 	struct rxe_pkt_info ack_pkt;
 	struct sk_buff *skb;
-	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 
 	skb = prepare_ack_packet(qp, pkt, &ack_pkt, IB_OPCODE_RC_ACKNOWLEDGE,
 				 0, psn, syndrome, NULL);
@@ -971,7 +969,7 @@ static int send_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
 		goto err1;
 	}
 
-	err = rxe_xmit_packet(rxe, qp, &ack_pkt, skb);
+	err = rxe_xmit_packet(qp, &ack_pkt, skb);
 	if (err)
 		pr_err_ratelimited("Failed sending ack\n");
 
@@ -985,23 +983,12 @@ static int send_atomic_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
 	int rc = 0;
 	struct rxe_pkt_info ack_pkt;
 	struct sk_buff *skb;
-	struct sk_buff *skb_copy;
-	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 	struct resp_res *res;
 
 	skb = prepare_ack_packet(qp, pkt, &ack_pkt,
 				 IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE, 0, pkt->psn,
 				 syndrome, NULL);
 	if (!skb) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	skb_copy = skb_clone(skb, GFP_ATOMIC);
-	if (skb_copy)
-		rxe_add_ref(qp); /* for the new SKB */
-	else {
-		pr_warn("Could not clone atomic response\n");
 		rc = -ENOMEM;
 		goto out;
 	}
@@ -1014,19 +1001,18 @@ static int send_atomic_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
 	memset((unsigned char *)SKB_TO_PKT(skb) + sizeof(ack_pkt), 0,
 	       sizeof(skb->cb) - sizeof(ack_pkt));
 
+	skb_get(skb);
 	res->type = RXE_ATOMIC_MASK;
 	res->atomic.skb = skb;
 	res->first_psn = ack_pkt.psn;
 	res->last_psn  = ack_pkt.psn;
 	res->cur_psn   = ack_pkt.psn;
 
-	rc = rxe_xmit_packet(rxe, qp, &ack_pkt, skb_copy);
+	rc = rxe_xmit_packet(qp, &ack_pkt, skb);
 	if (rc) {
 		pr_err_ratelimited("Failed sending ack\n");
 		rxe_drop_ref(qp);
-		kfree_skb(skb_copy);
 	}
-
 out:
 	return rc;
 }
@@ -1150,23 +1136,11 @@ static enum resp_states duplicate_request(struct rxe_qp *qp,
 		/* Find the operation in our list of responder resources. */
 		res = find_resource(qp, pkt->psn);
 		if (res) {
-			struct sk_buff *skb_copy;
-
-			skb_copy = skb_clone(res->atomic.skb, GFP_ATOMIC);
-			if (skb_copy) {
-				rxe_add_ref(qp); /* for the new SKB */
-			} else {
-				pr_warn("Couldn't clone atomic resp\n");
-				rc = RESPST_CLEANUP;
-				goto out;
-			}
-
+			skb_get(res->atomic.skb);
 			/* Resend the result. */
-			rc = rxe_xmit_packet(to_rdev(qp->ibqp.device), qp,
-					     pkt, skb_copy);
+			rc = rxe_xmit_packet(qp, pkt, res->atomic.skb);
 			if (rc) {
 				pr_err("Failed resending result. This flow is not handled - skb ignored\n");
-				rxe_drop_ref(qp);
 				rc = RESPST_CLEANUP;
 				goto out;
 			}

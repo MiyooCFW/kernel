@@ -9,12 +9,12 @@
  * Hard irqs are blocked, be cautious.
  */
 bool __do_once_start(bool *done, unsigned long *flags);
-void __do_once_done(bool *done, struct static_key *once_key,
-		    unsigned long *flags);
+void __do_once_done(bool *done, struct static_key_true *once_key,
+		    unsigned long *flags, struct module *mod);
 
 /* Variant for process contexts only. */
 bool __do_once_slow_start(bool *done);
-void __do_once_slow_done(bool *done, struct static_key *once_key,
+void __do_once_slow_done(bool *done, struct static_key_true *once_key,
 			 struct module *mod);
 
 /* Call a function exactly once. The idea of DO_ONCE() is to perform
@@ -47,14 +47,14 @@ void __do_once_slow_done(bool *done, struct static_key *once_key,
 	({								     \
 		bool ___ret = false;					     \
 		static bool ___done = false;				     \
-		static struct static_key ___once_key = STATIC_KEY_INIT_TRUE; \
-		if (static_key_true(&___once_key)) {			     \
+		static DEFINE_STATIC_KEY_TRUE(___once_key);		     \
+		if (static_branch_unlikely(&___once_key)) {		     \
 			unsigned long ___flags;				     \
 			___ret = __do_once_start(&___done, &___flags);	     \
 			if (unlikely(___ret)) {				     \
 				func(__VA_ARGS__);			     \
 				__do_once_done(&___done, &___once_key,	     \
-					       &___flags);		     \
+					       &___flags, THIS_MODULE);	     \
 			}						     \
 		}							     \
 		___ret;							     \
@@ -64,9 +64,9 @@ void __do_once_slow_done(bool *done, struct static_key *once_key,
 #define DO_ONCE_SLOW(func, ...)						     \
 	({								     \
 		bool ___ret = false;					     \
-		static bool ___done = false;				     \
-		static struct static_key ___once_key = STATIC_KEY_INIT_TRUE; \
-		if (static_key_true(&___once_key)) {		     \
+		static bool __section(.data.once) ___done = false;	     \
+		static DEFINE_STATIC_KEY_TRUE(___once_key);		     \
+		if (static_branch_unlikely(&___once_key)) {		     \
 			___ret = __do_once_slow_start(&___done);	     \
 			if (unlikely(___ret)) {				     \
 				func(__VA_ARGS__);			     \

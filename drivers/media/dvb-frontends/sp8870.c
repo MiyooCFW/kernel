@@ -1,27 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
     Driver for Spase SP8870 demodulator
 
     Copyright (C) 1999 Juergen Peitz
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 */
 /*
  * This driver needs external firmware. Please use the command
- * "<kerneldir>/Documentation/dvb/get_dvb_firmware alps_tdlb7" to
+ * "<kerneldir>/scripts/get_dvb_firmware alps_tdlb7" to
  * download/extract it, and then copy it to /usr/lib/hotplug/firmware
  * or /lib/firmware (depending on configuration of firmware hotplug).
  */
@@ -35,7 +22,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 
-#include "dvb_frontend.h"
+#include <media/dvb_frontend.h>
 #include "sp8870.h"
 
 
@@ -586,9 +573,9 @@ static const struct dvb_frontend_ops sp8870_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name			= "Spase SP8870 DVB-T",
-		.frequency_min		= 470000000,
-		.frequency_max		= 860000000,
-		.frequency_stepsize	= 166666,
+		.frequency_min_hz	= 470 * MHz,
+		.frequency_max_hz	= 860 * MHz,
+		.frequency_stepsize_hz	= 166666,
 		.caps			= FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 |
 					  FE_CAN_FEC_3_4 | FE_CAN_FEC_5_6 |
 					  FE_CAN_FEC_7_8 | FE_CAN_FEC_AUTO |
@@ -619,4 +606,4 @@ MODULE_DESCRIPTION("Spase SP8870 DVB-T Demodulator driver");
 MODULE_AUTHOR("Juergen Peitz");
 MODULE_LICENSE("GPL");
 
-EXPORT_SYMBOL_GPL(sp8870_attach);
+EXPORT_SYMBOL(sp8870_attach);

@@ -1,6 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
- * Use of this source code is governed by the GPLv2 license.
  *
  * kselftest_harness.h: simple C unit test helper.
  *
@@ -62,6 +62,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define TEST_TIMEOUT_DEFAULT 30
 
 /* Utilities exposed to the test definitions */
 #ifndef TH_LOG_STREAM
@@ -107,6 +108,27 @@
 			__FILE__, __LINE__, _metadata->name, ##__VA_ARGS__)
 
 /**
+ * XFAIL(statement, fmt, ...)
+ *
+ * @statement: statement to run after reporting XFAIL
+ * @fmt: format string
+ * @...: optional arguments
+ *
+ * This forces a "pass" after reporting a failure with an XFAIL prefix,
+ * and runs "statement", which is usually "return" or "goto skip".
+ */
+#define XFAIL(statement, fmt, ...) do { \
+	if (TH_LOG_ENABLED) { \
+		fprintf(TH_LOG_STREAM, "[  XFAIL!  ] " fmt "\n", \
+			##__VA_ARGS__); \
+	} \
+	/* TODO: find a way to pass xfail to test runner process. */ \
+	_metadata->passed = 1; \
+	_metadata->trigger = 0; \
+	statement; \
+} while (0)
+
+/**
  * TEST(test_name) - Defines the test function and creates the registration
  * stub
  *
@@ -147,8 +169,9 @@
 #define __TEST_IMPL(test_name, _signal) \
 	static void test_name(struct __test_metadata *_metadata); \
 	static struct __test_metadata _##test_name##_object = \
-		{ name: "global." #test_name, \
-		  fn: &test_name, termsig: _signal }; \
+		{ .name = "global." #test_name, \
+		  .fn = &test_name, .termsig = _signal, \
+		  .timeout = TEST_TIMEOUT_DEFAULT, }; \
 	static void __attribute__((constructor)) _register_##test_name(void) \
 	{ \
 		__register_test(&_##test_name##_object); \
@@ -198,7 +221,7 @@
 
 /**
  * FIXTURE_SETUP(fixture_name) - Prepares the setup function for the fixture.
- * *_metadata* is included so that ASSERT_* work as a convenience
+ * *_metadata* is included so that EXPECT_* and ASSERT_* work correctly.
  *
  * @fixture_name: fixture name
  *
@@ -221,6 +244,7 @@
 		FIXTURE_DATA(fixture_name) __attribute__((unused)) *self)
 /**
  * FIXTURE_TEARDOWN(fixture_name)
+ * *_metadata* is included so that EXPECT_* and ASSERT_* work correctly.
  *
  * @fixture_name: fixture name
  *
@@ -253,15 +277,20 @@
  * Defines a test that depends on a fixture (e.g., is part of a test case).
  * Very similar to TEST() except that *self* is the setup instance of fixture's
  * datatype exposed for use by the implementation.
+ *
+ * Warning: use of ASSERT_* here will skip TEARDOWN.
  */
 /* TODO(wad) register fixtures on dedicated test lists. */
 #define TEST_F(fixture_name, test_name) \
-	__TEST_F_IMPL(fixture_name, test_name, -1)
+	__TEST_F_IMPL(fixture_name, test_name, -1, TEST_TIMEOUT_DEFAULT)
 
 #define TEST_F_SIGNAL(fixture_name, test_name, signal) \
-	__TEST_F_IMPL(fixture_name, test_name, signal)
+	__TEST_F_IMPL(fixture_name, test_name, signal, TEST_TIMEOUT_DEFAULT)
 
-#define __TEST_F_IMPL(fixture_name, test_name, signal) \
+#define TEST_F_TIMEOUT(fixture_name, test_name, timeout) \
+	__TEST_F_IMPL(fixture_name, test_name, -1, timeout)
+
+#define __TEST_F_IMPL(fixture_name, test_name, signal, tmout) \
 	static void fixture_name##_##test_name( \
 		struct __test_metadata *_metadata, \
 		FIXTURE_DATA(fixture_name) *self); \
@@ -280,9 +309,10 @@
 	} \
 	static struct __test_metadata \
 		      _##fixture_name##_##test_name##_object = { \
-		name: #fixture_name "." #test_name, \
-		fn: &wrapper_##fixture_name##_##test_name, \
-		termsig: signal, \
+		.name = #fixture_name "." #test_name, \
+		.fn = &wrapper_##fixture_name##_##test_name, \
+		.termsig = signal, \
+		.timeout = tmout, \
 	 }; \
 	static void __attribute__((constructor)) \
 			_register_##fixture_name##_##test_name(void) \
@@ -608,6 +638,7 @@ struct __test_metadata {
 	int termsig;
 	int passed;
 	int trigger; /* extra handler after the evaluation */
+	int timeout;
 	__u8 step;
 	bool no_print; /* manual trigger when TH_LOG_STREAM is not available */
 	struct __test_metadata *prev, *next;
@@ -672,6 +703,7 @@ void __run_test(struct __test_metadata *t)
 	t->passed = 1;
 	t->trigger = 0;
 	printf("[ RUN      ] %s\n", t->name);
+	alarm(t->timeout);
 	child_pid = fork();
 	if (child_pid < 0) {
 		printf("ERROR SPAWNING TEST CHILD\n");
@@ -720,6 +752,7 @@ void __run_test(struct __test_metadata *t)
 		}
 	}
 	printf("[     %4s ] %s\n", (t->passed ? "OK" : "FAIL"), t->name);
+	alarm(0);
 }
 
 static int test_harness_run(int __attribute__((unused)) argc,

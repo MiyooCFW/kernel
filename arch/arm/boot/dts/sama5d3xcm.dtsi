@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * sama5d3xcm.dtsi - Device Tree Include file for SAMA5D3x CPU Module
  *
  *  Copyright (C) 2013 Atmel,
  *                2013 Ludovic Desroches <ludovic.desroches@atmel.com>
- *
- * Licensed under GPLv2 or later.
  */
 
 / {
@@ -33,6 +32,18 @@
 		apb {
 			spi0: spi@f0004000 {
 				cs-gpios = <&pioD 13 0>, <0>, <0>, <0>;
+			};
+
+			tcb0: timer@f0010000 {
+				timer@0 {
+					compatible = "atmel,tcb-timer";
+					reg = <0>;
+				};
+
+				timer@1 {
+					compatible = "atmel,tcb-timer";
+					reg = <1>;
+				};
 			};
 		};
 

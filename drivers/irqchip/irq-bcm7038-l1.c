@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Broadcom BCM7038 style Level 1 interrupt controller driver
  *
  * Copyright (C) 2014 Broadcom Corporation
  * Author: Kevin Cernekee
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt)	KBUILD_MODNAME	": " fmt
@@ -347,8 +344,8 @@ int __init bcm7038_l1_of_init(struct device_node *dn,
 		goto out_unmap;
 	}
 
-	pr_info("registered BCM7038 L1 intc (mem: 0x%p, IRQs: %d)\n",
-		intc->cpus[0]->map_base, IRQS_PER_WORD * intc->n_words);
+	pr_info("registered BCM7038 L1 intc (%pOF, IRQs: %d)\n",
+		dn, IRQS_PER_WORD * intc->n_words);
 
 	return 0;
 

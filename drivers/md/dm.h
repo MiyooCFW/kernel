@@ -19,6 +19,7 @@
 #include <linux/hdreg.h>
 #include <linux/completion.h>
 #include <linux/kobject.h>
+#include <linux/refcount.h>
 
 #include "dm-stats.h"
 
@@ -38,7 +39,7 @@
  */
 struct dm_dev_internal {
 	struct list_head list;
-	atomic_t count;
+	refcount_t count;
 	struct dm_dev *dm_dev;
 };
 
@@ -48,7 +49,6 @@ struct dm_md_mempools;
 /*-----------------------------------------------------------------
  * Internal table functions.
  *---------------------------------------------------------------*/
-void dm_table_destroy(struct dm_table *t);
 void dm_table_event_callback(struct dm_table *t,
 			     void (*fn)(void *), void *context);
 struct dm_target *dm_table_get_target(struct dm_table *t, unsigned int index);
@@ -70,9 +70,12 @@ struct dm_target *dm_table_get_immutable_target(struct dm_table *t);
 struct dm_target *dm_table_get_wildcard_target(struct dm_table *t);
 bool dm_table_bio_based(struct dm_table *t);
 bool dm_table_request_based(struct dm_table *t);
-bool dm_table_all_blk_mq_devices(struct dm_table *t);
 void dm_table_free_md_mempools(struct dm_table *t);
 struct dm_md_mempools *dm_table_get_md_mempools(struct dm_table *t);
+bool dm_table_supports_dax(struct dm_table *t, iterate_devices_callout_fn fn,
+			   int *blocksize);
+int device_not_dax_capable(struct dm_target *ti, struct dm_dev *dev,
+			   sector_t start, sector_t len, void *data);
 
 void dm_lock_md_type(struct mapped_device *md);
 void dm_unlock_md_type(struct mapped_device *md);
@@ -81,11 +84,6 @@ enum dm_queue_mode dm_get_md_type(struct mapped_device *md);
 struct target_type *dm_get_immutable_target_type(struct mapped_device *md);
 
 int dm_setup_md_queue(struct mapped_device *md, struct dm_table *t);
-
-/*
- * To check the return value from dm_table_find_target().
- */
-#define dm_target_is_valid(t) ((t)->table)
 
 /*
  * To check whether the target type is bio-based or not (request-based).
@@ -205,7 +203,8 @@ void dm_kcopyd_exit(void);
  * Mempool operations
  */
 struct dm_md_mempools *dm_alloc_md_mempools(struct mapped_device *md, enum dm_queue_mode type,
-					    unsigned integrity, unsigned per_bio_data_size);
+					    unsigned integrity, unsigned per_bio_data_size,
+					    unsigned min_pool_size);
 void dm_free_md_mempools(struct dm_md_mempools *pools);
 
 /*

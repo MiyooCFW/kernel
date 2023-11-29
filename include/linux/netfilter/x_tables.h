@@ -281,15 +281,17 @@ int xt_check_entry_offsets(const void *base, const char *elems,
 			   unsigned int target_offset,
 			   unsigned int next_offset);
 
+int xt_check_table_hooks(const struct xt_table_info *info, unsigned int valid_hooks);
+
 unsigned int *xt_alloc_entry_offsets(unsigned int size);
 bool xt_find_jump_offset(const unsigned int *offsets,
 			 unsigned int target, unsigned int size);
 
 int xt_check_proc_name(const char *name, unsigned int size);
 
-int xt_check_match(struct xt_mtchk_param *, unsigned int size, u_int8_t proto,
+int xt_check_match(struct xt_mtchk_param *, unsigned int size, u16 proto,
 		   bool inv_proto);
-int xt_check_target(struct xt_tgchk_param *, unsigned int size, u_int8_t proto,
+int xt_check_target(struct xt_tgchk_param *, unsigned int size, u16 proto,
 		    bool inv_proto);
 
 int xt_match_to_user(const struct xt_entry_match *m,
@@ -315,7 +317,6 @@ struct xt_table_info *xt_replace_table(struct xt_table *table,
 				       int *error);
 
 struct xt_match *xt_find_match(u8 af, const char *name, u8 revision);
-struct xt_target *xt_find_target(u8 af, const char *name, u8 revision);
 struct xt_match *xt_request_find_match(u8 af, const char *name, u8 revision);
 struct xt_target *xt_request_find_target(u8 af, const char *name, u8 revision);
 int xt_find_revision(u8 af, const char *name, u8 revision, int target,
@@ -323,6 +324,8 @@ int xt_find_revision(u8 af, const char *name, u8 revision, int target,
 
 struct xt_table *xt_find_table_lock(struct net *net, u_int8_t af,
 				    const char *name);
+struct xt_table *xt_request_find_table_lock(struct net *net, u_int8_t af,
+					    const char *name);
 void xt_table_unlock(struct xt_table *t);
 
 int xt_proto_init(struct net *net, u_int8_t af);
@@ -333,7 +336,7 @@ void xt_free_table_info(struct xt_table_info *info);
 
 /**
  * xt_recseq - recursive seqcount for netfilter use
- * 
+ *
  * Packet processing changes the seqcount only if no recursion happened
  * get_counters() can use read_seqcount_begin()/read_seqcount_retry(),
  * because we use the normal seqcount convention :

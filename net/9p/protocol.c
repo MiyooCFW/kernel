@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/9p/protocol.c
  *
@@ -7,22 +8,6 @@
  *
  *  Base on code from Anthony Liguori <aliguori@us.ibm.com>
  *  Copyright (C) 2008 by IBM, Corp.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2
- *  as published by the Free Software Foundation.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to:
- *  Free Software Foundation
- *  51 Franklin Street, Fifth Floor
- *  Boston, MA  02111-1301  USA
- *
  */
 
 #include <linux/module.h>
@@ -161,7 +146,7 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 
 				*sptr = kmalloc(len + 1, GFP_NOFS);
 				if (*sptr == NULL) {
-					errcode = -EFAULT;
+					errcode = -ENOMEM;
 					break;
 				}
 				if (pdu_read(pdu, *sptr, len)) {
@@ -247,8 +232,9 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 								"w", nwname);
 				if (!errcode) {
 					*wnames =
-					    kmalloc(sizeof(char *) * *nwname,
-						    GFP_NOFS);
+					    kmalloc_array(*nwname,
+							  sizeof(char *),
+							  GFP_NOFS);
 					if (!*wnames)
 						errcode = -ENOMEM;
 				}
@@ -290,9 +276,9 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 				    p9pdu_readf(pdu, proto_version, "w", nwqid);
 				if (!errcode) {
 					*wqids =
-					    kmalloc(*nwqid *
-						    sizeof(struct p9_qid),
-						    GFP_NOFS);
+					    kmalloc_array(*nwqid,
+							  sizeof(struct p9_qid),
+							  GFP_NOFS);
 					if (*wqids == NULL)
 						errcode = -ENOMEM;
 				}

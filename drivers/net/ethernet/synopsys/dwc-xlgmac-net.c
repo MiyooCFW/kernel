@@ -116,7 +116,7 @@ static void xlgmac_prep_tx_pkt(struct xlgmac_pdata *pdata,
 			       struct sk_buff *skb,
 			       struct xlgmac_pkt_info *pkt_info)
 {
-	struct skb_frag_struct *frag;
+	skb_frag_t *frag;
 	unsigned int context_desc;
 	unsigned int len;
 	unsigned int i;
@@ -358,9 +358,9 @@ static irqreturn_t xlgmac_dma_isr(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void xlgmac_tx_timer(unsigned long data)
+static void xlgmac_tx_timer(struct timer_list *t)
 {
-	struct xlgmac_channel *channel = (struct xlgmac_channel *)data;
+	struct xlgmac_channel *channel = from_timer(channel, t, tx_timer);
 	struct xlgmac_pdata *pdata = channel->pdata;
 	struct napi_struct *napi;
 
@@ -391,8 +391,7 @@ static void xlgmac_init_timers(struct xlgmac_pdata *pdata)
 		if (!channel->tx_ring)
 			break;
 
-		setup_timer(&channel->tx_timer, xlgmac_tx_timer,
-			    (unsigned long)channel);
+		timer_setup(&channel->tx_timer, xlgmac_tx_timer, 0);
 	}
 }
 

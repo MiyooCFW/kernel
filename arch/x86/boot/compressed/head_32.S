@@ -141,7 +141,7 @@ ENTRY(startup_32)
 /*
  * Jump to the relocated address.
  */
-	leal	relocated(%ebx), %eax
+	leal	.Lrelocated(%ebx), %eax
 	jmp	*%eax
 ENDPROC(startup_32)
 
@@ -210,7 +210,7 @@ ENDPROC(efi32_stub_entry)
 #endif
 
 	.text
-relocated:
+SYM_FUNC_START_LOCAL_NOALIGN(.Lrelocated)
 
 /*
  * Clear BSS (stack is currently empty)
@@ -261,6 +261,7 @@ relocated:
  */
 	xorl	%ebx, %ebx
 	jmp	*%eax
+SYM_FUNC_END(.Lrelocated)
 
 #ifdef CONFIG_EFI_STUB
 	.data

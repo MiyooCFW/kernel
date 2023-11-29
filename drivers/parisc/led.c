@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *    Chassis LCD/LED driver for HP-PARISC workstations
  *
@@ -5,11 +6,6 @@
  *      (c) Copyright 2000 Helge Deller <hdeller@redhat.com>
  *      (c) Copyright 2001-2009 Helge Deller <deller@gmx.de>
  *      (c) Copyright 2001 Randolph Chung <tausq@debian.org>
- *
- *      This program is free software; you can redistribute it and/or modify
- *      it under the terms of the GNU General Public License as published by
- *      the Free Software Foundation; either version 2 of the License, or
- *      (at your option) any later version.
  *
  * TODO:
  *	- speed-up calculations with inlined assembler
@@ -179,7 +175,7 @@ static int led_proc_open(struct inode *inode, struct file *file)
 }
 
 
-static ssize_t led_proc_write(struct file *file, const char *buf,
+static ssize_t led_proc_write(struct file *file, const char __user *buf,
 	size_t count, loff_t *pos)
 {
 	void *data = PDE_DATA(file_inode(file));
@@ -253,7 +249,7 @@ static int __init led_create_procfs(void)
 
 	if (led_type == -1) return -1;
 
-	proc_pdc_root = proc_mkdir("pdc", 0);
+	proc_pdc_root = proc_mkdir("pdc", NULL);
 	if (!proc_pdc_root) return -1;
 
 	if (!lcd_no_led_support)

@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ADS1015 - Texas Instruments Analog-to-Digital Converter
  *
  * Copyright (c) 2016, Intel Corporation.
- *
- * This file is subject to the terms and conditions of version 2 of
- * the GNU General Public License.  See the file COPYING in the main
- * directory of this archive for more details.
  *
  * IIO driver for ADS1015 ADC 7-bit I2C slave address:
  *	* 0x48 - ADDR connected to Ground
@@ -342,7 +339,7 @@ static int ads1015_set_power_state(struct ads1015_data *data, bool on)
 static
 int ads1015_get_adc_result(struct ads1015_data *data, int chan, int *val)
 {
-	int ret, pga, dr, conv_time;
+	int ret, pga, dr, dr_old, conv_time;
 	unsigned int old, mask, cfg;
 
 	if (chan < 0 || chan >= ADS1015_CHANNELS)
@@ -368,15 +365,14 @@ int ads1015_get_adc_result(struct ads1015_data *data, int chan, int *val)
 	}
 
 	cfg = (old & ~mask) | (cfg & mask);
-
-	ret = regmap_write(data->regmap, ADS1015_CFG_REG, cfg);
-	if (ret)
-		return ret;
-
-	if (old != cfg || data->conv_invalid) {
-		int dr_old = (old & ADS1015_CFG_DR_MASK) >>
-				ADS1015_CFG_DR_SHIFT;
-
+	if (old != cfg) {
+		ret = regmap_write(data->regmap, ADS1015_CFG_REG, cfg);
+		if (ret)
+			return ret;
+		data->conv_invalid = true;
+	}
+	if (data->conv_invalid) {
+		dr_old = (old & ADS1015_CFG_DR_MASK) >> ADS1015_CFG_DR_SHIFT;
 		conv_time = DIV_ROUND_UP(USEC_PER_SEC, data->data_rate[dr_old]);
 		conv_time += DIV_ROUND_UP(USEC_PER_SEC, data->data_rate[dr]);
 		conv_time += conv_time / 10; /* 10% internal clock inaccuracy */
@@ -836,7 +832,6 @@ static const struct attribute_group ads1115_attribute_group = {
 };
 
 static const struct iio_info ads1015_info = {
-	.driver_module	= THIS_MODULE,
 	.read_raw	= ads1015_read_raw,
 	.write_raw	= ads1015_write_raw,
 	.read_event_value = ads1015_read_event,
@@ -847,7 +842,6 @@ static const struct iio_info ads1015_info = {
 };
 
 static const struct iio_info ads1115_info = {
-	.driver_module	= THIS_MODULE,
 	.read_raw	= ads1015_read_raw,
 	.write_raw	= ads1015_write_raw,
 	.read_event_value = ads1015_read_event,

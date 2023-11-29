@@ -1,16 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Intel Atom SOC Power Management Controller Driver
  * Copyright (c) 2014, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -310,17 +301,7 @@ static int pmc_dev_state_show(struct seq_file *s, void *unused)
 	return 0;
 }
 
-static int pmc_dev_state_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pmc_dev_state_show, inode->i_private);
-}
-
-static const struct file_operations pmc_dev_state_ops = {
-	.open		= pmc_dev_state_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
+DEFINE_SHOW_ATTRIBUTE(pmc_dev_state);
 
 static int pmc_pss_state_show(struct seq_file *s, void *unused)
 {
@@ -337,17 +318,7 @@ static int pmc_pss_state_show(struct seq_file *s, void *unused)
 	return 0;
 }
 
-static int pmc_pss_state_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pmc_pss_state_show, inode->i_private);
-}
-
-static const struct file_operations pmc_pss_state_ops = {
-	.open		= pmc_pss_state_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
+DEFINE_SHOW_ATTRIBUTE(pmc_pss_state);
 
 static int pmc_sleep_tmr_show(struct seq_file *s, void *unused)
 {
@@ -368,57 +339,26 @@ static int pmc_sleep_tmr_show(struct seq_file *s, void *unused)
 	return 0;
 }
 
-static int pmc_sleep_tmr_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pmc_sleep_tmr_show, inode->i_private);
-}
+DEFINE_SHOW_ATTRIBUTE(pmc_sleep_tmr);
 
-static const struct file_operations pmc_sleep_tmr_ops = {
-	.open		= pmc_sleep_tmr_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static void pmc_dbgfs_unregister(struct pmc_dev *pmc)
+static void pmc_dbgfs_register(struct pmc_dev *pmc)
 {
-	debugfs_remove_recursive(pmc->dbgfs_dir);
-}
-
-static int pmc_dbgfs_register(struct pmc_dev *pmc)
-{
-	struct dentry *dir, *f;
+	struct dentry *dir;
 
 	dir = debugfs_create_dir("pmc_atom", NULL);
-	if (!dir)
-		return -ENOMEM;
 
 	pmc->dbgfs_dir = dir;
 
-	f = debugfs_create_file("dev_state", S_IFREG | S_IRUGO,
-				dir, pmc, &pmc_dev_state_ops);
-	if (!f)
-		goto err;
-
-	f = debugfs_create_file("pss_state", S_IFREG | S_IRUGO,
-				dir, pmc, &pmc_pss_state_ops);
-	if (!f)
-		goto err;
-
-	f = debugfs_create_file("sleep_state", S_IFREG | S_IRUGO,
-				dir, pmc, &pmc_sleep_tmr_ops);
-	if (!f)
-		goto err;
-
-	return 0;
-err:
-	pmc_dbgfs_unregister(pmc);
-	return -ENODEV;
+	debugfs_create_file("dev_state", S_IFREG | S_IRUGO, dir, pmc,
+			    &pmc_dev_state_fops);
+	debugfs_create_file("pss_state", S_IFREG | S_IRUGO, dir, pmc,
+			    &pmc_pss_state_fops);
+	debugfs_create_file("sleep_state", S_IFREG | S_IRUGO, dir, pmc,
+			    &pmc_sleep_tmr_fops);
 }
 #else
-static int pmc_dbgfs_register(struct pmc_dev *pmc)
+static void pmc_dbgfs_register(struct pmc_dev *pmc)
 {
-	return 0;
 }
 #endif /* CONFIG_DEBUG_FS */
 
@@ -464,6 +404,13 @@ static const struct dmi_system_id critclk_systems[] = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "SIEMENS AG"),
 			DMI_MATCH(DMI_PRODUCT_VERSION, "6ES7647-8B"),
+		},
+	},
+	{
+		.ident = "SIMATIC IPC277E",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "SIEMENS AG"),
+			DMI_MATCH(DMI_PRODUCT_VERSION, "6AV7882-0"),
 		},
 	},
 	{
@@ -537,9 +484,7 @@ static int pmc_setup_dev(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* PMC hardware registers setup */
 	pmc_hw_reg_setup(pmc);
 
-	ret = pmc_dbgfs_register(pmc);
-	if (ret)
-		dev_warn(&pdev->dev, "debugfs register failed\n");
+	pmc_dbgfs_register(pmc);
 
 	/* Register platform clocks - PMC_PLT_CLK [0..5] */
 	ret = pmc_setup_clks(pdev, pmc->regmap, data);

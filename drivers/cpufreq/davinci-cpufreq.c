@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * CPU frequency scaling for DaVinci
  *
@@ -13,22 +14,15 @@
  * Copyright (C) 2007-2008 Texas Instruments, Inc.
  * Updated to support OMAP3
  * Rajendra Nayak <rnayak@ti.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 #include <linux/types.h>
 #include <linux/cpufreq.h>
 #include <linux/init.h>
 #include <linux/err.h>
 #include <linux/clk.h>
+#include <linux/platform_data/davinci-cpufreq.h>
 #include <linux/platform_device.h>
 #include <linux/export.h>
-
-#include <mach/hardware.h>
-#include <mach/cpufreq.h>
-#include <mach/common.h>
 
 struct davinci_cpufreq {
 	struct device *dev;
@@ -96,7 +90,8 @@ static int davinci_cpu_init(struct cpufreq_policy *policy)
 	 * Setting the latency to 2000 us to accommodate addition of drivers
 	 * to pre/post change notification list.
 	 */
-	return cpufreq_generic_init(policy, freq_table, 2000 * 1000);
+	cpufreq_generic_init(policy, freq_table, 2000 * 1000);
+	return 0;
 }
 
 static struct cpufreq_driver davinci_driver = {
@@ -138,14 +133,12 @@ static int __init davinci_cpufreq_probe(struct platform_device *pdev)
 
 static int __exit davinci_cpufreq_remove(struct platform_device *pdev)
 {
-	cpufreq_unregister_driver(&davinci_driver);
-
 	clk_put(cpufreq.armclk);
 
 	if (cpufreq.asyncclk)
 		clk_put(cpufreq.asyncclk);
 
-	return 0;
+	return cpufreq_unregister_driver(&davinci_driver);
 }
 
 static struct platform_driver davinci_cpufreq_driver = {

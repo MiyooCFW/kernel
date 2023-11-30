@@ -49,19 +49,12 @@ jobs:
       run: |
         cd ${{ inputs.submodule || '.' }}
         mkdir dist
-        mv arch/arm/boot/dts/suniv-f1c500s-miyoo.dtb dist/
-        mv arch/arm/boot/dts/suniv-f1c100s-miyoo.dtb dist/        
-        mv arch/arm/boot/dts/suniv-f1c100s-miyoo-4bit.dtb dist/
+        mv arch/arm/boot/dts/*.dtb dist/
         mv arch/arm/boot/zImage dist/
         mv drivers/video/fbdev/core/*.ko dist/
-        mv drivers/video/fbdev/r61520fb.ko dist/
-        mv drivers/video/fbdev/gc9306fb.ko dist/
-        mv drivers/video/fbdev/st7789sfb.ko dist/
-        mv drivers/video/fbdev/st7789sTEfb.ko dist/
-        mv drivers/video/fbdev/rm68090fb.ko dist/
-        mv drivers/video/fbdev/miyoo-tvout.ko dist/
-        mv drivers/usb/gadget/legacy/g_acm_ms.ko dist/
-        mv sound/drivers/snd-aloop.ko dist/
+        mv drivers/video/fbdev/*.ko dist/
+        mv drivers/usb/gadget/legacy/*.ko dist/
+        mv sound/drivers/*.ko dist/
         
     - run: find ${{ inputs.submodule || '.' }}/dist
     

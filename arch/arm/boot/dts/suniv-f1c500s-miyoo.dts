@@ -19,7 +19,7 @@
 	chosen {
 		stdout-path = "serial1:115200n8";
 	};
-
+	
   backlight {
 		compatible = "pwm-backlight";
 		pwms = <&pwm 1 58824 0>;
@@ -91,6 +91,14 @@
 };
 
 &usbphy {
+	status = "okay";
+};
+
+&cedar_ve {
+	status = "okay";
+};
+
+&ion {
 	status = "okay";
 };
 

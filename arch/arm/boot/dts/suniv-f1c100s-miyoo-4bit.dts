@@ -94,3 +94,11 @@
 	status = "okay";
 };
 
+&cedar_ve {
+	status = "okay";
+};
+
+&ion {
+	status = "okay";
+};
+

@@ -690,8 +690,8 @@ source "arch/arm/mach-spear/Kconfig"
 source "arch/arm/mach-sti/Kconfig"
 
 source "arch/arm/mach-stm32/Kconfig"
-
 source "arch/arm/mach-sunxi/Kconfig"
+source "arch/arm/mach-suniv/Kconfig"
 
 source "arch/arm/mach-tegra/Kconfig"
 
@@ -1322,7 +1322,7 @@ config ARCH_NR_GPIO
 		ARCH_ZYNQ || ARCH_ASPEED
 	default 512 if ARCH_EXYNOS || ARCH_KEYSTONE || SOC_OMAP5 || \
 		SOC_DRA7XX || ARCH_S3C24XX || ARCH_S3C64XX || ARCH_S5PV210
-	default 416 if ARCH_SUNXI
+	default 416 if ARCH_SUNIV
 	default 392 if ARCH_U8500
 	default 352 if ARCH_VT8500
 	default 288 if ARCH_ROCKCHIP

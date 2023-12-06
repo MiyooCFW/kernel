@@ -145,8 +145,8 @@ static struct clk_div_table apb_div_table[] = {
 static SUNXI_CCU_DIV_TABLE(apb_clk, "apb", "ahb",
 			   0x054, 8, 2, apb_div_table, 0);
 
-static SUNXI_CCU_GATE(bus_dma_clk,	"bus-dma",	"ahb",
-		      0x060, BIT(6), 0);
+//static SUNXI_CCU_GATE(bus_dma_clk,	"bus-dma",	"ahb",
+//		      0x060, BIT(6), 0);
 static SUNXI_CCU_GATE(bus_mmc0_clk,	"bus-mmc0",	"ahb",
 		      0x060, BIT(8), 0);
 static SUNXI_CCU_GATE(bus_mmc1_clk,	"bus-mmc1",	"ahb",
@@ -319,7 +319,7 @@ static struct ccu_common *suniv_ccu_clks[] = {
 	&cpu_clk.common,
 	&ahb_clk.common,
 	&apb_clk.common,
-	&bus_dma_clk.common,
+//	&bus_dma_clk.common,
 	&bus_mmc0_clk.common,
 	&bus_mmc1_clk.common,
 	&bus_dram_clk.common,
@@ -410,7 +410,7 @@ static struct clk_hw_onecell_data suniv_hw_clks = {
 		[CLK_CPU]		= &cpu_clk.common.hw,
 		[CLK_AHB]		= &ahb_clk.common.hw,
 		[CLK_APB]		= &apb_clk.common.hw,
-		[CLK_BUS_DMA]		= &bus_dma_clk.common.hw,
+	//	[CLK_BUS_DMA]		= &bus_dma_clk.common.hw,
 		[CLK_BUS_MMC0]		= &bus_mmc0_clk.common.hw,
 		[CLK_BUS_MMC1]		= &bus_mmc1_clk.common.hw,
 		[CLK_BUS_DRAM]		= &bus_dram_clk.common.hw,
@@ -470,7 +470,7 @@ static struct clk_hw_onecell_data suniv_hw_clks = {
 static struct ccu_reset_map suniv_ccu_resets[] = {
 	[RST_USB_PHY0]		=  { 0x0cc, BIT(0) },
 
-	[RST_BUS_DMA]		=  { 0x2c0, BIT(6) },
+//	[RST_BUS_DMA]		=  { 0x2c0, BIT(6) },
 	[RST_BUS_MMC0]		=  { 0x2c0, BIT(8) },
 	[RST_BUS_MMC1]		=  { 0x2c0, BIT(9) },
 	[RST_BUS_DRAM]		=  { 0x2c0, BIT(14) },

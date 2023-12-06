@@ -79,17 +79,28 @@ struct apr_resp_pkt {
 #define APR_SVC_MAJOR_VERSION(v)	((v >> 16) & 0xFF)
 #define APR_SVC_MINOR_VERSION(v)	(v & 0xFF)
 
+struct packet_router;
+struct pkt_router_svc {
+	struct device *dev;
+	struct packet_router *pr;
+	spinlock_t lock;
+	int id;
+	void *priv;
+};
+
 struct apr_device {
 	struct device	dev;
 	uint16_t	svc_id;
 	uint16_t	domain_id;
 	uint32_t	version;
 	char name[APR_NAME_SIZE];
-	spinlock_t	lock;
+	const char *service_path;
+	struct pkt_router_svc svc;
 	struct list_head node;
 };
 
 #define to_apr_device(d) container_of(d, struct apr_device, dev)
+#define svc_to_apr_device(d) container_of(d, struct apr_device, svc)
 
 struct apr_driver {
 	int	(*probe)(struct apr_device *sl);
@@ -112,7 +123,7 @@ void apr_driver_unregister(struct apr_driver *drv);
 
 /**
  * module_apr_driver() - Helper macro for registering a aprbus driver
- * @__aprbus_driver: aprbus_driver struct
+ * @__apr_driver: apr_driver struct
  *
  * Helper macro for aprbus drivers which do not do anything special in
  * module init/exit. This eliminates a lot of boilerplate. Each module

@@ -18,8 +18,8 @@
 #include <linux/socket.h>
 #include <linux/pkt_cls.h>
 #include <linux/erspan.h>
-#include "bpf_helpers.h"
-#include "bpf_endian.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 
 #define ERROR(ret) do {\
 		char fmt[] = "ERROR line:%d ret:%d\n";\
@@ -396,7 +396,7 @@ int _ip6vxlan_get_tunnel(struct __sk_buff *skb)
 SEC("geneve_set_tunnel")
 int _geneve_set_tunnel(struct __sk_buff *skb)
 {
-	int ret, ret2;
+	int ret;
 	struct bpf_tunnel_key key;
 	struct geneve_opt gopt;
 

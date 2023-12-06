@@ -125,7 +125,7 @@
 #define FSL_SAI_CR2_DIV_MASK	0xff
 
 /* SAI Transmit and Receive Configuration 3 Register */
-#define FSL_SAI_CR3_TRCE	BIT(16)
+#define FSL_SAI_CR3_TRCE(x)     ((x) << 16)
 #define FSL_SAI_CR3_TRCE_MASK	GENMASK(23, 16)
 #define FSL_SAI_CR3_WDFL(x)	(x)
 #define FSL_SAI_CR3_WDFL_MASK	0x1f
@@ -142,6 +142,8 @@
 #define FSL_SAI_CR4_FRSZ_MASK	(0x1f << 16)
 #define FSL_SAI_CR4_SYWD(x)	(((x) - 1) << 8)
 #define FSL_SAI_CR4_SYWD_MASK	(0x1f << 8)
+#define FSL_SAI_CR4_CHMOD       BIT(5)
+#define FSL_SAI_CR4_CHMOD_MASK  BIT(5)
 #define FSL_SAI_CR4_MF		BIT(4)
 #define FSL_SAI_CR4_FSE		BIT(3)
 #define FSL_SAI_CR4_FSP		BIT(1)
@@ -215,11 +217,41 @@
 #define FSL_SAI_MAXBURST_TX 6
 #define FSL_SAI_MAXBURST_RX 6
 
+#define PMQOS_CPU_LATENCY   BIT(0)
+
 struct fsl_sai_soc_data {
 	bool use_imx_pcm;
 	bool use_edma;
+	bool mclk0_is_mclk1;
 	unsigned int fifo_depth;
 	unsigned int reg_offset;
+	unsigned int flags;
+};
+
+/**
+ * struct fsl_sai_verid - version id data
+ * @major: major version number
+ * @minor: minor version number
+ * @feature: feature specification number
+ *           0000000000000000b - Standard feature set
+ *           0000000000000000b - Standard feature set
+ */
+struct fsl_sai_verid {
+	u32 major;
+	u32 minor;
+	u32 feature;
+};
+
+/**
+ * struct fsl_sai_param - parameter data
+ * @slot_num: The maximum number of slots per frame
+ * @fifo_depth: The number of words in each FIFO (depth)
+ * @dataline: The number of datalines implemented
+ */
+struct fsl_sai_param {
+	u32 slot_num;
+	u32 fifo_depth;
+	u32 dataline;
 };
 
 struct fsl_sai {
@@ -228,7 +260,7 @@ struct fsl_sai {
 	struct clk *bus_clk;
 	struct clk *mclk_clk[FSL_SAI_MCLK_MAX];
 
-	bool is_slave_mode;
+	bool is_consumer_mode;
 	bool is_lsb_first;
 	bool is_dsp_mode;
 	bool synchronous[2];
@@ -243,6 +275,9 @@ struct fsl_sai {
 	struct snd_soc_dai_driver cpu_dai_drv;
 	struct snd_dmaengine_dai_dma_data dma_params_rx;
 	struct snd_dmaengine_dai_dma_data dma_params_tx;
+	struct fsl_sai_verid verid;
+	struct fsl_sai_param param;
+	struct pm_qos_request pm_qos_req;
 };
 
 #define TX 1

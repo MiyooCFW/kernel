@@ -48,10 +48,13 @@ static inline struct nvmet_ctrl *nvmet_req_to_ctrl(struct nvmet_req *req)
 
 static inline void __assign_req_name(char *name, struct nvmet_req *req)
 {
-	if (req->ns)
-		strncpy(name, req->ns->device_path, DISK_NAME_LEN);
-	else
+	if (!req->ns) {
 		memset(name, 0, DISK_NAME_LEN);
+		return;
+	}
+
+	strncpy(name, req->ns->device_path,
+		min_t(size_t, DISK_NAME_LEN, strlen(req->ns->device_path)));
 }
 #endif
 
@@ -122,6 +125,34 @@ TRACE_EVENT(nvmet_req_complete,
 		__entry->qid, __entry->cid, __entry->result, __entry->status)
 
 );
+
+#define aer_name(aer) { aer, #aer }
+
+TRACE_EVENT(nvmet_async_event,
+	TP_PROTO(struct nvmet_ctrl *ctrl, __le32 result),
+	TP_ARGS(ctrl, result),
+	TP_STRUCT__entry(
+		__field(int, ctrl_id)
+		__field(u32, result)
+	),
+	TP_fast_assign(
+		__entry->ctrl_id = ctrl->cntlid;
+		__entry->result = (le32_to_cpu(result) & 0xff00) >> 8;
+	),
+	TP_printk("nvmet%d: NVME_AEN=%#08x [%s]",
+		__entry->ctrl_id, __entry->result,
+		__print_symbolic(__entry->result,
+		aer_name(NVME_AER_NOTICE_NS_CHANGED),
+		aer_name(NVME_AER_NOTICE_ANA),
+		aer_name(NVME_AER_NOTICE_FW_ACT_STARTING),
+		aer_name(NVME_AER_NOTICE_DISC_CHANGED),
+		aer_name(NVME_AER_ERROR),
+		aer_name(NVME_AER_SMART),
+		aer_name(NVME_AER_CSS),
+		aer_name(NVME_AER_VS))
+	)
+);
+#undef aer_name
 
 #endif /* _TRACE_NVMET_H */
 

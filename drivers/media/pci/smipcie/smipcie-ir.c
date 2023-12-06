@@ -93,8 +93,7 @@ static void smi_ir_decode(struct smi_rc *ir)
 		dev_dbg(&rc_dev->dev, "high idle\n");
 
 		rawir.pulse = 0;
-		rawir.duration = US_TO_NS(SMI_SAMPLE_PERIOD *
-					  SMI_SAMPLE_IDLEMIN);
+		rawir.duration = SMI_SAMPLE_PERIOD * SMI_SAMPLE_IDLEMIN;
 		ir_raw_event_store_with_filter(rc_dev, &rawir);
 	}
 
@@ -157,8 +156,8 @@ int smi_ir_init(struct smi_dev *dev)
 	rc_dev->dev.parent = &dev->pci_dev->dev;
 
 	rc_dev->map_name = dev->info->rc_map;
-	rc_dev->timeout = US_TO_NS(SMI_SAMPLE_PERIOD * SMI_SAMPLE_IDLEMIN);
-	rc_dev->rx_resolution = US_TO_NS(SMI_SAMPLE_PERIOD);
+	rc_dev->timeout = SMI_SAMPLE_PERIOD * SMI_SAMPLE_IDLEMIN;
+	rc_dev->rx_resolution = SMI_SAMPLE_PERIOD;
 
 	ir->rc_dev = rc_dev;
 	ir->dev = dev;

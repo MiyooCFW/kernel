@@ -735,10 +735,10 @@ static int read_file_misc(struct seq_file *file, void *data)
 		ath9k_calculate_iter_data(sc, ctx, &iter_data);
 
 		seq_printf(file,
-			   "VIFS: CTX %i(%i) AP: %i STA: %i MESH: %i WDS: %i",
+			   "VIFS: CTX %i(%i) AP: %i STA: %i MESH: %i",
 			   i++, (int)(ctx->assigned), iter_data.naps,
 			   iter_data.nstations,
-			   iter_data.nmeshes, iter_data.nwds);
+			   iter_data.nmeshes);
 		seq_printf(file, " ADHOC: %i OCB: %i TOTAL: %hi BEACON-VIF: %hi\n",
 			   iter_data.nadhocs, iter_data.nocbs, sc->cur_chan->nvifs,
 			   sc->nbcnvifs);
@@ -1284,7 +1284,7 @@ void ath9k_get_et_strings(struct ieee80211_hw *hw,
 			  u32 sset, u8 *data)
 {
 	if (sset == ETH_SS_STATS)
-		memcpy(data, *ath9k_gstrings_stats,
+		memcpy(data, ath9k_gstrings_stats,
 		       sizeof(ath9k_gstrings_stats));
 }
 

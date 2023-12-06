@@ -1083,8 +1083,8 @@ int siw_sqe_complete(struct siw_qp *qp, struct siw_sqe *sqe, u32 bytes,
 			cqe->imm_data = 0;
 			cqe->bytes = bytes;
 
-			if (cq->kernel_verbs)
-				cqe->base_qp = qp->ib_qp;
+			if (rdma_is_kernel_res(&cq->base_cq.res))
+				cqe->base_qp = &qp->base_qp;
 			else
 				cqe->qp_id = qp_id(qp);
 
@@ -1141,8 +1141,8 @@ int siw_rqe_complete(struct siw_qp *qp, struct siw_rqe *rqe, u32 bytes,
 			cqe->imm_data = 0;
 			cqe->bytes = bytes;
 
-			if (cq->kernel_verbs) {
-				cqe->base_qp = qp->ib_qp;
+			if (rdma_is_kernel_res(&cq->base_cq.res)) {
+				cqe->base_qp = &qp->base_qp;
 				if (inval_stag) {
 					cqe_flags |= SIW_WQE_REM_INVAL;
 					cqe->inval_stag = inval_stag;
@@ -1310,13 +1310,12 @@ void siw_rq_flush(struct siw_qp *qp)
 
 int siw_qp_add(struct siw_device *sdev, struct siw_qp *qp)
 {
-	int rv = xa_alloc(&sdev->qp_xa, &qp->ib_qp->qp_num, qp, xa_limit_32b,
+	int rv = xa_alloc(&sdev->qp_xa, &qp->base_qp.qp_num, qp, xa_limit_32b,
 			  GFP_KERNEL);
 
 	if (!rv) {
 		kref_init(&qp->ref);
 		qp->sdev = sdev;
-		qp->qp_num = qp->ib_qp->qp_num;
 		siw_dbg_qp(qp, "new QP\n");
 	}
 	return rv;
@@ -1325,7 +1324,6 @@ int siw_qp_add(struct siw_device *sdev, struct siw_qp *qp)
 void siw_free_qp(struct kref *ref)
 {
 	struct siw_qp *found, *qp = container_of(ref, struct siw_qp, ref);
-	struct siw_base_qp *siw_base_qp = to_siw_base_qp(qp->ib_qp);
 	struct siw_device *sdev = qp->sdev;
 	unsigned long flags;
 
@@ -1344,9 +1342,6 @@ void siw_free_qp(struct kref *ref)
 	vfree(qp->orq);
 
 	siw_put_tx_cpu(qp->tx_cpu);
-
+	complete(&qp->qp_free);
 	atomic_dec(&sdev->num_qp);
-	siw_dbg_qp(qp, "free QP\n");
-	kfree_rcu(qp, rcu);
-	kfree(siw_base_qp);
 }

@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <linux/bpf.h>
 #include <linux/types.h>
-#include "bpf_helpers.h"
+#include <bpf/bpf_helpers.h>
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
@@ -23,7 +23,7 @@ struct {
 	__uint(value_size, sizeof(__u32));
 } mim_hash SEC(".maps");
 
-SEC("xdp_mimtest")
+SEC("xdp")
 int xdp_mimtest0(struct xdp_md *ctx)
 {
 	int value = 123;

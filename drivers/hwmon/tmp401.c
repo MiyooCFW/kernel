@@ -683,8 +683,7 @@ static int tmp401_detect(struct i2c_client *client,
 	return 0;
 }
 
-static int tmp401_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int tmp401_probe(struct i2c_client *client)
 {
 	static const char * const names[] = {
 		"TMP401", "TMP411", "TMP431", "TMP432", "TMP435", "TMP461"
@@ -700,7 +699,7 @@ static int tmp401_probe(struct i2c_client *client,
 
 	data->client = client;
 	mutex_init(&data->update_lock);
-	data->kind = id->driver_data;
+	data->kind = i2c_match_id(tmp401_id, client)->driver_data;
 
 	/* Initialize the TMP401 chip */
 	status = tmp401_init_client(data, client);
@@ -747,7 +746,7 @@ static struct i2c_driver tmp401_driver = {
 		.name	= "tmp401",
 		.of_match_table = of_match_ptr(tmp4xx_of_match),
 	},
-	.probe		= tmp401_probe,
+	.probe_new	= tmp401_probe,
 	.id_table	= tmp401_id,
 	.detect		= tmp401_detect,
 	.address_list	= normal_i2c,

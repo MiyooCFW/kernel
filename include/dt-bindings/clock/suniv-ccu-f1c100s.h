@@ -45,27 +45,26 @@
 #define CLK_MMC1_OUTPUT		46
 #define CLK_I2S			47
 #define CLK_SPDIF		48
-#define CLK_CIR			49
 
-#define CLK_USB_PHY0		50
+#define CLK_USB_PHY0		49
 
-#define CLK_DRAM_VE		51
-#define CLK_DRAM_CSI		52
-#define CLK_DRAM_DEINTERLACE	53
-#define CLK_DRAM_TVD		54
-#define CLK_DRAM_DE_FE		55
-#define CLK_DRAM_DE_BE		56
+#define CLK_DRAM_VE		50
+#define CLK_DRAM_CSI		51
+#define CLK_DRAM_DEINTERLACE	52
+#define CLK_DRAM_TVD		53
+#define CLK_DRAM_DE_FE		54
+#define CLK_DRAM_DE_BE		55
 
-#define CLK_DE_BE		57
-#define CLK_DE_FE		58
-#define CLK_TCON		59
-#define CLK_DEINTERLACE		60
-#define CLK_TVE2_CLK		61
-#define CLK_TVE1_CLK		62
-#define CLK_TVD			63
-#define CLK_CSI			64
-#define CLK_VE			65
-#define CLK_CODEC		66
-#define CLK_AVS			67
+#define CLK_DE_BE		56
+#define CLK_DE_FE		57
+#define CLK_TCON		58
+#define CLK_DEINTERLACE		59
+#define CLK_TVE2_CLK		60
+#define CLK_TVE1_CLK		61
+#define CLK_TVD			62
+#define CLK_CSI			63
+#define CLK_VE			64
+#define CLK_CODEC		65
+#define CLK_AVS			66
 
 #endif

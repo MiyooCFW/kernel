@@ -8,11 +8,11 @@
 #include <linux/memblock.h>
 #include <linux/sched/task.h>
 #include <linux/numa.h>
+#include <linux/pgtable.h>
 
 #include <asm/lppaca.h>
 #include <asm/paca.h>
 #include <asm/sections.h>
-#include <asm/pgtable.h>
 #include <asm/kexec.h>
 #include <asm/svm.h>
 #include <asm/ultravisor.h>
@@ -56,8 +56,8 @@ static void *__init alloc_paca_data(unsigned long size, unsigned long align,
 
 #define LPPACA_SIZE 0x400
 
-static void *__init alloc_shared_lppaca(unsigned long size, unsigned long align,
-					unsigned long limit, int cpu)
+static void *__init alloc_shared_lppaca(unsigned long size, unsigned long limit,
+					int cpu)
 {
 	size_t shared_lppaca_total_size = PAGE_ALIGN(nr_cpu_ids * LPPACA_SIZE);
 	static unsigned long shared_lppaca_size;
@@ -67,6 +67,13 @@ static void *__init alloc_shared_lppaca(unsigned long size, unsigned long align,
 	if (!shared_lppaca) {
 		memblock_set_bottom_up(true);
 
+		/*
+		 * See Documentation/powerpc/ultravisor.rst for more details.
+		 *
+		 * UV/HV data sharing is in PAGE_SIZE granularity. In order to
+		 * minimize the number of pages shared, align the allocation to
+		 * PAGE_SIZE.
+		 */
 		shared_lppaca =
 			memblock_alloc_try_nid(shared_lppaca_total_size,
 					       PAGE_SIZE, MEMBLOCK_LOW_LIMIT,
@@ -121,7 +128,7 @@ static struct lppaca * __init new_lppaca(int cpu, unsigned long limit)
 		return NULL;
 
 	if (is_secure_guest())
-		lp = alloc_shared_lppaca(LPPACA_SIZE, 0x400, limit, cpu);
+		lp = alloc_shared_lppaca(LPPACA_SIZE, limit, cpu);
 	else
 		lp = alloc_paca_data(LPPACA_SIZE, 0x400, limit, cpu);
 
@@ -307,10 +314,8 @@ void copy_mm_to_paca(struct mm_struct *mm)
 #ifdef CONFIG_PPC_BOOK3S
 	mm_context_t *context = &mm->context;
 
-	get_paca()->mm_ctx_id = context->id;
 #ifdef CONFIG_PPC_MM_SLICES
 	VM_BUG_ON(!mm_ctx_slb_addr_limit(context));
-	get_paca()->mm_ctx_slb_addr_limit = mm_ctx_slb_addr_limit(context);
 	memcpy(&get_paca()->mm_ctx_low_slices_psize, mm_ctx_low_slices(context),
 	       LOW_SLICE_ARRAY_SZ);
 	memcpy(&get_paca()->mm_ctx_high_slices_psize, mm_ctx_high_slices(context),

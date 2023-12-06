@@ -15,11 +15,8 @@
 #include <linux/pid_namespace.h>
 #include <linux/cgroupstats.h>
 #include <linux/fs_parser.h>
-#include <linux/cpu.h>
 
 #include <trace/events/cgroup.h>
-
-#define cg_invalf(fc, fmt, ...) invalf(fc, fmt, ## __VA_ARGS__)
 
 /*
  * pidlists linger the following amount before being destroyed.  The goal
@@ -41,10 +38,7 @@ static bool cgroup_no_v1_named;
  */
 static struct workqueue_struct *cgroup_pidlist_destroy_wq;
 
-/*
- * Protects cgroup_subsys->release_agent_path.  Modifying it also requires
- * cgroup_mutex.  Reading requires either cgroup_mutex or this spinlock.
- */
+/* protects cgroup_subsys->release_agent_path */
 static DEFINE_SPINLOCK(release_agent_path_lock);
 
 bool cgroup1_ssid_disabled(int ssid)
@@ -56,6 +50,8 @@ bool cgroup1_ssid_disabled(int ssid)
  * cgroup_attach_task_all - attach task 'tsk' to all cgroups of task 'from'
  * @from: attach to all cgroups of a given task
  * @tsk: the task to be attached
+ *
+ * Return: %0 on success or a negative errno code on failure
  */
 int cgroup_attach_task_all(struct task_struct *from, struct task_struct *tsk)
 {
@@ -88,7 +84,7 @@ int cgroup_attach_task_all(struct task_struct *from, struct task_struct *tsk)
 EXPORT_SYMBOL_GPL(cgroup_attach_task_all);
 
 /**
- * cgroup_trasnsfer_tasks - move tasks from one cgroup to another
+ * cgroup_transfer_tasks - move tasks from one cgroup to another
  * @to: cgroup to which the tasks will be moved
  * @from: cgroup in which the tasks currently reside
  *
@@ -97,6 +93,8 @@ EXPORT_SYMBOL_GPL(cgroup_attach_task_all);
  * is guaranteed to be either visible in the source cgroup after the
  * parent's migration is complete or put into the target cgroup.  No task
  * can slip out of migration through forking.
+ *
+ * Return: %0 on success or a negative errno code on failure
  */
 int cgroup_transfer_tasks(struct cgroup *to, struct cgroup *from)
 {
@@ -552,6 +550,7 @@ static ssize_t cgroup_release_agent_write(struct kernfs_open_file *of,
 					  char *buf, size_t nbytes, loff_t off)
 {
 	struct cgroup *cgrp;
+	struct cgroup_file_ctx *ctx;
 
 	BUILD_BUG_ON(sizeof(cgrp->root->release_agent_path) < PATH_MAX);
 
@@ -559,8 +558,9 @@ static ssize_t cgroup_release_agent_write(struct kernfs_open_file *of,
 	 * Release agent gets called with all capabilities,
 	 * require capabilities to set release agent.
 	 */
-	if ((of->file->f_cred->user_ns != &init_user_ns) ||
-	    !capable(CAP_SYS_ADMIN))
+	ctx = of->priv;
+	if ((ctx->ns->user_ns != &init_user_ns) ||
+	    !file_ns_capable(of->file, &init_user_ns, CAP_SYS_ADMIN))
 		return -EPERM;
 
 	cgrp = cgroup_kn_lock_live(of->kn, false);
@@ -700,6 +700,8 @@ int proc_cgroupstats_show(struct seq_file *m, void *v)
  *
  * Build and fill cgroupstats so that taskstats can export it to user
  * space.
+ *
+ * Return: %0 on success or a negative errno code on failure
  */
 int cgroupstats_build(struct cgroupstats *stats, struct dentry *dentry)
 {
@@ -731,7 +733,7 @@ int cgroupstats_build(struct cgroupstats *stats, struct dentry *dentry)
 
 	css_task_iter_start(&cgrp->self, 0, &it);
 	while ((tsk = css_task_iter_next(&it))) {
-		switch (tsk->state) {
+		switch (READ_ONCE(tsk->__state)) {
 		case TASK_RUNNING:
 			stats->nr_running++;
 			break;
@@ -745,7 +747,7 @@ int cgroupstats_build(struct cgroupstats *stats, struct dentry *dentry)
 			stats->nr_stopped++;
 			break;
 		default:
-			if (delayacct_is_task_waiting_on_io(tsk))
+			if (tsk->in_iowait)
 				stats->nr_io_wait++;
 			break;
 		}
@@ -790,22 +792,29 @@ void cgroup1_release_agent(struct work_struct *work)
 {
 	struct cgroup *cgrp =
 		container_of(work, struct cgroup, release_agent_work);
-	char *pathbuf = NULL, *agentbuf = NULL;
+	char *pathbuf, *agentbuf;
 	char *argv[3], *envp[3];
 	int ret;
 
-	mutex_lock(&cgroup_mutex);
+	/* snoop agent path and exit early if empty */
+	if (!cgrp->root->release_agent_path[0])
+		return;
 
+	/* prepare argument buffers */
 	pathbuf = kmalloc(PATH_MAX, GFP_KERNEL);
-	agentbuf = kstrdup(cgrp->root->release_agent_path, GFP_KERNEL);
-	if (!pathbuf || !agentbuf || !strlen(agentbuf))
-		goto out;
+	agentbuf = kmalloc(PATH_MAX, GFP_KERNEL);
+	if (!pathbuf || !agentbuf)
+		goto out_free;
 
-	spin_lock_irq(&css_set_lock);
-	ret = cgroup_path_ns_locked(cgrp, pathbuf, PATH_MAX, &init_cgroup_ns);
-	spin_unlock_irq(&css_set_lock);
+	spin_lock(&release_agent_path_lock);
+	strlcpy(agentbuf, cgrp->root->release_agent_path, PATH_MAX);
+	spin_unlock(&release_agent_path_lock);
+	if (!agentbuf[0])
+		goto out_free;
+
+	ret = cgroup_path_ns(cgrp, pathbuf, PATH_MAX, &init_cgroup_ns);
 	if (ret < 0 || ret >= PATH_MAX)
-		goto out;
+		goto out_free;
 
 	argv[0] = agentbuf;
 	argv[1] = pathbuf;
@@ -816,11 +825,7 @@ void cgroup1_release_agent(struct work_struct *work)
 	envp[1] = "PATH=/sbin:/bin:/usr/sbin:/usr/bin";
 	envp[2] = NULL;
 
-	mutex_unlock(&cgroup_mutex);
 	call_usermodehelper(argv[0], argv, envp, UMH_WAIT_EXEC);
-	goto out_free;
-out:
-	mutex_unlock(&cgroup_mutex);
 out_free:
 	kfree(agentbuf);
 	kfree(pathbuf);
@@ -905,7 +910,7 @@ enum cgroup1_param {
 	Opt_xattr,
 };
 
-static const struct fs_parameter_spec cgroup1_param_specs[] = {
+const struct fs_parameter_spec cgroup1_fs_parameters[] = {
 	fsparam_flag  ("all",		Opt_all),
 	fsparam_flag  ("clone_children", Opt_clone_children),
 	fsparam_flag  ("cpuset_v2_mode", Opt_cpuset_v2_mode),
@@ -917,11 +922,6 @@ static const struct fs_parameter_spec cgroup1_param_specs[] = {
 	{}
 };
 
-const struct fs_parameter_description cgroup1_fs_parameters = {
-	.name		= "cgroup1",
-	.specs		= cgroup1_param_specs,
-};
-
 int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 {
 	struct cgroup_fs_context *ctx = cgroup_fc2context(fc);
@@ -929,27 +929,23 @@ int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	struct fs_parse_result result;
 	int opt, i;
 
-	opt = fs_parse(fc, &cgroup1_fs_parameters, param, &result);
+	opt = fs_parse(fc, cgroup1_fs_parameters, param, &result);
 	if (opt == -ENOPARAM) {
-		if (strcmp(param->key, "source") == 0) {
-			if (param->type != fs_value_is_string)
-				return invalf(fc, "Non-string source");
-			if (fc->source)
-				return invalf(fc, "Multiple sources not supported");
-			fc->source = param->string;
-			param->string = NULL;
-			return 0;
-		}
+		int ret;
+
+		ret = vfs_parse_fs_param_source(fc, param);
+		if (ret != -ENOPARAM)
+			return ret;
 		for_each_subsys(ss, i) {
 			if (strcmp(param->key, ss->legacy_name))
 				continue;
 			if (!cgroup_ssid_enabled(i) || cgroup1_ssid_disabled(i))
-				return invalf(fc, "Disabled controller '%s'",
+				return invalfc(fc, "Disabled controller '%s'",
 					       param->key);
 			ctx->subsys_mask |= (1 << i);
 			return 0;
 		}
-		return cg_invalf(fc, "cgroup1: Unknown subsys name '%s'", param->key);
+		return invalfc(fc, "Unknown subsys name '%s'", param->key);
 	}
 	if (opt < 0)
 		return opt;
@@ -977,13 +973,13 @@ int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	case Opt_release_agent:
 		/* Specifying two release agents is forbidden */
 		if (ctx->release_agent)
-			return cg_invalf(fc, "cgroup1: release_agent respecified");
+			return invalfc(fc, "release_agent respecified");
 		/*
 		 * Release agent gets called with all capabilities,
 		 * require capabilities to set release agent.
 		 */
 		if ((fc->user_ns != &init_user_ns) || !capable(CAP_SYS_ADMIN))
-			return cg_invalf(fc, "cgroup1: Setting release_agent not allowed");
+			return invalfc(fc, "Setting release_agent not allowed");
 		ctx->release_agent = param->string;
 		param->string = NULL;
 		break;
@@ -993,9 +989,9 @@ int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 			return -ENOENT;
 		/* Can't specify an empty name */
 		if (!param->size)
-			return cg_invalf(fc, "cgroup1: Empty name");
+			return invalfc(fc, "Empty name");
 		if (param->size > MAX_CGROUP_ROOT_NAMELEN - 1)
-			return cg_invalf(fc, "cgroup1: Name too long");
+			return invalfc(fc, "Name too long");
 		/* Must match [\w.-]+ */
 		for (i = 0; i < param->size; i++) {
 			char c = param->string[i];
@@ -1003,11 +999,11 @@ int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 				continue;
 			if ((c == '.') || (c == '-') || (c == '_'))
 				continue;
-			return cg_invalf(fc, "cgroup1: Invalid name");
+			return invalfc(fc, "Invalid name");
 		}
 		/* Specifying two names is forbidden */
 		if (ctx->name)
-			return cg_invalf(fc, "cgroup1: name respecified");
+			return invalfc(fc, "name respecified");
 		ctx->name = param->string;
 		param->string = NULL;
 		break;
@@ -1033,7 +1029,7 @@ static int check_cgroupfs_options(struct fs_context *fc)
 	ctx->subsys_mask &= enabled;
 
 	/*
-	 * In absense of 'none', 'name=' or subsystem name options,
+	 * In absence of 'none', 'name=' and subsystem name options,
 	 * let's default to 'all'.
 	 */
 	if (!ctx->subsys_mask && !ctx->none && !ctx->name)
@@ -1042,7 +1038,7 @@ static int check_cgroupfs_options(struct fs_context *fc)
 	if (ctx->all_ss) {
 		/* Mutually exclusive option 'all' + subsystem name */
 		if (ctx->subsys_mask)
-			return cg_invalf(fc, "cgroup1: subsys name conflicts with all");
+			return invalfc(fc, "subsys name conflicts with all");
 		/* 'all' => select all the subsystems */
 		ctx->subsys_mask = enabled;
 	}
@@ -1052,7 +1048,7 @@ static int check_cgroupfs_options(struct fs_context *fc)
 	 * empty hierarchies must have a name).
 	 */
 	if (!ctx->subsys_mask && !ctx->name)
-		return cg_invalf(fc, "cgroup1: Need name or subsystem set");
+		return invalfc(fc, "Need name or subsystem set");
 
 	/*
 	 * Option noprefix was introduced just for backward compatibility
@@ -1060,11 +1056,11 @@ static int check_cgroupfs_options(struct fs_context *fc)
 	 * the cpuset subsystem.
 	 */
 	if ((ctx->flags & CGRP_ROOT_NOPREFIX) && (ctx->subsys_mask & mask))
-		return cg_invalf(fc, "cgroup1: noprefix used incorrectly");
+		return invalfc(fc, "noprefix used incorrectly");
 
 	/* Can't specify "none" and some subsystems */
 	if (ctx->subsys_mask && ctx->none)
-		return cg_invalf(fc, "cgroup1: none used incorrectly");
+		return invalfc(fc, "none used incorrectly");
 
 	return 0;
 }
@@ -1094,7 +1090,7 @@ int cgroup1_reconfigure(struct fs_context *fc)
 	/* Don't allow flags or name to change at remount */
 	if ((ctx->flags ^ root->flags) ||
 	    (ctx->name && strcmp(ctx->name, root->name))) {
-		cg_invalf(fc, "option or name mismatch, new: 0x%x \"%s\", old: 0x%x \"%s\"",
+		errorfc(fc, "option or name mismatch, new: 0x%x \"%s\", old: 0x%x \"%s\"",
 		       ctx->flags, ctx->name ?: "", root->flags, root->name);
 		ret = -EINVAL;
 		goto out_unlock;
@@ -1211,7 +1207,7 @@ static int cgroup1_root_to_use(struct fs_context *fc)
 	 * can't create new one without subsys specification.
 	 */
 	if (!ctx->subsys_mask && !ctx->none)
-		return cg_invalf(fc, "cgroup1: No subsys list or none specified");
+		return invalfc(fc, "No subsys list or none specified");
 
 	/* Hierarchies may only be created in the initial cgroup namespace. */
 	if (ctx->ns != &init_cgroup_ns)

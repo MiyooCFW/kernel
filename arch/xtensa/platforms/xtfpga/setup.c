@@ -24,6 +24,7 @@
 #include <linux/of.h>
 #include <linux/clk-provider.h>
 #include <linux/of_address.h>
+#include <linux/slab.h>
 
 #include <asm/timex.h>
 #include <asm/processor.h>
@@ -58,22 +59,6 @@ void platform_restart(void)
 	 */
 	cpu_reset();
 	/* control never gets here */
-}
-
-void __init platform_setup(char **cmdline)
-{
-}
-
-/* early initialization */
-
-void __init platform_init(bp_tag_t *first)
-{
-}
-
-/* Heartbeat. */
-
-void platform_heartbeat(void)
-{
 }
 
 #ifdef CONFIG_XTENSA_CALIBRATE_CCOUNT

@@ -20,8 +20,8 @@
 #define CC_SM3_HASH_LEN_SIZE 8
 
 struct cc_hash_handle {
-	cc_sram_addr_t digest_len_sram_addr; /* const value in SRAM*/
-	cc_sram_addr_t larval_digest_sram_addr;   /* const value in SRAM */
+	u32 digest_len_sram_addr;	/* const value in SRAM*/
+	u32 larval_digest_sram_addr;   /* const value in SRAM */
 	struct list_head hash_list;
 };
 
@@ -349,7 +349,6 @@ static int cc_fin_result(struct cc_hw_desc *desc, struct ahash_request *req,
 	/* Get final MAC result */
 	hw_desc_init(&desc[idx]);
 	set_hash_cipher_mode(&desc[idx], ctx->hw_mode, ctx->hash_mode);
-	/* TODO */
 	set_dout_dlli(&desc[idx], state->digest_result_dma_addr, digestsize,
 		      NS_BIT, 1);
 	set_queue_last_ind(ctx->drvdata, &desc[idx]);
@@ -429,8 +428,7 @@ static int cc_hash_digest(struct ahash_request *req)
 	bool is_hmac = ctx->is_hmac;
 	struct cc_crypto_req cc_req = {};
 	struct cc_hw_desc desc[CC_MAX_HASH_SEQ_LEN];
-	cc_sram_addr_t larval_digest_addr =
-		cc_larval_digest_addr(ctx->drvdata, ctx->hash_mode);
+	u32 larval_digest_addr;
 	int idx = 0;
 	int rc = 0;
 	gfp_t flags = cc_gfp_flags(&req->base);
@@ -472,6 +470,8 @@ static int cc_hash_digest(struct ahash_request *req)
 		set_din_type(&desc[idx], DMA_DLLI, state->digest_buff_dma_addr,
 			     ctx->inter_digestsize, NS_BIT);
 	} else {
+		larval_digest_addr = cc_larval_digest_addr(ctx->drvdata,
+							   ctx->hash_mode);
 		set_din_sram(&desc[idx], larval_digest_addr,
 			     ctx->inter_digestsize);
 	}
@@ -733,7 +733,7 @@ static int cc_hash_setkey(struct crypto_ahash *ahash, const u8 *key,
 	int digestsize = 0;
 	int i, idx = 0, rc = 0;
 	struct cc_hw_desc desc[CC_MAX_HASH_SEQ_LEN];
-	cc_sram_addr_t larval_addr;
+	u32 larval_addr;
 	struct device *dev;
 
 	ctx = crypto_ahash_ctx(ahash);
@@ -759,12 +759,12 @@ static int cc_hash_setkey(struct crypto_ahash *ahash, const u8 *key,
 			return -ENOMEM;
 
 		ctx->key_params.key_dma_addr =
-			dma_map_single(dev, (void *)ctx->key_params.key, keylen,
+			dma_map_single(dev, ctx->key_params.key, keylen,
 				       DMA_TO_DEVICE);
 		if (dma_mapping_error(dev, ctx->key_params.key_dma_addr)) {
 			dev_err(dev, "Mapping key va=0x%p len=%u for DMA failed\n",
 				ctx->key_params.key, keylen);
-			kzfree(ctx->key_params.key);
+			kfree_sensitive(ctx->key_params.key);
 			return -ENOMEM;
 		}
 		dev_dbg(dev, "mapping key-buffer: key_dma_addr=%pad keylen=%u\n",
@@ -906,9 +906,6 @@ static int cc_hash_setkey(struct crypto_ahash *ahash, const u8 *key,
 	rc = cc_send_sync_request(ctx->drvdata, &cc_req, desc, idx);
 
 out:
-	if (rc)
-		crypto_ahash_set_flags(ahash, CRYPTO_TFM_RES_BAD_KEY_LEN);
-
 	if (ctx->key_params.key_dma_addr) {
 		dma_unmap_single(dev, ctx->key_params.key_dma_addr,
 				 ctx->key_params.keylen, DMA_TO_DEVICE);
@@ -916,7 +913,7 @@ out:
 			&ctx->key_params.key_dma_addr, ctx->key_params.keylen);
 	}
 
-	kzfree(ctx->key_params.key);
+	kfree_sensitive(ctx->key_params.key);
 
 	return rc;
 }
@@ -953,7 +950,7 @@ static int cc_xcbc_setkey(struct crypto_ahash *ahash,
 	if (dma_mapping_error(dev, ctx->key_params.key_dma_addr)) {
 		dev_err(dev, "Mapping key va=0x%p len=%u for DMA failed\n",
 			key, keylen);
-		kzfree(ctx->key_params.key);
+		kfree_sensitive(ctx->key_params.key);
 		return -ENOMEM;
 	}
 	dev_dbg(dev, "mapping key-buffer: key_dma_addr=%pad keylen=%u\n",
@@ -997,15 +994,12 @@ static int cc_xcbc_setkey(struct crypto_ahash *ahash,
 
 	rc = cc_send_sync_request(ctx->drvdata, &cc_req, desc, idx);
 
-	if (rc)
-		crypto_ahash_set_flags(ahash, CRYPTO_TFM_RES_BAD_KEY_LEN);
-
 	dma_unmap_single(dev, ctx->key_params.key_dma_addr,
 			 ctx->key_params.keylen, DMA_TO_DEVICE);
 	dev_dbg(dev, "Unmapped key-buffer: key_dma_addr=%pad keylen=%u\n",
 		&ctx->key_params.key_dma_addr, ctx->key_params.keylen);
 
-	kzfree(ctx->key_params.key);
+	kfree_sensitive(ctx->key_params.key);
 
 	return rc;
 }
@@ -1080,8 +1074,8 @@ static int cc_alloc_ctx(struct cc_hash_ctx *ctx)
 	ctx->key_params.keylen = 0;
 
 	ctx->digest_buff_dma_addr =
-		dma_map_single(dev, (void *)ctx->digest_buff,
-			       sizeof(ctx->digest_buff), DMA_BIDIRECTIONAL);
+		dma_map_single(dev, ctx->digest_buff, sizeof(ctx->digest_buff),
+			       DMA_BIDIRECTIONAL);
 	if (dma_mapping_error(dev, ctx->digest_buff_dma_addr)) {
 		dev_err(dev, "Mapping digest len %zu B at va=%pK for DMA failed\n",
 			sizeof(ctx->digest_buff), ctx->digest_buff);
@@ -1092,7 +1086,7 @@ static int cc_alloc_ctx(struct cc_hash_ctx *ctx)
 		&ctx->digest_buff_dma_addr);
 
 	ctx->opad_tmp_keys_dma_addr =
-		dma_map_single(dev, (void *)ctx->opad_tmp_keys_buff,
+		dma_map_single(dev, ctx->opad_tmp_keys_buff,
 			       sizeof(ctx->opad_tmp_keys_buff),
 			       DMA_BIDIRECTIONAL);
 	if (dma_mapping_error(dev, ctx->opad_tmp_keys_dma_addr)) {
@@ -1209,8 +1203,8 @@ static int cc_mac_update(struct ahash_request *req)
 	idx++;
 
 	/* Setup request structure */
-	cc_req.user_cb = (void *)cc_update_complete;
-	cc_req.user_arg = (void *)req;
+	cc_req.user_cb = cc_update_complete;
+	cc_req.user_arg = req;
 
 	rc = cc_send_request(ctx->drvdata, &cc_req, desc, idx, &req->base);
 	if (rc != -EINPROGRESS && rc != -EBUSY) {
@@ -1267,8 +1261,8 @@ static int cc_mac_final(struct ahash_request *req)
 	}
 
 	/* Setup request structure */
-	cc_req.user_cb = (void *)cc_hash_complete;
-	cc_req.user_arg = (void *)req;
+	cc_req.user_cb = cc_hash_complete;
+	cc_req.user_arg = req;
 
 	if (state->xcbc_count && rem_cnt == 0) {
 		/* Load key for ECB decryption */
@@ -1324,7 +1318,6 @@ static int cc_mac_final(struct ahash_request *req)
 
 	/* Get final MAC result */
 	hw_desc_init(&desc[idx]);
-	/* TODO */
 	set_dout_dlli(&desc[idx], state->digest_result_dma_addr,
 		      digestsize, NS_BIT, 1);
 	set_queue_last_ind(ctx->drvdata, &desc[idx]);
@@ -1382,8 +1375,8 @@ static int cc_mac_finup(struct ahash_request *req)
 	}
 
 	/* Setup request structure */
-	cc_req.user_cb = (void *)cc_hash_complete;
-	cc_req.user_arg = (void *)req;
+	cc_req.user_cb = cc_hash_complete;
+	cc_req.user_arg = req;
 
 	if (ctx->hw_mode == DRV_CIPHER_XCBC_MAC) {
 		key_len = CC_AES_128_BIT_KEY_SIZE;
@@ -1406,7 +1399,6 @@ static int cc_mac_finup(struct ahash_request *req)
 
 	/* Get final MAC result */
 	hw_desc_init(&desc[idx]);
-	/* TODO */
 	set_dout_dlli(&desc[idx], state->digest_result_dma_addr,
 		      digestsize, NS_BIT, 1);
 	set_queue_last_ind(ctx->drvdata, &desc[idx]);
@@ -1461,8 +1453,8 @@ static int cc_mac_digest(struct ahash_request *req)
 	}
 
 	/* Setup request structure */
-	cc_req.user_cb = (void *)cc_digest_complete;
-	cc_req.user_arg = (void *)req;
+	cc_req.user_cb = cc_digest_complete;
+	cc_req.user_arg = req;
 
 	if (ctx->hw_mode == DRV_CIPHER_XCBC_MAC) {
 		key_len = CC_AES_128_BIT_KEY_SIZE;
@@ -1833,7 +1825,7 @@ static struct cc_hash_alg *cc_alloc_hash_alg(struct cc_hash_template *template,
 	struct crypto_alg *alg;
 	struct ahash_alg *halg;
 
-	t_crypto_alg = kzalloc(sizeof(*t_crypto_alg), GFP_KERNEL);
+	t_crypto_alg = devm_kzalloc(dev, sizeof(*t_crypto_alg), GFP_KERNEL);
 	if (!t_crypto_alg)
 		return ERR_PTR(-ENOMEM);
 
@@ -1870,104 +1862,85 @@ static struct cc_hash_alg *cc_alloc_hash_alg(struct cc_hash_template *template,
 	return t_crypto_alg;
 }
 
+static int cc_init_copy_sram(struct cc_drvdata *drvdata, const u32 *data,
+			     unsigned int size, u32 *sram_buff_ofs)
+{
+	struct cc_hw_desc larval_seq[CC_DIGEST_SIZE_MAX / sizeof(u32)];
+	unsigned int larval_seq_len = 0;
+	int rc;
+
+	cc_set_sram_desc(data, *sram_buff_ofs, size / sizeof(*data),
+			 larval_seq, &larval_seq_len);
+	rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+	if (rc)
+		return rc;
+
+	*sram_buff_ofs += size;
+	return 0;
+}
+
 int cc_init_hash_sram(struct cc_drvdata *drvdata)
 {
 	struct cc_hash_handle *hash_handle = drvdata->hash_handle;
-	cc_sram_addr_t sram_buff_ofs = hash_handle->digest_len_sram_addr;
-	unsigned int larval_seq_len = 0;
-	struct cc_hw_desc larval_seq[CC_DIGEST_SIZE_MAX / sizeof(u32)];
+	u32 sram_buff_ofs = hash_handle->digest_len_sram_addr;
 	bool large_sha_supported = (drvdata->hw_rev >= CC_HW_REV_712);
 	bool sm3_supported = (drvdata->hw_rev >= CC_HW_REV_713);
 	int rc = 0;
 
 	/* Copy-to-sram digest-len */
-	cc_set_sram_desc(cc_digest_len_init, sram_buff_ofs,
-			 ARRAY_SIZE(cc_digest_len_init), larval_seq,
-			 &larval_seq_len);
-	rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+	rc = cc_init_copy_sram(drvdata, cc_digest_len_init,
+			       sizeof(cc_digest_len_init), &sram_buff_ofs);
 	if (rc)
 		goto init_digest_const_err;
 
-	sram_buff_ofs += sizeof(cc_digest_len_init);
-	larval_seq_len = 0;
-
 	if (large_sha_supported) {
 		/* Copy-to-sram digest-len for sha384/512 */
-		cc_set_sram_desc(cc_digest_len_sha512_init, sram_buff_ofs,
-				 ARRAY_SIZE(cc_digest_len_sha512_init),
-				 larval_seq, &larval_seq_len);
-		rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+		rc = cc_init_copy_sram(drvdata, cc_digest_len_sha512_init,
+				       sizeof(cc_digest_len_sha512_init),
+				       &sram_buff_ofs);
 		if (rc)
 			goto init_digest_const_err;
-
-		sram_buff_ofs += sizeof(cc_digest_len_sha512_init);
-		larval_seq_len = 0;
 	}
 
 	/* The initial digests offset */
 	hash_handle->larval_digest_sram_addr = sram_buff_ofs;
 
 	/* Copy-to-sram initial SHA* digests */
-	cc_set_sram_desc(cc_md5_init, sram_buff_ofs, ARRAY_SIZE(cc_md5_init),
-			 larval_seq, &larval_seq_len);
-	rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+	rc = cc_init_copy_sram(drvdata, cc_md5_init, sizeof(cc_md5_init),
+			       &sram_buff_ofs);
 	if (rc)
 		goto init_digest_const_err;
-	sram_buff_ofs += sizeof(cc_md5_init);
-	larval_seq_len = 0;
 
-	cc_set_sram_desc(cc_sha1_init, sram_buff_ofs,
-			 ARRAY_SIZE(cc_sha1_init), larval_seq,
-			 &larval_seq_len);
-	rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+	rc = cc_init_copy_sram(drvdata, cc_sha1_init, sizeof(cc_sha1_init),
+			       &sram_buff_ofs);
 	if (rc)
 		goto init_digest_const_err;
-	sram_buff_ofs += sizeof(cc_sha1_init);
-	larval_seq_len = 0;
 
-	cc_set_sram_desc(cc_sha224_init, sram_buff_ofs,
-			 ARRAY_SIZE(cc_sha224_init), larval_seq,
-			 &larval_seq_len);
-	rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+	rc = cc_init_copy_sram(drvdata, cc_sha224_init, sizeof(cc_sha224_init),
+			       &sram_buff_ofs);
 	if (rc)
 		goto init_digest_const_err;
-	sram_buff_ofs += sizeof(cc_sha224_init);
-	larval_seq_len = 0;
 
-	cc_set_sram_desc(cc_sha256_init, sram_buff_ofs,
-			 ARRAY_SIZE(cc_sha256_init), larval_seq,
-			 &larval_seq_len);
-	rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+	rc = cc_init_copy_sram(drvdata, cc_sha256_init, sizeof(cc_sha256_init),
+			       &sram_buff_ofs);
 	if (rc)
 		goto init_digest_const_err;
-	sram_buff_ofs += sizeof(cc_sha256_init);
-	larval_seq_len = 0;
 
 	if (sm3_supported) {
-		cc_set_sram_desc(cc_sm3_init, sram_buff_ofs,
-				 ARRAY_SIZE(cc_sm3_init), larval_seq,
-				 &larval_seq_len);
-		rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+		rc = cc_init_copy_sram(drvdata, cc_sm3_init,
+				       sizeof(cc_sm3_init), &sram_buff_ofs);
 		if (rc)
 			goto init_digest_const_err;
-		sram_buff_ofs += sizeof(cc_sm3_init);
-		larval_seq_len = 0;
 	}
 
 	if (large_sha_supported) {
-		cc_set_sram_desc(cc_sha384_init, sram_buff_ofs,
-				 ARRAY_SIZE(cc_sha384_init), larval_seq,
-				 &larval_seq_len);
-		rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+		rc = cc_init_copy_sram(drvdata, cc_sha384_init,
+				       sizeof(cc_sha384_init), &sram_buff_ofs);
 		if (rc)
 			goto init_digest_const_err;
-		sram_buff_ofs += sizeof(cc_sha384_init);
-		larval_seq_len = 0;
 
-		cc_set_sram_desc(cc_sha512_init, sram_buff_ofs,
-				 ARRAY_SIZE(cc_sha512_init), larval_seq,
-				 &larval_seq_len);
-		rc = send_request_init(drvdata, larval_seq, larval_seq_len);
+		rc = cc_init_copy_sram(drvdata, cc_sha512_init,
+				       sizeof(cc_sha512_init), &sram_buff_ofs);
 		if (rc)
 			goto init_digest_const_err;
 	}
@@ -1979,13 +1952,13 @@ init_digest_const_err:
 int cc_hash_alloc(struct cc_drvdata *drvdata)
 {
 	struct cc_hash_handle *hash_handle;
-	cc_sram_addr_t sram_buff;
+	u32 sram_buff;
 	u32 sram_size_to_alloc;
 	struct device *dev = drvdata_to_dev(drvdata);
 	int rc = 0;
 	int alg;
 
-	hash_handle = kzalloc(sizeof(*hash_handle), GFP_KERNEL);
+	hash_handle = devm_kzalloc(dev, sizeof(*hash_handle), GFP_KERNEL);
 	if (!hash_handle)
 		return -ENOMEM;
 
@@ -2007,7 +1980,6 @@ int cc_hash_alloc(struct cc_drvdata *drvdata)
 
 	sram_buff = cc_sram_alloc(drvdata, sram_size_to_alloc);
 	if (sram_buff == NULL_SRAM_ADDR) {
-		dev_err(dev, "SRAM pool exhausted\n");
 		rc = -ENOMEM;
 		goto fail;
 	}
@@ -2047,12 +2019,10 @@ int cc_hash_alloc(struct cc_drvdata *drvdata)
 			if (rc) {
 				dev_err(dev, "%s alg registration failed\n",
 					driver_hash[alg].driver_name);
-				kfree(t_alg);
 				goto fail;
-			} else {
-				list_add_tail(&t_alg->entry,
-					      &hash_handle->hash_list);
 			}
+
+			list_add_tail(&t_alg->entry, &hash_handle->hash_list);
 		}
 		if (hw_mode == DRV_CIPHER_XCBC_MAC ||
 		    hw_mode == DRV_CIPHER_CMAC)
@@ -2072,18 +2042,16 @@ int cc_hash_alloc(struct cc_drvdata *drvdata)
 		if (rc) {
 			dev_err(dev, "%s alg registration failed\n",
 				driver_hash[alg].driver_name);
-			kfree(t_alg);
 			goto fail;
-		} else {
-			list_add_tail(&t_alg->entry, &hash_handle->hash_list);
 		}
+
+		list_add_tail(&t_alg->entry, &hash_handle->hash_list);
 	}
 
 	return 0;
 
 fail:
-	kfree(drvdata->hash_handle);
-	drvdata->hash_handle = NULL;
+	cc_hash_free(drvdata);
 	return rc;
 }
 
@@ -2092,17 +2060,12 @@ int cc_hash_free(struct cc_drvdata *drvdata)
 	struct cc_hash_alg *t_hash_alg, *hash_n;
 	struct cc_hash_handle *hash_handle = drvdata->hash_handle;
 
-	if (hash_handle) {
-		list_for_each_entry_safe(t_hash_alg, hash_n,
-					 &hash_handle->hash_list, entry) {
-			crypto_unregister_ahash(&t_hash_alg->ahash_alg);
-			list_del(&t_hash_alg->entry);
-			kfree(t_hash_alg);
-		}
-
-		kfree(hash_handle);
-		drvdata->hash_handle = NULL;
+	list_for_each_entry_safe(t_hash_alg, hash_n, &hash_handle->hash_list,
+				 entry) {
+		crypto_unregister_ahash(&t_hash_alg->ahash_alg);
+		list_del(&t_hash_alg->entry);
 	}
+
 	return 0;
 }
 
@@ -2263,22 +2226,23 @@ static const void *cc_larval_digest(struct device *dev, u32 mode)
 	}
 }
 
-/*!
- * Gets the address of the initial digest in SRAM
+/**
+ * cc_larval_digest_addr() - Get the address of the initial digest in SRAM
  * according to the given hash mode
  *
- * \param drvdata
- * \param mode The Hash mode. Supported modes: MD5/SHA1/SHA224/SHA256
+ * @drvdata: Associated device driver context
+ * @mode: The Hash mode. Supported modes: MD5/SHA1/SHA224/SHA256
  *
- * \return u32 The address of the initial digest in SRAM
+ * Return:
+ * The address of the initial digest in SRAM
  */
-cc_sram_addr_t cc_larval_digest_addr(void *drvdata, u32 mode)
+u32 cc_larval_digest_addr(void *drvdata, u32 mode)
 {
 	struct cc_drvdata *_drvdata = (struct cc_drvdata *)drvdata;
 	struct cc_hash_handle *hash_handle = _drvdata->hash_handle;
 	struct device *dev = drvdata_to_dev(_drvdata);
 	bool sm3_supported = (_drvdata->hw_rev >= CC_HW_REV_713);
-	cc_sram_addr_t addr;
+	u32 addr;
 
 	switch (mode) {
 	case DRV_HASH_NULL:
@@ -2330,12 +2294,11 @@ cc_sram_addr_t cc_larval_digest_addr(void *drvdata, u32 mode)
 	return hash_handle->larval_digest_sram_addr;
 }
 
-cc_sram_addr_t
-cc_digest_len_addr(void *drvdata, u32 mode)
+u32 cc_digest_len_addr(void *drvdata, u32 mode)
 {
 	struct cc_drvdata *_drvdata = (struct cc_drvdata *)drvdata;
 	struct cc_hash_handle *hash_handle = _drvdata->hash_handle;
-	cc_sram_addr_t digest_len_addr = hash_handle->digest_len_sram_addr;
+	u32 digest_len_addr = hash_handle->digest_len_sram_addr;
 
 	switch (mode) {
 	case DRV_HASH_SHA1:
@@ -2343,11 +2306,9 @@ cc_digest_len_addr(void *drvdata, u32 mode)
 	case DRV_HASH_SHA256:
 	case DRV_HASH_MD5:
 		return digest_len_addr;
-#if (CC_DEV_SHA_MAX > 256)
 	case DRV_HASH_SHA384:
 	case DRV_HASH_SHA512:
 		return  digest_len_addr + sizeof(cc_digest_len_init);
-#endif
 	default:
 		return digest_len_addr; /*to avoid kernel crash*/
 	}

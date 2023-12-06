@@ -133,10 +133,19 @@ void snd_seq_device_load_drivers(void)
 	flush_work(&autoload_work);
 }
 EXPORT_SYMBOL(snd_seq_device_load_drivers);
-#define cancel_autoload_drivers()	cancel_work_sync(&autoload_work)
+
+static inline void cancel_autoload_drivers(void)
+{
+	cancel_work_sync(&autoload_work);
+}
 #else
-#define queue_autoload_drivers() /* NOP */
-#define cancel_autoload_drivers() /* NOP */
+static inline void queue_autoload_drivers(void)
+{
+}
+
+static inline void cancel_autoload_drivers(void)
+{
+}
 #endif
 
 /*
@@ -191,7 +200,7 @@ int snd_seq_device_new(struct snd_card *card, int device, const char *id,
 {
 	struct snd_seq_device *dev;
 	int err;
-	static struct snd_device_ops dops = {
+	static const struct snd_device_ops dops = {
 		.dev_free = snd_seq_device_dev_free,
 		.dev_register = snd_seq_device_dev_register,
 		.dev_disconnect = snd_seq_device_dev_disconnect,

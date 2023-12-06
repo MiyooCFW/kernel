@@ -73,6 +73,7 @@ static void __init *early_alloc_pgtable(unsigned long size)
 int __ref map_kernel_page(unsigned long ea, unsigned long pa, pgprot_t prot)
 {
 	pgd_t *pgdp;
+	p4d_t *p4dp;
 	pud_t *pudp;
 	pmd_t *pmdp;
 	pte_t *ptep;
@@ -80,7 +81,8 @@ int __ref map_kernel_page(unsigned long ea, unsigned long pa, pgprot_t prot)
 	BUILD_BUG_ON(TASK_SIZE_USER64 > PGTABLE_RANGE);
 	if (slab_is_available()) {
 		pgdp = pgd_offset_k(ea);
-		pudp = pud_alloc(&init_mm, pgdp, ea);
+		p4dp = p4d_offset(pgdp, ea);
+		pudp = pud_alloc(&init_mm, p4dp, ea);
 		if (!pudp)
 			return -ENOMEM;
 		pmdp = pmd_alloc(&init_mm, pudp, ea);
@@ -91,20 +93,19 @@ int __ref map_kernel_page(unsigned long ea, unsigned long pa, pgprot_t prot)
 			return -ENOMEM;
 	} else {
 		pgdp = pgd_offset_k(ea);
-#ifndef __PAGETABLE_PUD_FOLDED
-		if (pgd_none(*pgdp)) {
+		p4dp = p4d_offset(pgdp, ea);
+		if (p4d_none(*p4dp)) {
 			pudp = early_alloc_pgtable(PUD_TABLE_SIZE);
-			pgd_populate(&init_mm, pgdp, pudp);
+			p4d_populate(&init_mm, p4dp, pudp);
 		}
-#endif /* !__PAGETABLE_PUD_FOLDED */
-		pudp = pud_offset(pgdp, ea);
+		pudp = pud_offset(p4dp, ea);
 		if (pud_none(*pudp)) {
 			pmdp = early_alloc_pgtable(PMD_TABLE_SIZE);
 			pud_populate(&init_mm, pudp, pmdp);
 		}
 		pmdp = pmd_offset(pudp, ea);
 		if (!pmd_present(*pmdp)) {
-			ptep = early_alloc_pgtable(PAGE_SIZE);
+			ptep = early_alloc_pgtable(PTE_TABLE_SIZE);
 			pmd_populate_kernel(&init_mm, pmdp, ptep);
 		}
 		ptep = pte_offset_kernel(pmdp, ea);

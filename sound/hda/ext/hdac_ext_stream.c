@@ -141,7 +141,7 @@ void snd_hdac_ext_stream_decouple(struct hdac_bus *bus,
 EXPORT_SYMBOL_GPL(snd_hdac_ext_stream_decouple);
 
 /**
- * snd_hdac_ext_linkstream_start - start a stream
+ * snd_hdac_ext_link_stream_start - start a stream
  * @stream: HD-audio ext core stream to start
  */
 void snd_hdac_ext_link_stream_start(struct hdac_ext_stream *stream)
@@ -523,7 +523,6 @@ EXPORT_SYMBOL_GPL(snd_hdac_ext_stream_set_dpibr);
 
 /**
  * snd_hdac_ext_stream_set_lpib - sets the lpib value of a stream
- * @bus: HD-audio core bus
  * @stream: hdac_ext_stream
  * @value: lpib value to set
  */

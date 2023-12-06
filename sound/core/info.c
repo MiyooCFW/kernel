@@ -16,11 +16,10 @@
 #include <linux/utsname.h>
 #include <linux/proc_fs.h>
 #include <linux/mutex.h>
-#include <stdarg.h>
 
 int snd_info_check_reserved_words(const char *str)
 {
-	static char *reserved[] =
+	static const char * const reserved[] =
 	{
 		"version",
 		"meminfo",
@@ -35,7 +34,7 @@ int snd_info_check_reserved_words(const char *str)
 		"seq",
 		NULL
 	};
-	char **xstr = reserved;
+	const char * const *xstr = reserved;
 
 	while (*xstr) {
 		if (!strcmp(*xstr, str))
@@ -57,7 +56,7 @@ struct snd_info_private_data {
 };
 
 static int snd_info_version_init(void);
-static void snd_info_disconnect(struct snd_info_entry *entry);
+static void snd_info_clear_entries(struct snd_info_entry *entry);
 
 /*
 
@@ -282,17 +281,16 @@ static int snd_info_entry_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations snd_info_entry_operations =
+static const struct proc_ops snd_info_entry_operations =
 {
-	.owner =		THIS_MODULE,
-	.llseek =		snd_info_entry_llseek,
-	.read =			snd_info_entry_read,
-	.write =		snd_info_entry_write,
-	.poll =			snd_info_entry_poll,
-	.unlocked_ioctl =	snd_info_entry_ioctl,
-	.mmap =			snd_info_entry_mmap,
-	.open =			snd_info_entry_open,
-	.release =		snd_info_entry_release,
+	.proc_lseek	= snd_info_entry_llseek,
+	.proc_read	= snd_info_entry_read,
+	.proc_write	= snd_info_entry_write,
+	.proc_poll	= snd_info_entry_poll,
+	.proc_ioctl	= snd_info_entry_ioctl,
+	.proc_mmap	= snd_info_entry_mmap,
+	.proc_open	= snd_info_entry_open,
+	.proc_release	= snd_info_entry_release,
 };
 
 /*
@@ -421,14 +419,13 @@ static int snd_info_text_entry_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations snd_info_text_entry_ops =
+static const struct proc_ops snd_info_text_entry_ops =
 {
-	.owner =		THIS_MODULE,
-	.open =			snd_info_text_entry_open,
-	.release =		snd_info_text_entry_release,
-	.write =		snd_info_text_entry_write,
-	.llseek =		seq_lseek,
-	.read =			seq_read,
+	.proc_open	= snd_info_text_entry_open,
+	.proc_release	= snd_info_text_entry_release,
+	.proc_write	= snd_info_text_entry_write,
+	.proc_lseek	= seq_lseek,
+	.proc_read	= seq_read,
 };
 
 static struct snd_info_entry *create_subdir(struct module *mod,
@@ -572,11 +569,16 @@ void snd_info_card_disconnect(struct snd_card *card)
 {
 	if (!card)
 		return;
-	mutex_lock(&info_mutex);
+
 	proc_remove(card->proc_root_link);
-	card->proc_root_link = NULL;
 	if (card->proc_root)
-		snd_info_disconnect(card->proc_root);
+		proc_remove(card->proc_root->p);
+
+	mutex_lock(&info_mutex);
+	if (card->proc_root)
+		snd_info_clear_entries(card->proc_root);
+	card->proc_root_link = NULL;
+	card->proc_root = NULL;
 	mutex_unlock(&info_mutex);
 }
 
@@ -606,7 +608,7 @@ int snd_info_card_free(struct snd_card *card)
  */
 int snd_info_get_line(struct snd_info_buffer *buffer, char *line, int len)
 {
-	int c = -1;
+	int c;
 
 	if (snd_BUG_ON(!buffer))
 		return 1;
@@ -748,15 +750,14 @@ struct snd_info_entry *snd_info_create_card_entry(struct snd_card *card,
 }
 EXPORT_SYMBOL(snd_info_create_card_entry);
 
-static void snd_info_disconnect(struct snd_info_entry *entry)
+static void snd_info_clear_entries(struct snd_info_entry *entry)
 {
 	struct snd_info_entry *p;
 
 	if (!entry->p)
 		return;
 	list_for_each_entry(p, &entry->children, list)
-		snd_info_disconnect(p);
-	proc_remove(entry->p);
+		snd_info_clear_entries(p);
 	entry->p = NULL;
 }
 
@@ -773,8 +774,9 @@ void snd_info_free_entry(struct snd_info_entry * entry)
 	if (!entry)
 		return;
 	if (entry->p) {
+		proc_remove(entry->p);
 		mutex_lock(&info_mutex);
-		snd_info_disconnect(entry);
+		snd_info_clear_entries(entry);
 		mutex_unlock(&info_mutex);
 	}
 
@@ -812,7 +814,7 @@ static int __snd_info_register(struct snd_info_entry *entry)
 			return -ENOMEM;
 		}
 	} else {
-		const struct file_operations *ops;
+		const struct proc_ops *ops;
 		if (entry->content == SNDRV_INFO_CONTENT_DATA)
 			ops = &snd_info_entry_operations;
 		else

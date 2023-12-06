@@ -12,6 +12,7 @@
 #include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/types.h>
+#include <linux/irq.h>
 
 #include <asm/bcache.h>
 #include <asm/mips-cps.h>
@@ -423,11 +424,9 @@ static void cps_shutdown_this_cpu(enum cpu_death death)
 			wmb();
 		}
 	} else {
-		if (IS_ENABLED(CONFIG_HOTPLUG_CPU)) {
-			pr_debug("Gating power to core %d\n", core);
-			/* Power down the core */
-			cps_pm_enter_state(CPS_PM_POWER_GATED);
-		}
+		pr_debug("Gating power to core %d\n", core);
+		/* Power down the core */
+		cps_pm_enter_state(CPS_PM_POWER_GATED);
 	}
 }
 
@@ -452,9 +451,6 @@ static int cps_cpu_disable(void)
 	unsigned cpu = smp_processor_id();
 	struct core_boot_config *core_cfg;
 
-	if (!cpu)
-		return -EBUSY;
-
 	if (!cps_pm_support_state(CPS_PM_POWER_GATED))
 		return -EINVAL;
 
@@ -463,6 +459,7 @@ static int cps_cpu_disable(void)
 	smp_mb__after_atomic();
 	set_cpu_online(cpu, false);
 	calculate_cpu_foreign_map();
+	irq_migrate_all_off_this_cpu();
 
 	return 0;
 }

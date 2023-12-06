@@ -15,9 +15,11 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/bug.h>
-#include <asm/unaligned.h>
 
-bool blake2s_selftest(void);
+static inline void blake2s_set_lastblock(struct blake2s_state *state)
+{
+	state->f[0] = -1;
+}
 
 void blake2s_update(struct blake2s_state *state, const u8 *in, size_t inlen)
 {
@@ -27,17 +29,14 @@ void blake2s_update(struct blake2s_state *state, const u8 *in, size_t inlen)
 		return;
 	if (inlen > fill) {
 		memcpy(state->buf + state->buflen, in, fill);
-		blake2s_compress_generic(state, state->buf, 1,
-					 BLAKE2S_BLOCK_SIZE);
+		blake2s_compress(state, state->buf, 1, BLAKE2S_BLOCK_SIZE);
 		state->buflen = 0;
 		in += fill;
 		inlen -= fill;
 	}
 	if (inlen > BLAKE2S_BLOCK_SIZE) {
 		const size_t nblocks = DIV_ROUND_UP(inlen, BLAKE2S_BLOCK_SIZE);
-		/* Hash one less (full) block than strictly possible */
-		blake2s_compress_generic(state, in, nblocks - 1,
-					 BLAKE2S_BLOCK_SIZE);
+		blake2s_compress(state, in, nblocks - 1, BLAKE2S_BLOCK_SIZE);
 		in += BLAKE2S_BLOCK_SIZE * (nblocks - 1);
 		inlen -= BLAKE2S_BLOCK_SIZE * (nblocks - 1);
 	}
@@ -52,14 +51,14 @@ void blake2s_final(struct blake2s_state *state, u8 *out)
 	blake2s_set_lastblock(state);
 	memset(state->buf + state->buflen, 0,
 	       BLAKE2S_BLOCK_SIZE - state->buflen); /* Padding */
-	blake2s_compress_generic(state, state->buf, 1, state->buflen);
+	blake2s_compress(state, state->buf, 1, state->buflen);
 	cpu_to_le32_array(state->h, ARRAY_SIZE(state->h));
 	memcpy(out, state->h, state->outlen);
 	memzero_explicit(state, sizeof(*state));
 }
 EXPORT_SYMBOL(blake2s_final);
 
-static int __init mod_init(void)
+static int __init blake2s_mod_init(void)
 {
 	if (!IS_ENABLED(CONFIG_CRYPTO_MANAGER_DISABLE_TESTS) &&
 	    WARN_ON(!blake2s_selftest()))
@@ -67,12 +66,7 @@ static int __init mod_init(void)
 	return 0;
 }
 
-static void __exit mod_exit(void)
-{
-}
-
-module_init(mod_init);
-module_exit(mod_exit);
+module_init(blake2s_mod_init);
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("BLAKE2s hash function");
 MODULE_AUTHOR("Jason A. Donenfeld <Jason@zx2c4.com>");

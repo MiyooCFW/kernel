@@ -39,10 +39,10 @@ static int run_lwt_bpf(struct sk_buff *skb, struct bpf_lwt_prog *lwt,
 {
 	int ret;
 
-	/* Preempt disable and BH disable are needed to protect per-cpu
+	/* Migration disable and BH disable are needed to protect per-cpu
 	 * redirect_info between BPF prog and skb_do_redirect().
 	 */
-	preempt_disable();
+	migrate_disable();
 	local_bh_disable();
 	bpf_compute_data_pointers(skb);
 	ret = bpf_prog_run_save_cb(lwt->prog, skb);
@@ -77,7 +77,7 @@ static int run_lwt_bpf(struct sk_buff *skb, struct bpf_lwt_prog *lwt,
 	}
 
 	local_bh_enable();
-	preempt_enable();
+	migrate_enable();
 
 	return ret;
 }
@@ -365,7 +365,7 @@ static const struct nla_policy bpf_nl_policy[LWT_BPF_MAX + 1] = {
 	[LWT_BPF_XMIT_HEADROOM]	= { .type = NLA_U32 },
 };
 
-static int bpf_build_state(struct nlattr *nla,
+static int bpf_build_state(struct net *net, struct nlattr *nla,
 			   unsigned int family, const void *cfg,
 			   struct lwtunnel_state **ts,
 			   struct netlink_ext_ack *extack)

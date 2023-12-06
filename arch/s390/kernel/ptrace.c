@@ -7,6 +7,7 @@
  *               Martin Schwidefsky (schwidefsky@de.ibm.com)
  */
 
+#include "asm/ptrace.h"
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/sched/task_stack.h>
@@ -25,8 +26,6 @@
 #include <linux/compat.h>
 #include <trace/syscall.h>
 #include <asm/page.h>
-#include <asm/pgtable.h>
-#include <asm/pgalloc.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/switch_to.h>
@@ -38,9 +37,6 @@
 #ifdef CONFIG_COMPAT
 #include "compat_ptrace.h"
 #endif
-
-#define CREATE_TRACE_POINTS
-#include <trace/events/syscalls.h>
 
 void update_cr_regs(struct task_struct *task)
 {
@@ -142,7 +138,7 @@ void ptrace_disable(struct task_struct *task)
 	memset(&task->thread.per_user, 0, sizeof(task->thread.per_user));
 	memset(&task->thread.per_event, 0, sizeof(task->thread.per_event));
 	clear_tsk_thread_flag(task, TIF_SINGLE_STEP);
-	clear_pt_regs_flag(task_pt_regs(task), PIF_PER_TRAP);
+	clear_tsk_thread_flag(task, TIF_PER_TRAP);
 	task->thread.per_flags = 0;
 }
 
@@ -324,25 +320,6 @@ static inline void __poke_user_per(struct task_struct *child,
 		child->thread.per_user.end = data;
 }
 
-static void fixup_int_code(struct task_struct *child, addr_t data)
-{
-	struct pt_regs *regs = task_pt_regs(child);
-	int ilc = regs->int_code >> 16;
-	u16 insn;
-
-	if (ilc > 6)
-		return;
-
-	if (ptrace_access_vm(child, regs->psw.addr - (regs->int_code >> 16),
-			&insn, sizeof(insn), FOLL_FORCE) != sizeof(insn))
-		return;
-
-	/* double check that tracee stopped on svc instruction */
-	if ((insn >> 8) != 0xa)
-		return;
-
-	regs->int_code = 0x20000 | (data & 0xffff);
-}
 /*
  * Write a word to the user area of a process at location addr. This
  * operation does have an additional problem compared to peek_user.
@@ -376,10 +353,12 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 		}
 
 		if (test_pt_regs_flag(regs, PIF_SYSCALL) &&
-			addr == offsetof(struct user, regs.gprs[2]))
-			fixup_int_code(child, data);
-		*(addr_t *)((addr_t) &regs->psw + addr) = data;
+			addr == offsetof(struct user, regs.gprs[2])) {
+			struct pt_regs *regs = task_pt_regs(child);
 
+			regs->int_code = 0x20000 | (data & 0xffff);
+		}
+		*(addr_t *)((addr_t) &regs->psw + addr) = data;
 	} else if (addr < (addr_t) (&dummy->regs.orig_gpr2)) {
 		/*
 		 * access registers are stored in the thread structure
@@ -742,10 +721,12 @@ static int __poke_user_compat(struct task_struct *child,
 			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_BA) |
 				(__u64)(tmp & PSW32_ADDR_AMODE);
 		} else {
-
 			if (test_pt_regs_flag(regs, PIF_SYSCALL) &&
-				addr == offsetof(struct compat_user, regs.gprs[2]))
-				fixup_int_code(child, data);
+				addr == offsetof(struct compat_user, regs.gprs[2])) {
+				struct pt_regs *regs = task_pt_regs(child);
+
+				regs->int_code = 0x20000 | (data & 0xffff);
+			}
 			/* gpr 0-15 */
 			*(__u32*)((addr_t) &regs->psw + addr*2 + 4) = tmp;
 		}
@@ -860,89 +841,20 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 }
 #endif
 
-asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
-{
-	unsigned long mask = -1UL;
-	long ret = -1;
-
-	/*
-	 * The sysc_tracesys code in entry.S stored the system
-	 * call number to gprs[2].
-	 */
-	if (test_thread_flag(TIF_SYSCALL_TRACE) &&
-	    tracehook_report_syscall_entry(regs)) {
-		/*
-		 * Tracing decided this syscall should not happen. Skip
-		 * the system call and the system call restart handling.
-		 */
-		goto skip;
-	}
-
-	/* Do the secure computing check after ptrace. */
-	if (secure_computing(NULL)) {
-		/* seccomp failures shouldn't expose any additional code. */
-		goto skip;
-	}
-
-	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
-		trace_sys_enter(regs, regs->int_code & 0xffff);
-
-	if (is_compat_task())
-		mask = 0xffffffff;
-
-	audit_syscall_entry(regs->int_code & 0xffff, regs->orig_gpr2 & mask,
-			    regs->gprs[3] &mask, regs->gprs[4] &mask,
-			    regs->gprs[5] &mask);
-
-	if ((signed long)regs->gprs[2] >= NR_syscalls) {
-		regs->gprs[2] = -ENOSYS;
-		ret = -ENOSYS;
-	}
-	return regs->gprs[2];
-skip:
-	clear_pt_regs_flag(regs, PIF_SYSCALL);
-	return ret;
-}
-
-asmlinkage void do_syscall_trace_exit(struct pt_regs *regs)
-{
-	audit_syscall_exit(regs);
-
-	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
-		trace_sys_exit(regs, regs->gprs[2]);
-
-	if (test_thread_flag(TIF_SYSCALL_TRACE))
-		tracehook_report_syscall_exit(regs, 0);
-}
-
 /*
  * user_regset definitions.
  */
 
 static int s390_regs_get(struct task_struct *target,
 			 const struct user_regset *regset,
-			 unsigned int pos, unsigned int count,
-			 void *kbuf, void __user *ubuf)
+			 struct membuf to)
 {
+	unsigned pos;
 	if (target == current)
 		save_access_regs(target->thread.acrs);
 
-	if (kbuf) {
-		unsigned long *k = kbuf;
-		while (count > 0) {
-			*k++ = __peek_user(target, pos);
-			count -= sizeof(*k);
-			pos += sizeof(*k);
-		}
-	} else {
-		unsigned long __user *u = ubuf;
-		while (count > 0) {
-			if (__put_user(__peek_user(target, pos), u++))
-				return -EFAULT;
-			count -= sizeof(*u);
-			pos += sizeof(*u);
-		}
-	}
+	for (pos = 0; pos < sizeof(s390_regs); pos += sizeof(long))
+		membuf_store(&to, __peek_user(target, pos));
 	return 0;
 }
 
@@ -983,8 +895,8 @@ static int s390_regs_set(struct task_struct *target,
 }
 
 static int s390_fpregs_get(struct task_struct *target,
-			   const struct user_regset *regset, unsigned int pos,
-			   unsigned int count, void *kbuf, void __user *ubuf)
+			   const struct user_regset *regset,
+			   struct membuf to)
 {
 	_s390_fp_regs fp_regs;
 
@@ -994,8 +906,7 @@ static int s390_fpregs_get(struct task_struct *target,
 	fp_regs.fpc = target->thread.fpu.fpc;
 	fpregs_store(&fp_regs, &target->thread.fpu);
 
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				   &fp_regs, 0, -1);
+	return membuf_write(&to, &fp_regs, sizeof(fp_regs));
 }
 
 static int s390_fpregs_set(struct task_struct *target,
@@ -1042,20 +953,9 @@ static int s390_fpregs_set(struct task_struct *target,
 
 static int s390_last_break_get(struct task_struct *target,
 			       const struct user_regset *regset,
-			       unsigned int pos, unsigned int count,
-			       void *kbuf, void __user *ubuf)
+			       struct membuf to)
 {
-	if (count > 0) {
-		if (kbuf) {
-			unsigned long *k = kbuf;
-			*k = target->thread.last_break;
-		} else {
-			unsigned long  __user *u = ubuf;
-			if (__put_user(target->thread.last_break, u))
-				return -EFAULT;
-		}
-	}
-	return 0;
+	return membuf_store(&to, target->thread.last_break);
 }
 
 static int s390_last_break_set(struct task_struct *target,
@@ -1068,16 +968,15 @@ static int s390_last_break_set(struct task_struct *target,
 
 static int s390_tdb_get(struct task_struct *target,
 			const struct user_regset *regset,
-			unsigned int pos, unsigned int count,
-			void *kbuf, void __user *ubuf)
+			struct membuf to)
 {
 	struct pt_regs *regs = task_pt_regs(target);
-	unsigned char *data;
+	size_t size;
 
 	if (!(regs->int_code & 0x200))
 		return -ENODATA;
-	data = target->thread.trap_tdb;
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, data, 0, 256);
+	size = sizeof(target->thread.trap_tdb.data);
+	return membuf_write(&to, target->thread.trap_tdb.data, size);
 }
 
 static int s390_tdb_set(struct task_struct *target,
@@ -1090,8 +989,7 @@ static int s390_tdb_set(struct task_struct *target,
 
 static int s390_vxrs_low_get(struct task_struct *target,
 			     const struct user_regset *regset,
-			     unsigned int pos, unsigned int count,
-			     void *kbuf, void __user *ubuf)
+			     struct membuf to)
 {
 	__u64 vxrs[__NUM_VXRS_LOW];
 	int i;
@@ -1102,7 +1000,7 @@ static int s390_vxrs_low_get(struct task_struct *target,
 		save_fpu_regs();
 	for (i = 0; i < __NUM_VXRS_LOW; i++)
 		vxrs[i] = *((__u64 *)(target->thread.fpu.vxrs + i) + 1);
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
+	return membuf_write(&to, vxrs, sizeof(vxrs));
 }
 
 static int s390_vxrs_low_set(struct task_struct *target,
@@ -1131,18 +1029,14 @@ static int s390_vxrs_low_set(struct task_struct *target,
 
 static int s390_vxrs_high_get(struct task_struct *target,
 			      const struct user_regset *regset,
-			      unsigned int pos, unsigned int count,
-			      void *kbuf, void __user *ubuf)
+			      struct membuf to)
 {
-	__vector128 vxrs[__NUM_VXRS_HIGH];
-
 	if (!MACHINE_HAS_VX)
 		return -ENODEV;
 	if (target == current)
 		save_fpu_regs();
-	memcpy(vxrs, target->thread.fpu.vxrs + __NUM_VXRS_LOW, sizeof(vxrs));
-
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
+	return membuf_write(&to, target->thread.fpu.vxrs + __NUM_VXRS_LOW,
+			    __NUM_VXRS_HIGH * sizeof(__vector128));
 }
 
 static int s390_vxrs_high_set(struct task_struct *target,
@@ -1164,12 +1058,9 @@ static int s390_vxrs_high_set(struct task_struct *target,
 
 static int s390_system_call_get(struct task_struct *target,
 				const struct user_regset *regset,
-				unsigned int pos, unsigned int count,
-				void *kbuf, void __user *ubuf)
+				struct membuf to)
 {
-	unsigned int *data = &target->thread.system_call;
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				   data, 0, sizeof(unsigned int));
+	return membuf_store(&to, target->thread.system_call);
 }
 
 static int s390_system_call_set(struct task_struct *target,
@@ -1184,8 +1075,7 @@ static int s390_system_call_set(struct task_struct *target,
 
 static int s390_gs_cb_get(struct task_struct *target,
 			  const struct user_regset *regset,
-			  unsigned int pos, unsigned int count,
-			  void *kbuf, void __user *ubuf)
+			  struct membuf to)
 {
 	struct gs_cb *data = target->thread.gs_cb;
 
@@ -1195,8 +1085,7 @@ static int s390_gs_cb_get(struct task_struct *target,
 		return -ENODATA;
 	if (target == current)
 		save_gs_cb(data);
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				   data, 0, sizeof(struct gs_cb));
+	return membuf_write(&to, data, sizeof(struct gs_cb));
 }
 
 static int s390_gs_cb_set(struct task_struct *target,
@@ -1240,8 +1129,7 @@ static int s390_gs_cb_set(struct task_struct *target,
 
 static int s390_gs_bc_get(struct task_struct *target,
 			  const struct user_regset *regset,
-			  unsigned int pos, unsigned int count,
-			  void *kbuf, void __user *ubuf)
+			  struct membuf to)
 {
 	struct gs_cb *data = target->thread.gs_bc_cb;
 
@@ -1249,8 +1137,7 @@ static int s390_gs_bc_get(struct task_struct *target,
 		return -ENODEV;
 	if (!data)
 		return -ENODATA;
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				   data, 0, sizeof(struct gs_cb));
+	return membuf_write(&to, data, sizeof(struct gs_cb));
 }
 
 static int s390_gs_bc_set(struct task_struct *target,
@@ -1300,8 +1187,7 @@ static bool is_ri_cb_valid(struct runtime_instr_cb *cb)
 
 static int s390_runtime_instr_get(struct task_struct *target,
 				const struct user_regset *regset,
-				unsigned int pos, unsigned int count,
-				void *kbuf, void __user *ubuf)
+				struct membuf to)
 {
 	struct runtime_instr_cb *data = target->thread.ri_cb;
 
@@ -1310,8 +1196,7 @@ static int s390_runtime_instr_get(struct task_struct *target,
 	if (!data)
 		return -ENODATA;
 
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				   data, 0, sizeof(struct runtime_instr_cb));
+	return membuf_write(&to, data, sizeof(struct runtime_instr_cb));
 }
 
 static int s390_runtime_instr_set(struct task_struct *target,
@@ -1371,7 +1256,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(s390_regs) / sizeof(long),
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.get = s390_regs_get,
+		.regset_get = s390_regs_get,
 		.set = s390_regs_set,
 	},
 	{
@@ -1379,7 +1264,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(s390_fp_regs) / sizeof(long),
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.get = s390_fpregs_get,
+		.regset_get = s390_fpregs_get,
 		.set = s390_fpregs_set,
 	},
 	{
@@ -1387,7 +1272,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = 1,
 		.size = sizeof(unsigned int),
 		.align = sizeof(unsigned int),
-		.get = s390_system_call_get,
+		.regset_get = s390_system_call_get,
 		.set = s390_system_call_set,
 	},
 	{
@@ -1395,7 +1280,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = 1,
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.get = s390_last_break_get,
+		.regset_get = s390_last_break_get,
 		.set = s390_last_break_set,
 	},
 	{
@@ -1403,7 +1288,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = 1,
 		.size = 256,
 		.align = 1,
-		.get = s390_tdb_get,
+		.regset_get = s390_tdb_get,
 		.set = s390_tdb_set,
 	},
 	{
@@ -1411,7 +1296,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = __NUM_VXRS_LOW,
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_vxrs_low_get,
+		.regset_get = s390_vxrs_low_get,
 		.set = s390_vxrs_low_set,
 	},
 	{
@@ -1419,7 +1304,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = __NUM_VXRS_HIGH,
 		.size = sizeof(__vector128),
 		.align = sizeof(__vector128),
-		.get = s390_vxrs_high_get,
+		.regset_get = s390_vxrs_high_get,
 		.set = s390_vxrs_high_set,
 	},
 	{
@@ -1427,7 +1312,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_gs_cb_get,
+		.regset_get = s390_gs_cb_get,
 		.set = s390_gs_cb_set,
 	},
 	{
@@ -1435,7 +1320,7 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_gs_bc_get,
+		.regset_get = s390_gs_bc_get,
 		.set = s390_gs_bc_set,
 	},
 	{
@@ -1443,13 +1328,13 @@ static const struct user_regset s390_regsets[] = {
 		.n = sizeof(struct runtime_instr_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_runtime_instr_get,
+		.regset_get = s390_runtime_instr_get,
 		.set = s390_runtime_instr_set,
 	},
 };
 
 static const struct user_regset_view user_s390_view = {
-	.name = UTS_MACHINE,
+	.name = "s390x",
 	.e_machine = EM_S390,
 	.regsets = s390_regsets,
 	.n = ARRAY_SIZE(s390_regsets)
@@ -1458,28 +1343,15 @@ static const struct user_regset_view user_s390_view = {
 #ifdef CONFIG_COMPAT
 static int s390_compat_regs_get(struct task_struct *target,
 				const struct user_regset *regset,
-				unsigned int pos, unsigned int count,
-				void *kbuf, void __user *ubuf)
+				struct membuf to)
 {
+	unsigned n;
+
 	if (target == current)
 		save_access_regs(target->thread.acrs);
 
-	if (kbuf) {
-		compat_ulong_t *k = kbuf;
-		while (count > 0) {
-			*k++ = __peek_user_compat(target, pos);
-			count -= sizeof(*k);
-			pos += sizeof(*k);
-		}
-	} else {
-		compat_ulong_t __user *u = ubuf;
-		while (count > 0) {
-			if (__put_user(__peek_user_compat(target, pos), u++))
-				return -EFAULT;
-			count -= sizeof(*u);
-			pos += sizeof(*u);
-		}
-	}
+	for (n = 0; n < sizeof(s390_compat_regs); n += sizeof(compat_ulong_t))
+		membuf_store(&to, __peek_user_compat(target, n));
 	return 0;
 }
 
@@ -1521,29 +1393,14 @@ static int s390_compat_regs_set(struct task_struct *target,
 
 static int s390_compat_regs_high_get(struct task_struct *target,
 				     const struct user_regset *regset,
-				     unsigned int pos, unsigned int count,
-				     void *kbuf, void __user *ubuf)
+				     struct membuf to)
 {
 	compat_ulong_t *gprs_high;
+	int i;
 
-	gprs_high = (compat_ulong_t *)
-		&task_pt_regs(target)->gprs[pos / sizeof(compat_ulong_t)];
-	if (kbuf) {
-		compat_ulong_t *k = kbuf;
-		while (count > 0) {
-			*k++ = *gprs_high;
-			gprs_high += 2;
-			count -= sizeof(*k);
-		}
-	} else {
-		compat_ulong_t __user *u = ubuf;
-		while (count > 0) {
-			if (__put_user(*gprs_high, u++))
-				return -EFAULT;
-			gprs_high += 2;
-			count -= sizeof(*u);
-		}
-	}
+	gprs_high = (compat_ulong_t *)task_pt_regs(target)->gprs;
+	for (i = 0; i < NUM_GPRS; i++, gprs_high += 2)
+		membuf_store(&to, *gprs_high);
 	return 0;
 }
 
@@ -1582,23 +1439,11 @@ static int s390_compat_regs_high_set(struct task_struct *target,
 
 static int s390_compat_last_break_get(struct task_struct *target,
 				      const struct user_regset *regset,
-				      unsigned int pos, unsigned int count,
-				      void *kbuf, void __user *ubuf)
+				      struct membuf to)
 {
-	compat_ulong_t last_break;
+	compat_ulong_t last_break = target->thread.last_break;
 
-	if (count > 0) {
-		last_break = target->thread.last_break;
-		if (kbuf) {
-			unsigned long *k = kbuf;
-			*k = last_break;
-		} else {
-			unsigned long  __user *u = ubuf;
-			if (__put_user(last_break, u))
-				return -EFAULT;
-		}
-	}
-	return 0;
+	return membuf_store(&to, (unsigned long)last_break);
 }
 
 static int s390_compat_last_break_set(struct task_struct *target,
@@ -1615,7 +1460,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(s390_compat_regs) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
-		.get = s390_compat_regs_get,
+		.regset_get = s390_compat_regs_get,
 		.set = s390_compat_regs_set,
 	},
 	{
@@ -1623,7 +1468,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(s390_fp_regs) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
-		.get = s390_fpregs_get,
+		.regset_get = s390_fpregs_get,
 		.set = s390_fpregs_set,
 	},
 	{
@@ -1631,7 +1476,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = 1,
 		.size = sizeof(compat_uint_t),
 		.align = sizeof(compat_uint_t),
-		.get = s390_system_call_get,
+		.regset_get = s390_system_call_get,
 		.set = s390_system_call_set,
 	},
 	{
@@ -1639,7 +1484,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = 1,
 		.size = sizeof(long),
 		.align = sizeof(long),
-		.get = s390_compat_last_break_get,
+		.regset_get = s390_compat_last_break_get,
 		.set = s390_compat_last_break_set,
 	},
 	{
@@ -1647,7 +1492,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = 1,
 		.size = 256,
 		.align = 1,
-		.get = s390_tdb_get,
+		.regset_get = s390_tdb_get,
 		.set = s390_tdb_set,
 	},
 	{
@@ -1655,7 +1500,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = __NUM_VXRS_LOW,
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_vxrs_low_get,
+		.regset_get = s390_vxrs_low_get,
 		.set = s390_vxrs_low_set,
 	},
 	{
@@ -1663,7 +1508,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = __NUM_VXRS_HIGH,
 		.size = sizeof(__vector128),
 		.align = sizeof(__vector128),
-		.get = s390_vxrs_high_get,
+		.regset_get = s390_vxrs_high_get,
 		.set = s390_vxrs_high_set,
 	},
 	{
@@ -1671,7 +1516,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(s390_compat_regs_high) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
-		.get = s390_compat_regs_high_get,
+		.regset_get = s390_compat_regs_high_get,
 		.set = s390_compat_regs_high_set,
 	},
 	{
@@ -1679,7 +1524,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_gs_cb_get,
+		.regset_get = s390_gs_cb_get,
 		.set = s390_gs_cb_set,
 	},
 	{
@@ -1687,7 +1532,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(struct gs_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_gs_bc_get,
+		.regset_get = s390_gs_bc_get,
 		.set = s390_gs_bc_set,
 	},
 	{
@@ -1695,7 +1540,7 @@ static const struct user_regset s390_compat_regsets[] = {
 		.n = sizeof(struct runtime_instr_cb) / sizeof(__u64),
 		.size = sizeof(__u64),
 		.align = sizeof(__u64),
-		.get = s390_runtime_instr_get,
+		.regset_get = s390_runtime_instr_get,
 		.set = s390_runtime_instr_set,
 	},
 };

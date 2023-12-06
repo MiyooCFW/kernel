@@ -36,6 +36,7 @@
 
 #include <linux/fs.h>
 #include <linux/buffer_head.h>
+#include <linux/blkdev.h>
 #include <linux/log2.h>
 
 #include "jfs_incore.h"

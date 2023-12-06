@@ -5,7 +5,6 @@
 #define ASPEED_PINMUX_H
 
 #include <linux/regmap.h>
-#include <stdbool.h>
 
 /*
  * The ASPEED SoCs provide typically more than 200 pins for GPIO and other
@@ -730,6 +729,15 @@ struct aspeed_pin_desc {
 			SIG_EXPR_LIST_PTR(pin, low), \
 			SIG_EXPR_LIST_PTR(pin, other))
 
+#define PIN_DECL_4(pin, other, prio1, prio2, prio3, prio4) \
+	SIG_EXPR_LIST_DECL_SESG(pin, other, other); \
+	PIN_DECL_(pin, \
+			SIG_EXPR_LIST_PTR(pin, prio1), \
+			SIG_EXPR_LIST_PTR(pin, prio2), \
+			SIG_EXPR_LIST_PTR(pin, prio3), \
+			SIG_EXPR_LIST_PTR(pin, prio4), \
+			SIG_EXPR_LIST_PTR(pin, other))
+
 #define GROUP_SYM(group) group_pins_ ## group
 #define GROUP_DECL(group, ...) \
 	static const int GROUP_SYM(group)[] = { __VA_ARGS__ }
@@ -738,6 +746,7 @@ struct aspeed_pin_desc {
 #define FUNC_DECL_(func, ...) \
 	static const char *FUNC_SYM(func)[] = { __VA_ARGS__ }
 
+#define FUNC_DECL_1(func, group) FUNC_DECL_(func, #group)
 #define FUNC_DECL_2(func, one, two) FUNC_DECL_(func, #one, #two)
 #define FUNC_DECL_3(func, one, two, three) FUNC_DECL_(func, #one, #two, #three)
 

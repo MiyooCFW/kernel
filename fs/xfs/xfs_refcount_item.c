@@ -18,23 +18,28 @@
 #include "xfs_log.h"
 #include "xfs_refcount.h"
 #include "xfs_error.h"
+#include "xfs_log_priv.h"
+#include "xfs_log_recover.h"
 
 kmem_zone_t	*xfs_cui_zone;
 kmem_zone_t	*xfs_cud_zone;
+
+static const struct xfs_item_ops xfs_cui_item_ops;
 
 static inline struct xfs_cui_log_item *CUI_ITEM(struct xfs_log_item *lip)
 {
 	return container_of(lip, struct xfs_cui_log_item, cui_item);
 }
 
-void
+STATIC void
 xfs_cui_item_free(
 	struct xfs_cui_log_item	*cuip)
 {
+	kmem_free(cuip->cui_item.li_lv_shadow);
 	if (cuip->cui_format.cui_nextents > XFS_CUI_MAX_FAST_EXTENTS)
 		kmem_free(cuip);
 	else
-		kmem_zone_free(xfs_cui_zone, cuip);
+		kmem_cache_free(xfs_cui_zone, cuip);
 }
 
 /*
@@ -44,13 +49,13 @@ xfs_cui_item_free(
  * committed vs unpin operations in bulk insert operations. Hence the reference
  * count to ensure only the last caller frees the CUI.
  */
-void
+STATIC void
 xfs_cui_release(
 	struct xfs_cui_log_item	*cuip)
 {
 	ASSERT(atomic_read(&cuip->cui_refcount) > 0);
 	if (atomic_dec_and_test(&cuip->cui_refcount)) {
-		xfs_trans_ail_remove(&cuip->cui_item, SHUTDOWN_LOG_IO_ERROR);
+		xfs_trans_ail_delete(&cuip->cui_item, SHUTDOWN_LOG_IO_ERROR);
 		xfs_cui_item_free(cuip);
 	}
 }
@@ -123,6 +128,34 @@ xfs_cui_item_release(
 	xfs_cui_release(CUI_ITEM(lip));
 }
 
+/*
+ * Allocate and initialize an cui item with the given number of extents.
+ */
+STATIC struct xfs_cui_log_item *
+xfs_cui_init(
+	struct xfs_mount		*mp,
+	uint				nextents)
+
+{
+	struct xfs_cui_log_item		*cuip;
+
+	ASSERT(nextents > 0);
+	if (nextents > XFS_CUI_MAX_FAST_EXTENTS)
+		cuip = kmem_zalloc(xfs_cui_log_item_sizeof(nextents),
+				0);
+	else
+		cuip = kmem_cache_zalloc(xfs_cui_zone,
+					 GFP_KERNEL | __GFP_NOFAIL);
+
+	xfs_log_item_init(mp, &cuip->cui_item, XFS_LI_CUI, &xfs_cui_item_ops);
+	cuip->cui_format.cui_nextents = nextents;
+	cuip->cui_format.cui_id = (uintptr_t)(void *)cuip;
+	atomic_set(&cuip->cui_next_extent, 0);
+	atomic_set(&cuip->cui_refcount, 2);
+
+	return cuip;
+}
+
 static inline struct xfs_cud_log_item *CUD_ITEM(struct xfs_log_item *lip)
 {
 	return container_of(lip, struct xfs_cud_log_item, cud_item);
@@ -172,7 +205,8 @@ xfs_cud_item_release(
 	struct xfs_cud_log_item	*cudp = CUD_ITEM(lip);
 
 	xfs_cui_release(cudp->cud_cuip);
-	kmem_zone_free(xfs_cud_zone, cudp);
+	kmem_free(cudp->cud_item.li_lv_shadow);
+	kmem_cache_free(xfs_cud_zone, cudp);
 }
 
 static const struct xfs_item_ops xfs_cud_item_ops = {
@@ -189,7 +223,7 @@ xfs_trans_get_cud(
 {
 	struct xfs_cud_log_item		*cudp;
 
-	cudp = kmem_zone_zalloc(xfs_cud_zone, 0);
+	cudp = kmem_cache_zalloc(xfs_cud_zone, GFP_KERNEL | __GFP_NOFAIL);
 	xfs_log_item_init(tp->t_mountp, &cudp->cud_item, XFS_LI_CUD,
 			  &xfs_cud_item_ops);
 	cudp->cud_cuip = cuip;
@@ -237,8 +271,8 @@ xfs_trans_log_finish_refcount_update(
 static int
 xfs_refcount_update_diff_items(
 	void				*priv,
-	struct list_head		*a,
-	struct list_head		*b)
+	const struct list_head		*a,
+	const struct list_head		*b)
 {
 	struct xfs_mount		*mp = priv;
 	struct xfs_refcount_intent	*ra;
@@ -317,22 +351,22 @@ xfs_refcount_update_create_intent(
 }
 
 /* Get an CUD so we can process all the deferred refcount updates. */
-STATIC void *
+static struct xfs_log_item *
 xfs_refcount_update_create_done(
 	struct xfs_trans		*tp,
 	struct xfs_log_item		*intent,
 	unsigned int			count)
 {
-	return xfs_trans_get_cud(tp, CUI_ITEM(intent));
+	return &xfs_trans_get_cud(tp, CUI_ITEM(intent))->cud_item;
 }
 
 /* Process a deferred refcount update. */
 STATIC int
 xfs_refcount_update_finish_item(
 	struct xfs_trans		*tp,
+	struct xfs_log_item		*done,
 	struct list_head		*item,
-	void				*done_item,
-	void				**state)
+	struct xfs_btree_cur		**state)
 {
 	struct xfs_refcount_intent	*refc;
 	xfs_fsblock_t			new_fsb;
@@ -340,12 +374,10 @@ xfs_refcount_update_finish_item(
 	int				error;
 
 	refc = container_of(item, struct xfs_refcount_intent, ri_list);
-	error = xfs_trans_log_finish_refcount_update(tp, done_item,
-			refc->ri_type,
-			refc->ri_startblock,
-			refc->ri_blockcount,
-			&new_fsb, &new_aglen,
-			(struct xfs_btree_cur **)state);
+	error = xfs_trans_log_finish_refcount_update(tp, CUD_ITEM(done),
+			refc->ri_type, refc->ri_startblock, refc->ri_blockcount,
+			&new_fsb, &new_aglen, state);
+
 	/* Did we run out of reservation?  Requeue what we didn't finish. */
 	if (!error && new_aglen > 0) {
 		ASSERT(refc->ri_type == XFS_REFCOUNT_INCREASE ||
@@ -356,18 +388,6 @@ xfs_refcount_update_finish_item(
 	}
 	kmem_free(refc);
 	return error;
-}
-
-/* Clean up after processing deferred refcounts. */
-STATIC void
-xfs_refcount_update_finish_cleanup(
-	struct xfs_trans	*tp,
-	void			*state,
-	int			error)
-{
-	struct xfs_btree_cur	*rcur = state;
-
-	xfs_refcount_finish_one_cleanup(tp, rcur, error);
 }
 
 /* Abort all pending CUIs. */
@@ -395,36 +415,58 @@ const struct xfs_defer_op_type xfs_refcount_update_defer_type = {
 	.abort_intent	= xfs_refcount_update_abort_intent,
 	.create_done	= xfs_refcount_update_create_done,
 	.finish_item	= xfs_refcount_update_finish_item,
-	.finish_cleanup = xfs_refcount_update_finish_cleanup,
+	.finish_cleanup = xfs_refcount_finish_one_cleanup,
 	.cancel_item	= xfs_refcount_update_cancel_item,
 };
+
+/* Is this recovered CUI ok? */
+static inline bool
+xfs_cui_validate_phys(
+	struct xfs_mount		*mp,
+	struct xfs_phys_extent		*refc)
+{
+	if (!xfs_has_reflink(mp))
+		return false;
+
+	if (refc->pe_flags & ~XFS_REFCOUNT_EXTENT_FLAGS)
+		return false;
+
+	switch (refc->pe_flags & XFS_REFCOUNT_EXTENT_TYPE_MASK) {
+	case XFS_REFCOUNT_INCREASE:
+	case XFS_REFCOUNT_DECREASE:
+	case XFS_REFCOUNT_ALLOC_COW:
+	case XFS_REFCOUNT_FREE_COW:
+		break;
+	default:
+		return false;
+	}
+
+	return xfs_verify_fsbext(mp, refc->pe_startblock, refc->pe_len);
+}
 
 /*
  * Process a refcount update intent item that was recovered from the log.
  * We need to update the refcountbt.
  */
-int
-xfs_cui_recover(
-	struct xfs_cui_log_item		*cuip,
+STATIC int
+xfs_cui_item_recover(
+	struct xfs_log_item		*lip,
 	struct list_head		*capture_list)
 {
-	int				i;
-	int				error = 0;
-	unsigned int			refc_type;
+	struct xfs_bmbt_irec		irec;
+	struct xfs_cui_log_item		*cuip = CUI_ITEM(lip);
 	struct xfs_phys_extent		*refc;
-	xfs_fsblock_t			startblock_fsb;
-	bool				op_ok;
 	struct xfs_cud_log_item		*cudp;
 	struct xfs_trans		*tp;
 	struct xfs_btree_cur		*rcur = NULL;
-	enum xfs_refcount_intent_type	type;
+	struct xfs_mount		*mp = lip->li_mountp;
 	xfs_fsblock_t			new_fsb;
 	xfs_extlen_t			new_len;
-	struct xfs_bmbt_irec		irec;
+	unsigned int			refc_type;
 	bool				requeue_only = false;
-	struct xfs_mount		*mp = cuip->cui_item.li_mountp;
-
-	ASSERT(!test_bit(XFS_CUI_RECOVERED, &cuip->cui_flags));
+	enum xfs_refcount_intent_type	type;
+	int				i;
+	int				error = 0;
 
 	/*
 	 * First check the validity of the extents described by the
@@ -432,31 +474,11 @@ xfs_cui_recover(
 	 * just toss the CUI.
 	 */
 	for (i = 0; i < cuip->cui_format.cui_nextents; i++) {
-		refc = &cuip->cui_format.cui_extents[i];
-		startblock_fsb = XFS_BB_TO_FSB(mp,
-				   XFS_FSB_TO_DADDR(mp, refc->pe_startblock));
-		switch (refc->pe_flags & XFS_REFCOUNT_EXTENT_TYPE_MASK) {
-		case XFS_REFCOUNT_INCREASE:
-		case XFS_REFCOUNT_DECREASE:
-		case XFS_REFCOUNT_ALLOC_COW:
-		case XFS_REFCOUNT_FREE_COW:
-			op_ok = true;
-			break;
-		default:
-			op_ok = false;
-			break;
-		}
-		if (!op_ok || startblock_fsb == 0 ||
-		    refc->pe_len == 0 ||
-		    startblock_fsb >= mp->m_sb.sb_dblocks ||
-		    refc->pe_len >= mp->m_sb.sb_agblocks ||
-		    (refc->pe_flags & ~XFS_REFCOUNT_EXTENT_FLAGS)) {
-			/*
-			 * This will pull the CUI from the AIL and
-			 * free the memory associated with it.
-			 */
-			set_bit(XFS_CUI_RECOVERED, &cuip->cui_flags);
-			xfs_cui_release(cuip);
+		if (!xfs_cui_validate_phys(mp,
+					&cuip->cui_format.cui_extents[i])) {
+			XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp,
+					&cuip->cui_format,
+					sizeof(cuip->cui_format));
 			return -EFSCORRUPTED;
 		}
 	}
@@ -469,7 +491,7 @@ xfs_cui_recover(
 	 * transaction.  Normally, any work that needs to be deferred
 	 * gets attached to the same defer_ops that scheduled the
 	 * refcount update.  However, we're in log recovery here, so we
-	 * we use the passed in defer_ops and to finish up any work that
+	 * use the passed in defer_ops and to finish up any work that
 	 * doesn't fit.  We need to reserve enough blocks to handle a
 	 * full btree split on either end of the refcount range.
 	 */
@@ -502,6 +524,9 @@ xfs_cui_recover(
 			error = xfs_trans_log_finish_refcount_update(tp, cudp,
 				type, refc->pe_startblock, refc->pe_len,
 				&new_fsb, &new_len, &rcur);
+		if (error == -EFSCORRUPTED)
+			XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp,
+					refc, sizeof(*refc));
 		if (error)
 			goto abort_error;
 
@@ -534,13 +559,20 @@ xfs_cui_recover(
 	}
 
 	xfs_refcount_finish_one_cleanup(tp, rcur, error);
-	set_bit(XFS_CUI_RECOVERED, &cuip->cui_flags);
 	return xfs_defer_ops_capture_and_commit(tp, NULL, capture_list);
 
 abort_error:
 	xfs_refcount_finish_one_cleanup(tp, rcur, error);
 	xfs_trans_cancel(tp);
 	return error;
+}
+
+STATIC bool
+xfs_cui_item_match(
+	struct xfs_log_item	*lip,
+	uint64_t		intent_id)
+{
+	return CUI_ITEM(lip)->cui_format.cui_id == intent_id;
 }
 
 /* Relog an intent item to push the log tail forward. */
@@ -574,32 +606,104 @@ static const struct xfs_item_ops xfs_cui_item_ops = {
 	.iop_format	= xfs_cui_item_format,
 	.iop_unpin	= xfs_cui_item_unpin,
 	.iop_release	= xfs_cui_item_release,
+	.iop_recover	= xfs_cui_item_recover,
+	.iop_match	= xfs_cui_item_match,
 	.iop_relog	= xfs_cui_item_relog,
 };
 
 /*
- * Allocate and initialize an cui item with the given number of extents.
+ * Copy an CUI format buffer from the given buf, and into the destination
+ * CUI format structure.  The CUI/CUD items were designed not to need any
+ * special alignment handling.
  */
-struct xfs_cui_log_item *
-xfs_cui_init(
-	struct xfs_mount		*mp,
-	uint				nextents)
-
+static int
+xfs_cui_copy_format(
+	struct xfs_log_iovec		*buf,
+	struct xfs_cui_log_format	*dst_cui_fmt)
 {
-	struct xfs_cui_log_item		*cuip;
+	struct xfs_cui_log_format	*src_cui_fmt;
+	uint				len;
 
-	ASSERT(nextents > 0);
-	if (nextents > XFS_CUI_MAX_FAST_EXTENTS)
-		cuip = kmem_zalloc(xfs_cui_log_item_sizeof(nextents),
-				0);
-	else
-		cuip = kmem_zone_zalloc(xfs_cui_zone, 0);
+	src_cui_fmt = buf->i_addr;
+	len = xfs_cui_log_format_sizeof(src_cui_fmt->cui_nextents);
 
-	xfs_log_item_init(mp, &cuip->cui_item, XFS_LI_CUI, &xfs_cui_item_ops);
-	cuip->cui_format.cui_nextents = nextents;
-	cuip->cui_format.cui_id = (uintptr_t)(void *)cuip;
-	atomic_set(&cuip->cui_next_extent, 0);
-	atomic_set(&cuip->cui_refcount, 2);
-
-	return cuip;
+	if (buf->i_len == len) {
+		memcpy(dst_cui_fmt, src_cui_fmt, len);
+		return 0;
+	}
+	XFS_ERROR_REPORT(__func__, XFS_ERRLEVEL_LOW, NULL);
+	return -EFSCORRUPTED;
 }
+
+/*
+ * This routine is called to create an in-core extent refcount update
+ * item from the cui format structure which was logged on disk.
+ * It allocates an in-core cui, copies the extents from the format
+ * structure into it, and adds the cui to the AIL with the given
+ * LSN.
+ */
+STATIC int
+xlog_recover_cui_commit_pass2(
+	struct xlog			*log,
+	struct list_head		*buffer_list,
+	struct xlog_recover_item	*item,
+	xfs_lsn_t			lsn)
+{
+	int				error;
+	struct xfs_mount		*mp = log->l_mp;
+	struct xfs_cui_log_item		*cuip;
+	struct xfs_cui_log_format	*cui_formatp;
+
+	cui_formatp = item->ri_buf[0].i_addr;
+
+	cuip = xfs_cui_init(mp, cui_formatp->cui_nextents);
+	error = xfs_cui_copy_format(&item->ri_buf[0], &cuip->cui_format);
+	if (error) {
+		xfs_cui_item_free(cuip);
+		return error;
+	}
+	atomic_set(&cuip->cui_next_extent, cui_formatp->cui_nextents);
+	/*
+	 * Insert the intent into the AIL directly and drop one reference so
+	 * that finishing or canceling the work will drop the other.
+	 */
+	xfs_trans_ail_insert(log->l_ailp, &cuip->cui_item, lsn);
+	xfs_cui_release(cuip);
+	return 0;
+}
+
+const struct xlog_recover_item_ops xlog_cui_item_ops = {
+	.item_type		= XFS_LI_CUI,
+	.commit_pass2		= xlog_recover_cui_commit_pass2,
+};
+
+/*
+ * This routine is called when an CUD format structure is found in a committed
+ * transaction in the log. Its purpose is to cancel the corresponding CUI if it
+ * was still in the log. To do this it searches the AIL for the CUI with an id
+ * equal to that in the CUD format structure. If we find it we drop the CUD
+ * reference, which removes the CUI from the AIL and frees it.
+ */
+STATIC int
+xlog_recover_cud_commit_pass2(
+	struct xlog			*log,
+	struct list_head		*buffer_list,
+	struct xlog_recover_item	*item,
+	xfs_lsn_t			lsn)
+{
+	struct xfs_cud_log_format	*cud_formatp;
+
+	cud_formatp = item->ri_buf[0].i_addr;
+	if (item->ri_buf[0].i_len != sizeof(struct xfs_cud_log_format)) {
+		XFS_ERROR_REPORT(__func__, XFS_ERRLEVEL_LOW, log->l_mp);
+		return -EFSCORRUPTED;
+	}
+
+	xlog_recover_release_intent(log, XFS_LI_CUI, cud_formatp->cud_cui_id);
+	return 0;
+}
+
+const struct xlog_recover_item_ops xlog_cud_item_ops = {
+	.item_type		= XFS_LI_CUD,
+	.commit_pass2		= xlog_recover_cud_commit_pass2,
+};

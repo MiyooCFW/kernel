@@ -9,11 +9,11 @@
 
 	soc {
 		dma@7984000 {
-			status = "ok";
-		};
-
-		qpic-nand@79b0000 {
-			status = "ok";
+			status = "okay";
 		};
 	};
+};
+
+&nand {
+	status = "okay";
 };

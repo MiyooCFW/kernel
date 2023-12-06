@@ -64,7 +64,7 @@
 #define CMDQ_WQE_SIZE                   64
 #define CMDQ_DEPTH                      SZ_4K
 
-#define CMDQ_WQ_PAGE_SIZE               SZ_4K
+#define CMDQ_WQ_PAGE_SIZE               SZ_256K
 
 #define WQE_LCMD_SIZE                   64
 #define WQE_SCMD_SIZE                   64
@@ -223,7 +223,7 @@ static void cmdq_prepare_wqe_ctrl(struct hinic_cmdq_wqe *wqe, int wrapped,
 	saved_data = CMDQ_WQE_HEADER(wqe)->saved_data;
 	saved_data = HINIC_SAVED_DATA_CLEAR(saved_data, ARM);
 
-	if ((cmd == CMDQ_SET_ARM_CMD) && (mod == HINIC_MOD_COMM))
+	if (cmd == CMDQ_SET_ARM_CMD && mod == HINIC_MOD_COMM)
 		CMDQ_WQE_HEADER(wqe)->saved_data |=
 						HINIC_SAVED_DATA_SET(1, ARM);
 	else
@@ -401,6 +401,7 @@ static int cmdq_sync_cmd_direct_resp(struct hinic_cmdq *cmdq,
 
 		spin_unlock_bh(&cmdq->cmdq_lock);
 
+		hinic_dump_ceq_info(cmdq->hwdev);
 		return -ETIMEDOUT;
 	}
 
@@ -593,7 +594,7 @@ static void cmdq_update_errcode(struct hinic_cmdq *cmdq, u16 prod_idx,
 }
 
 /**
- * cmdq_arm_ceq_handler - cmdq completion event handler for sync command
+ * cmdq_sync_cmd_handler - cmdq completion event handler for sync command
  * @cmdq: the cmdq of the command
  * @cons_idx: the consumer index to update the error code for
  * @errcode: the error code
@@ -705,7 +706,7 @@ static void cmdq_init_queue_ctxt(struct hinic_cmdq_ctxt *cmdq_ctxt,
 	/* The data in the HW is in Big Endian Format */
 	wq_first_page_paddr = be64_to_cpu(*wq->block_vaddr);
 
-	pfn = CMDQ_PFN(wq_first_page_paddr, wq->wq_page_size);
+	pfn = CMDQ_PFN(wq_first_page_paddr, SZ_4K);
 
 	ctxt_info->curr_wqe_page_pfn =
 		HINIC_CMDQ_CTXT_PAGE_INFO_SET(pfn, CURR_WQE_PAGE_PFN)   |
@@ -714,16 +715,19 @@ static void cmdq_init_queue_ctxt(struct hinic_cmdq_ctxt *cmdq_ctxt,
 		HINIC_CMDQ_CTXT_PAGE_INFO_SET(1, CEQ_EN)                |
 		HINIC_CMDQ_CTXT_PAGE_INFO_SET(cmdq->wrapped, WRAPPED);
 
-	/* block PFN - Read Modify Write */
-	cmdq_first_block_paddr = cmdq_pages->page_paddr;
+	if (wq->num_q_pages != 1) {
+		/* block PFN - Read Modify Write */
+		cmdq_first_block_paddr = cmdq_pages->page_paddr;
 
-	pfn = CMDQ_PFN(cmdq_first_block_paddr, wq->wq_page_size);
+		pfn = CMDQ_PFN(cmdq_first_block_paddr, wq->wq_page_size);
+	}
 
 	ctxt_info->wq_block_pfn =
 		HINIC_CMDQ_CTXT_BLOCK_INFO_SET(pfn, WQ_BLOCK_PFN) |
 		HINIC_CMDQ_CTXT_BLOCK_INFO_SET(atomic_read(&wq->cons_idx), CI);
 
 	cmdq_ctxt->func_idx = HINIC_HWIF_FUNC_IDX(cmdqs->hwif);
+	cmdq_ctxt->ppf_idx = HINIC_HWIF_PPF_IDX(cmdqs->hwif);
 	cmdq_ctxt->cmdq_type  = cmdq->cmdq_type;
 }
 
@@ -780,7 +784,7 @@ static void free_cmdq(struct hinic_cmdq *cmdq)
  * init_cmdqs_ctxt - write the cmdq ctxt to HW after init all cmdq
  * @hwdev: the NIC HW device
  * @cmdqs: cmdqs to write the ctxts for
- * &db_area: db_area for all the cmdqs
+ * @db_area: db_area for all the cmdqs
  *
  * Return 0 - Success, negative - Failure
  **/
@@ -792,16 +796,10 @@ static int init_cmdqs_ctxt(struct hinic_hwdev *hwdev,
 	struct hinic_cmdq_ctxt *cmdq_ctxts;
 	struct pci_dev *pdev = hwif->pdev;
 	struct hinic_pfhwdev *pfhwdev;
-	size_t cmdq_ctxts_size;
 	int err;
 
-	if (!HINIC_IS_PF(hwif) && !HINIC_IS_PPF(hwif)) {
-		dev_err(&pdev->dev, "Unsupported PCI function type\n");
-		return -EINVAL;
-	}
-
-	cmdq_ctxts_size = HINIC_MAX_CMDQ_TYPES * sizeof(*cmdq_ctxts);
-	cmdq_ctxts = devm_kzalloc(&pdev->dev, cmdq_ctxts_size, GFP_KERNEL);
+	cmdq_ctxts = devm_kcalloc(&pdev->dev, HINIC_MAX_CMDQ_TYPES,
+				  sizeof(*cmdq_ctxts), GFP_KERNEL);
 	if (!cmdq_ctxts)
 		return -ENOMEM;
 
@@ -809,6 +807,7 @@ static int init_cmdqs_ctxt(struct hinic_hwdev *hwdev,
 
 	cmdq_type = HINIC_CMDQ_SYNC;
 	for (; cmdq_type < HINIC_MAX_CMDQ_TYPES; cmdq_type++) {
+		cmdqs->cmdq[cmdq_type].hwdev = hwdev;
 		err = init_cmdq(&cmdqs->cmdq[cmdq_type],
 				&cmdqs->saved_wqs[cmdq_type], cmdq_type,
 				db_area[cmdq_type]);
@@ -851,6 +850,25 @@ err_init_cmdq:
 	return err;
 }
 
+static int hinic_set_cmdq_depth(struct hinic_hwdev *hwdev, u16 cmdq_depth)
+{
+	struct hinic_cmd_hw_ioctxt hw_ioctxt = { 0 };
+	struct hinic_pfhwdev *pfhwdev;
+
+	pfhwdev = container_of(hwdev, struct hinic_pfhwdev, hwdev);
+
+	hw_ioctxt.func_idx = HINIC_HWIF_FUNC_IDX(hwdev->hwif);
+	hw_ioctxt.ppf_idx = HINIC_HWIF_PPF_IDX(hwdev->hwif);
+
+	hw_ioctxt.set_cmdq_depth = HW_IOCTXT_SET_CMDQ_DEPTH_ENABLE;
+	hw_ioctxt.cmdq_depth = (u8)ilog2(cmdq_depth);
+
+	return hinic_msg_to_mgmt(&pfhwdev->pf_to_mgmt, HINIC_MOD_COMM,
+				 HINIC_COMM_CMD_HWCTXT_SET,
+				 &hw_ioctxt, sizeof(hw_ioctxt), NULL,
+				 NULL, HINIC_MGMT_MSG_SYNC);
+}
+
 /**
  * hinic_init_cmdqs - init all cmdqs
  * @cmdqs: cmdqs to init
@@ -865,7 +883,6 @@ int hinic_init_cmdqs(struct hinic_cmdqs *cmdqs, struct hinic_hwif *hwif,
 	struct hinic_func_to_io *func_to_io = cmdqs_to_func_to_io(cmdqs);
 	struct pci_dev *pdev = hwif->pdev;
 	struct hinic_hwdev *hwdev;
-	size_t saved_wqs_size;
 	u16 max_wqe_size;
 	int err;
 
@@ -876,8 +893,8 @@ int hinic_init_cmdqs(struct hinic_cmdqs *cmdqs, struct hinic_hwif *hwif,
 	if (!cmdqs->cmdq_buf_pool)
 		return -ENOMEM;
 
-	saved_wqs_size = HINIC_MAX_CMDQ_TYPES * sizeof(struct hinic_wq);
-	cmdqs->saved_wqs = devm_kzalloc(&pdev->dev, saved_wqs_size, GFP_KERNEL);
+	cmdqs->saved_wqs = devm_kcalloc(&pdev->dev, HINIC_MAX_CMDQ_TYPES,
+					sizeof(*cmdqs->saved_wqs), GFP_KERNEL);
 	if (!cmdqs->saved_wqs) {
 		err = -ENOMEM;
 		goto err_saved_wqs;
@@ -901,8 +918,18 @@ int hinic_init_cmdqs(struct hinic_cmdqs *cmdqs, struct hinic_hwif *hwif,
 
 	hinic_ceq_register_cb(&func_to_io->ceqs, HINIC_CEQ_CMDQ, cmdqs,
 			      cmdq_ceq_handler);
+
+	err = hinic_set_cmdq_depth(hwdev, CMDQ_DEPTH);
+	if (err) {
+		dev_err(&hwif->pdev->dev, "Failed to set cmdq depth\n");
+		goto err_set_cmdq_depth;
+	}
+
 	return 0;
 
+err_set_cmdq_depth:
+	hinic_ceq_unregister_cb(&func_to_io->ceqs, HINIC_CEQ_CMDQ);
+	free_cmdq(&cmdqs->cmdq[HINIC_CMDQ_SYNC]);
 err_cmdq_ctxt:
 	hinic_wqs_cmdq_free(&cmdqs->cmdq_pages, cmdqs->saved_wqs,
 			    HINIC_MAX_CMDQ_TYPES);

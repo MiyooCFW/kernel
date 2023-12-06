@@ -1,4 +1,4 @@
-/**
+/*
  * @section LICENSE
  * Copyright (c) 2014 Redpine Signals Inc.
  *
@@ -27,10 +27,6 @@
 #include <linux/mmc/sd.h>
 #include <linux/mmc/sdio_ids.h>
 #include "rsi_main.h"
-
-#define RSI_SDIO_VENDOR_ID   0x041B
-#define RSI_SDIO_PID_9113    0x9330
-#define RSI_SDIO_PID_9116    0x9116
 
 enum sdio_interrupt_type {
 	BUFFER_FULL         = 0x0,

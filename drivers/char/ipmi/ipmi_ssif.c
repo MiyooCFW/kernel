@@ -22,11 +22,6 @@
  * and drives the real SSIF state machine.
  */
 
-/*
- * TODO: Figure out how to use SMB alerts.  This will require a new
- * interface into the I2C driver, I believe.
- */
-
 #define pr_fmt(fmt) "ipmi_ssif: " fmt
 #define dev_fmt(fmt) "ipmi_ssif: " fmt
 
@@ -192,8 +187,6 @@ struct ssif_addr_info {
 	struct device *dev;
 	struct i2c_client *client;
 
-	struct i2c_client *added_client;
-
 	struct mutex clients_mutex;
 	struct list_head clients;
 
@@ -254,6 +247,12 @@ struct ssif_info {
 	 */
 	bool                req_flags;
 
+	/*
+	 * Used to perform timer operations when run-to-completion
+	 * mode is on.  This is a countdown timer.
+	 */
+	int                 rtc_us_timer;
+
 	/* Used for sending/receiving data.  +1 for the length. */
 	unsigned char data[IPMI_MAX_MSG_LENGTH + 1];
 	unsigned int  data_len;
@@ -313,6 +312,7 @@ static int start_send(struct ssif_info *ssif_info,
 
 static unsigned long *ipmi_ssif_lock_cond(struct ssif_info *ssif_info,
 					  unsigned long *flags)
+	__acquires(&ssif_info->lock)
 {
 	spin_lock_irqsave(&ssif_info->lock, *flags);
 	return flags;
@@ -320,6 +320,7 @@ static unsigned long *ipmi_ssif_lock_cond(struct ssif_info *ssif_info,
 
 static void ipmi_ssif_unlock_cond(struct ssif_info *ssif_info,
 				  unsigned long *flags)
+	__releases(&ssif_info->lock)
 {
 	spin_unlock_irqrestore(&ssif_info->lock, *flags);
 }
@@ -535,6 +536,7 @@ static void msg_done_handler(struct ssif_info *ssif_info, int result,
 
 static void start_get(struct ssif_info *ssif_info)
 {
+	ssif_info->rtc_us_timer = 0;
 	ssif_info->multi_pos = 0;
 
 	ssif_i2c_send(ssif_info, msg_done_handler, I2C_SMBUS_READ,
@@ -632,6 +634,7 @@ static void msg_done_handler(struct ssif_info *ssif_info, int result,
 
 			flags = ipmi_ssif_lock_cond(ssif_info, &oflags);
 			ssif_info->waiting_alert = true;
+			ssif_info->rtc_us_timer = SSIF_MSG_USEC;
 			if (!ssif_info->stopping)
 				mod_timer(&ssif_info->retry_timer,
 					  jiffies + SSIF_MSG_JIFFIES);
@@ -988,6 +991,7 @@ static void msg_written_handler(struct ssif_info *ssif_info, int result,
 			/* Wait a jiffie then request the next message */
 			ssif_info->waiting_alert = true;
 			ssif_info->retries_left = SSIF_RECV_RETRIES;
+			ssif_info->rtc_us_timer = SSIF_MSG_PART_USEC;
 			if (!ssif_info->stopping)
 				mod_timer(&ssif_info->retry_timer,
 					  jiffies + SSIF_MSG_PART_JIFFIES);
@@ -1449,6 +1453,7 @@ static bool check_acpi(struct ssif_info *ssif_info, struct device *dev)
 	if (acpi_handle) {
 		ssif_info->addr_source = SI_ACPI;
 		ssif_info->addr_info.acpi_info.acpi_handle = acpi_handle;
+		request_module("acpi_ipmi");
 		return true;
 	}
 #endif
@@ -1925,21 +1930,6 @@ out_remove_attr:
 	goto out;
 }
 
-static int ssif_adapter_handler(struct device *adev, void *opaque)
-{
-	struct ssif_addr_info *addr_info = opaque;
-
-	if (adev->type != &i2c_adapter_type)
-		return 0;
-
-	addr_info->added_client = i2c_new_device(to_i2c_adapter(adev),
-						 &addr_info->binfo);
-
-	if (!addr_info->adapter_name)
-		return 1; /* Only try the first I2C adapter by default. */
-	return 0;
-}
-
 static int new_ssif_client(int addr, char *adapter_name,
 			   int debug, int slave_addr,
 			   enum ipmi_addr_src addr_src,
@@ -1983,9 +1973,7 @@ static int new_ssif_client(int addr, char *adapter_name,
 
 	list_add_tail(&addr_info->link, &ssif_infos);
 
-	if (initialized)
-		i2c_for_each_dev(addr_info, ssif_adapter_handler);
-	/* Otherwise address list will get it */
+	/* Address list will get it */
 
 out_unlock:
 	mutex_unlock(&ssif_infos_mutex);
@@ -2105,8 +2093,6 @@ static int ssif_platform_remove(struct platform_device *dev)
 		return 0;
 
 	mutex_lock(&ssif_infos_mutex);
-	i2c_unregister_device(addr_info->added_client);
-
 	list_del(&addr_info->link);
 	kfree(addr_info);
 	mutex_unlock(&ssif_infos_mutex);

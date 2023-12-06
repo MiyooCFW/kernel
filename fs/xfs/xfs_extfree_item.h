@@ -17,11 +17,6 @@ struct kmem_zone;
 #define	XFS_EFI_MAX_FAST_EXTENTS	16
 
 /*
- * Define EFI flag bits. Manipulated by set/clear/test_bit operators.
- */
-#define	XFS_EFI_RECOVERED	1
-
-/*
  * This is the "extent free intention" log item.  It is used to log the fact
  * that some extents need to be free.  It is used in conjunction with the
  * "extent free done" log item described below.
@@ -54,7 +49,6 @@ struct xfs_efi_log_item {
 	struct xfs_log_item	efi_item;
 	atomic_t		efi_refcount;
 	atomic_t		efi_next_extent;
-	unsigned long		efi_flags;	/* misc flags */
 	xfs_efi_log_format_t	efi_format;
 };
 
@@ -77,14 +71,5 @@ struct xfs_efd_log_item {
 
 extern struct kmem_zone	*xfs_efi_zone;
 extern struct kmem_zone	*xfs_efd_zone;
-
-struct xfs_efi_log_item	*xfs_efi_init(struct xfs_mount *, uint);
-int			xfs_efi_copy_format(xfs_log_iovec_t *buf,
-					    xfs_efi_log_format_t *dst_efi_fmt);
-void			xfs_efi_item_free(struct xfs_efi_log_item *);
-void			xfs_efi_release(struct xfs_efi_log_item *);
-
-int			xfs_efi_recover(struct xfs_efi_log_item *efip,
-					struct list_head *capture_list);
 
 #endif	/* __XFS_EXTFREE_ITEM_H__ */

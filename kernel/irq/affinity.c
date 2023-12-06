@@ -356,7 +356,7 @@ static int irq_build_affinity_masks(unsigned int startvec, unsigned int numvecs,
 		goto fail_npresmsk;
 
 	/* Stabilize the cpumasks */
-	get_online_cpus();
+	cpus_read_lock();
 	build_node_to_cpumask(node_to_cpumask);
 
 	/* Spread on present CPUs starting from affd->pre_vectors */
@@ -385,7 +385,7 @@ static int irq_build_affinity_masks(unsigned int startvec, unsigned int numvecs,
 		nr_others = ret;
 
  fail_build_affinity:
-	put_online_cpus();
+	cpus_read_unlock();
 
 	if (ret >= 0)
 		WARN_ON(nr_present + nr_others < numvecs);
@@ -506,9 +506,9 @@ unsigned int irq_calc_affinity_vectors(unsigned int minvec, unsigned int maxvec,
 	if (affd->calc_sets) {
 		set_vecs = maxvec - resv;
 	} else {
-		get_online_cpus();
+		cpus_read_lock();
 		set_vecs = cpumask_weight(cpu_possible_mask);
-		put_online_cpus();
+		cpus_read_unlock();
 	}
 
 	return resv + min(set_vecs, maxvec - resv);

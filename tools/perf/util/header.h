@@ -43,6 +43,10 @@ enum {
 	HEADER_BPF_PROG_INFO,
 	HEADER_BPF_BTF,
 	HEADER_COMPRESSED,
+	HEADER_CPU_PMU_CAPS,
+	HEADER_CLOCK_DATA,
+	HEADER_HYBRID_TOPOLOGY,
+	HEADER_HYBRID_CPU_PMU_CAPS,
 	HEADER_LAST_FEATURE,
 	HEADER_FEAT_BITS	= 256,
 };
@@ -50,10 +54,6 @@ enum {
 enum perf_header_version {
 	PERF_HEADER_VERSION_1,
 	PERF_HEADER_VERSION_2,
-};
-
-enum perf_dir_version {
-	PERF_DIR_VERSION	= 1,
 };
 
 struct perf_file_section {
@@ -115,7 +115,7 @@ struct perf_session;
 struct perf_tool;
 union perf_event;
 
-int perf_session__read_header(struct perf_session *session);
+int perf_session__read_header(struct perf_session *session, int repipe_fd);
 int perf_session__write_header(struct perf_session *session,
 			       struct evlist *evlist,
 			       int fd, bool at_exit);

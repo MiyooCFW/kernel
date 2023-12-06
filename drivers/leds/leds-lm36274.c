@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 // TI LM36274 LED chip family driver
-// Copyright (C) 2019 Texas Instruments Incorporated - http://www.ti.com/
+// Copyright (C) 2019 Texas Instruments Incorporated - https://www.ti.com/
 
 #include <linux/bitops.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/leds.h>
 #include <linux/leds-ti-lmu-common.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 
 #include <linux/mfd/ti-lmu.h>
 #include <linux/mfd/ti-lmu-register.h>
@@ -26,8 +27,8 @@
  * @lmu_data: Register and setting values for common code
  * @regmap: Devices register map
  * @dev: Pointer to the devices device struct
- * @led_sources - The LED strings supported in this array
- * @num_leds - Number of LED strings are supported in this array
+ * @led_sources: The LED strings supported in this array
+ * @num_leds: Number of LED strings are supported in this array
  */
 struct lm36274 {
 	struct platform_device *pdev;
@@ -66,61 +67,47 @@ static int lm36274_init(struct lm36274 *chip)
 	return regmap_write(chip->regmap, LM36274_REG_BL_EN, enable_val);
 }
 
-static int lm36274_parse_dt(struct lm36274 *chip)
+static int lm36274_parse_dt(struct lm36274 *chip,
+			    struct led_init_data *init_data)
 {
-	struct fwnode_handle *child = NULL;
-	char label[LED_MAX_NAME_SIZE];
-	struct device *dev = &chip->pdev->dev;
-	const char *name;
-	int child_cnt;
-	int ret = -EINVAL;
+	struct device *dev = chip->dev;
+	struct fwnode_handle *child;
+	int ret;
 
 	/* There should only be 1 node */
-	child_cnt = device_get_child_node_count(dev);
-	if (child_cnt != 1)
+	if (device_get_child_node_count(dev) != 1)
 		return -EINVAL;
 
-	device_for_each_child_node(dev, child) {
-		ret = fwnode_property_read_string(child, "label", &name);
-		if (ret)
-			snprintf(label, sizeof(label), "%s::",
-				 chip->pdev->name);
-		else
-			snprintf(label, sizeof(label), "%s:%s",
-				 chip->pdev->name, name);
+	child = device_get_next_child_node(dev, NULL);
 
-		chip->num_leds = fwnode_property_count_u32(child, "led-sources");
-		if (chip->num_leds <= 0)
-			return -ENODEV;
+	init_data->fwnode = child;
+	init_data->devicename = chip->pdev->name;
+	/* for backwards compatibility when `label` property is not present */
+	init_data->default_label = ":";
 
-		ret = fwnode_property_read_u32_array(child, "led-sources",
-						     chip->led_sources,
-						     chip->num_leds);
-		if (ret) {
-			dev_err(dev, "led-sources property missing\n");
-			return ret;
-		}
-
-		fwnode_property_read_string(child, "linux,default-trigger",
-					    &chip->led_dev.default_trigger);
-
+	chip->num_leds = fwnode_property_count_u32(child, "led-sources");
+	if (chip->num_leds <= 0) {
+		ret = -ENODEV;
+		goto err;
 	}
 
-	chip->lmu_data.regmap = chip->regmap;
-	chip->lmu_data.max_brightness = MAX_BRIGHTNESS_11BIT;
-	chip->lmu_data.msb_brightness_reg = LM36274_REG_BRT_MSB;
-	chip->lmu_data.lsb_brightness_reg = LM36274_REG_BRT_LSB;
-
-	chip->led_dev.name = label;
-	chip->led_dev.max_brightness = MAX_BRIGHTNESS_11BIT;
-	chip->led_dev.brightness_set_blocking = lm36274_brightness_set;
+	ret = fwnode_property_read_u32_array(child, "led-sources",
+					     chip->led_sources, chip->num_leds);
+	if (ret) {
+		dev_err(dev, "led-sources property missing\n");
+		goto err;
+	}
 
 	return 0;
+err:
+	fwnode_handle_put(child);
+	return ret;
 }
 
 static int lm36274_probe(struct platform_device *pdev)
 {
 	struct ti_lmu *lmu = dev_get_drvdata(pdev->dev.parent);
+	struct led_init_data init_data = {};
 	struct lm36274 *chip;
 	int ret;
 
@@ -129,11 +116,11 @@ static int lm36274_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	chip->pdev = pdev;
-	chip->dev = lmu->dev;
+	chip->dev = &pdev->dev;
 	chip->regmap = lmu->regmap;
 	platform_set_drvdata(pdev, chip);
 
-	ret = lm36274_parse_dt(chip);
+	ret = lm36274_parse_dt(chip, &init_data);
 	if (ret) {
 		dev_err(chip->dev, "Failed to parse DT node\n");
 		return ret;
@@ -141,20 +128,28 @@ static int lm36274_probe(struct platform_device *pdev)
 
 	ret = lm36274_init(chip);
 	if (ret) {
+		fwnode_handle_put(init_data.fwnode);
 		dev_err(chip->dev, "Failed to init the device\n");
 		return ret;
 	}
 
-	return led_classdev_register(chip->dev, &chip->led_dev);
-}
+	chip->lmu_data.regmap = chip->regmap;
+	chip->lmu_data.max_brightness = MAX_BRIGHTNESS_11BIT;
+	chip->lmu_data.msb_brightness_reg = LM36274_REG_BRT_MSB;
+	chip->lmu_data.lsb_brightness_reg = LM36274_REG_BRT_LSB;
 
-static int lm36274_remove(struct platform_device *pdev)
-{
-	struct lm36274 *chip = platform_get_drvdata(pdev);
+	chip->led_dev.max_brightness = MAX_BRIGHTNESS_11BIT;
+	chip->led_dev.brightness_set_blocking = lm36274_brightness_set;
 
-	led_classdev_unregister(&chip->led_dev);
+	ret = devm_led_classdev_register_ext(chip->dev, &chip->led_dev,
+					     &init_data);
+	if (ret)
+		dev_err(chip->dev, "Failed to register LED for node %pfw\n",
+			init_data.fwnode);
 
-	return 0;
+	fwnode_handle_put(init_data.fwnode);
+
+	return ret;
 }
 
 static const struct of_device_id of_lm36274_leds_match[] = {
@@ -165,9 +160,9 @@ MODULE_DEVICE_TABLE(of, of_lm36274_leds_match);
 
 static struct platform_driver lm36274_driver = {
 	.probe  = lm36274_probe,
-	.remove = lm36274_remove,
 	.driver = {
 		.name = "lm36274-leds",
+		.of_match_table = of_lm36274_leds_match,
 	},
 };
 module_platform_driver(lm36274_driver)

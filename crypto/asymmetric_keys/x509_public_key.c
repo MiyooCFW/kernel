@@ -30,6 +30,9 @@ int x509_get_sig_params(struct x509_certificate *cert)
 
 	pr_devel("==>%s()\n", __func__);
 
+	sig->data = cert->tbs;
+	sig->data_size = cert->tbs_size;
+
 	if (!cert->pub->pkey_algo)
 		cert->unsupported_key = true;
 
@@ -124,10 +127,6 @@ int x509_check_for_self_signed(struct x509_certificate *cert)
 		    cert->sig->auth_ids[0] && cert->sig->auth_ids[1])
 			goto out;
 	}
-
-	ret = -EKEYREJECTED;
-	if (strcmp(cert->pub->pkey_algo, cert->sig->pkey_algo) != 0)
-		goto out;
 
 	if (cert->unsupported_sig) {
 		ret = 0;

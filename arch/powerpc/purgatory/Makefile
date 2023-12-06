@@ -2,7 +2,7 @@
 
 KASAN_SANITIZE := n
 
-targets += trampoline.o purgatory.ro kexec-purgatory.c
+targets += trampoline_$(BITS).o purgatory.ro kexec-purgatory.c
 
 # When profile-guided optimization is enabled, llvm emits two different
 # overlapping text sections, which is not supported by kexec. Remove profile
@@ -11,7 +11,7 @@ KBUILD_CFLAGS := $(filter-out -fprofile-sample-use=% -fprofile-use=%,$(KBUILD_CF
 
 LDFLAGS_purgatory.ro := -e purgatory_start -r --no-undefined
 
-$(obj)/purgatory.ro: $(obj)/trampoline.o FORCE
+$(obj)/purgatory.ro: $(obj)/trampoline_$(BITS).o FORCE
 		$(call if_changed,ld)
 
 quiet_cmd_bin2c = BIN2C   $@

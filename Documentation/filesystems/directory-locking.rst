@@ -27,7 +27,7 @@ parent and finds source and target.  We lock both (provided they exist).  If we
 need to lock two inodes of different type (dir vs non-dir), we lock directory
 first.  If we need to lock two inodes of the same type, lock them in inode
 pointer order.  Then call the method.  All locks are exclusive.
-NB: we might get away with locking the the source (and target in exchange
+NB: we might get away with locking the source (and target in exchange
 case) shared.
 
 5) link creation.  Locking rules:
@@ -57,7 +57,7 @@ rules:
 	* call the method.
 
 All ->i_rwsem are taken exclusive.  Again, we might get away with locking
-the the source (and target in exchange case) shared.
+the source (and target in exchange case) shared.
 
 The rules above obviously guarantee that all directories that are going to be
 read, modified or removed by method will be locked by caller.

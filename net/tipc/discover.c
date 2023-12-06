@@ -74,7 +74,8 @@ struct tipc_discoverer {
 /**
  * tipc_disc_init_msg - initialize a link setup message
  * @net: the applicable net namespace
- * @type: message type (request or response)
+ * @skb: buffer containing message
+ * @mtyp: message type (request or response)
  * @b: ptr to bearer issuing message
  */
 static void tipc_disc_init_msg(struct net *net, struct sk_buff *skb,
@@ -167,7 +168,7 @@ static bool tipc_disc_addr_trial_msg(struct tipc_discoverer *d,
 
 	/* Apply trial address if we just left trial period */
 	if (!trial && !self) {
-		tipc_sched_net_finalize(net, tn->trial_addr);
+		schedule_work(&tn->work);
 		msg_set_prevnode(buf_msg(d->skb), tn->trial_addr);
 		msg_set_type(buf_msg(d->skb), DSC_REQ_MSG);
 	}
@@ -310,7 +311,7 @@ static void tipc_disc_timeout(struct timer_list *t)
 	if (!time_before(jiffies, tn->addr_trial_end) && !tipc_own_addr(net)) {
 		mod_timer(&d->timer, jiffies + TIPC_DISC_INIT);
 		spin_unlock_bh(&d->lock);
-		tipc_sched_net_finalize(net, tn->trial_addr);
+		schedule_work(&tn->work);
 		return;
 	}
 
@@ -342,9 +343,9 @@ exit:
  * @net: the applicable net namespace
  * @b: ptr to bearer issuing requests
  * @dest: destination address for request messages
- * @dest_domain: network domain to which links can be established
+ * @skb: pointer to created frame
  *
- * Returns 0 if successful, otherwise -errno.
+ * Return: 0 if successful, otherwise -errno.
  */
 int tipc_disc_create(struct net *net, struct tipc_bearer *b,
 		     struct tipc_media_addr *dest, struct sk_buff **skb)
@@ -383,7 +384,7 @@ int tipc_disc_create(struct net *net, struct tipc_bearer *b,
 
 /**
  * tipc_disc_delete - destroy object sending periodic link setup requests
- * @d: ptr to link duest structure
+ * @d: ptr to link dest structure
  */
 void tipc_disc_delete(struct tipc_discoverer *d)
 {
@@ -396,7 +397,6 @@ void tipc_disc_delete(struct tipc_discoverer *d)
  * tipc_disc_reset - reset object to send periodic link setup requests
  * @net: the applicable net namespace
  * @b: ptr to bearer issuing requests
- * @dest_domain: network domain to which links can be established
  */
 void tipc_disc_reset(struct net *net, struct tipc_bearer *b)
 {

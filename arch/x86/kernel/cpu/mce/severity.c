@@ -13,6 +13,9 @@
 
 #include <asm/mce.h>
 #include <asm/intel-family.h>
+#include <asm/traps.h>
+#include <asm/insn.h>
+#include <asm/insn-eval.h>
 
 #include "internal.h"
 
@@ -97,10 +100,6 @@ static struct severity {
 		EXCP, KERNEL_RECOV, MCGMASK(MCG_STATUS_RIPV, 0)
 		),
 	MCESEV(
-		DEFERRED, "Deferred error",
-		NOSER, MASK(MCI_STATUS_UC|MCI_STATUS_DEFERRED|MCI_STATUS_POISON, MCI_STATUS_DEFERRED)
-		),
-	MCESEV(
 		KEEP, "Corrected error",
 		NOSER, BITCLR(MCI_STATUS_UC)
 		),
@@ -143,7 +142,7 @@ static struct severity {
 		MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_STATUS_UC|MCI_STATUS_AR)
 		),
 	MCESEV(
-		KEEP, "Non signalled machine check",
+		KEEP, "Non signaled machine check",
 		SER, BITCLR(MCI_STATUS_S)
 		),
 
@@ -216,6 +215,43 @@ static struct severity {
 #define mc_recoverable(mcg) (((mcg) & (MCG_STATUS_RIPV|MCG_STATUS_EIPV)) == \
 				(MCG_STATUS_RIPV|MCG_STATUS_EIPV))
 
+static bool is_copy_from_user(struct pt_regs *regs)
+{
+	u8 insn_buf[MAX_INSN_SIZE];
+	unsigned long addr;
+	struct insn insn;
+	int ret;
+
+	if (copy_from_kernel_nofault(insn_buf, (void *)regs->ip, MAX_INSN_SIZE))
+		return false;
+
+	ret = insn_decode_kernel(&insn, insn_buf);
+	if (ret < 0)
+		return false;
+
+	switch (insn.opcode.value) {
+	/* MOV mem,reg */
+	case 0x8A: case 0x8B:
+	/* MOVZ mem,reg */
+	case 0xB60F: case 0xB70F:
+		addr = (unsigned long)insn_get_addr_ref(&insn, regs);
+		break;
+	/* REP MOVS */
+	case 0xA4: case 0xA5:
+		addr = regs->si;
+		break;
+	default:
+		return false;
+	}
+
+	if (fault_in_kernel_space(addr))
+		return false;
+
+	current->mce_vaddr = (void __user *)addr;
+
+	return true;
+}
+
 /*
  * If mcgstatus indicated that ip/cs on the stack were
  * no good, then "m->cs" will be zero and we will have
@@ -227,13 +263,28 @@ static struct severity {
  * distinguish an exception taken in user from from one
  * taken in the kernel.
  */
-static int error_context(struct mce *m)
+static int error_context(struct mce *m, struct pt_regs *regs)
 {
 	if ((m->cs & 3) == 3)
 		return IN_USER;
-	if (mc_recoverable(m->mcgstatus) && ex_has_fault_handler(m->ip))
+	if (!mc_recoverable(m->mcgstatus))
+		return IN_KERNEL;
+
+	switch (ex_get_fixup_type(m->ip)) {
+	case EX_TYPE_UACCESS:
+	case EX_TYPE_COPY:
+		if (!regs || !is_copy_from_user(regs))
+			return IN_KERNEL;
+		m->kflags |= MCE_IN_KERNEL_COPYIN;
+		fallthrough;
+	case EX_TYPE_FAULT:
+	case EX_TYPE_FAULT_MCE_SAFE:
+	case EX_TYPE_DEFAULT_MCE_SAFE:
+		m->kflags |= MCE_IN_KERNEL_RECOV;
 		return IN_KERNEL_RECOV;
-	return IN_KERNEL;
+	default:
+		return IN_KERNEL;
+	}
 }
 
 static int mce_severity_amd_smca(struct mce *m, enum context err_ctx)
@@ -267,9 +318,10 @@ static int mce_severity_amd_smca(struct mce *m, enum context err_ctx)
  * See AMD Error Scope Hierarchy table in a newer BKDG. For example
  * 49125_15h_Models_30h-3Fh_BKDG.pdf, section "RAS Features"
  */
-static int mce_severity_amd(struct mce *m, int tolerant, char **msg, bool is_excp)
+static int mce_severity_amd(struct mce *m, struct pt_regs *regs, int tolerant,
+			    char **msg, bool is_excp)
 {
-	enum context ctx = error_context(m);
+	enum context ctx = error_context(m, regs);
 
 	/* Processor Context Corrupt, no need to fumble too much, die! */
 	if (m->status & MCI_STATUS_PCC)
@@ -319,10 +371,11 @@ static int mce_severity_amd(struct mce *m, int tolerant, char **msg, bool is_exc
 	return MCE_KEEP_SEVERITY;
 }
 
-static int mce_severity_intel(struct mce *m, int tolerant, char **msg, bool is_excp)
+static int mce_severity_intel(struct mce *m, struct pt_regs *regs,
+			      int tolerant, char **msg, bool is_excp)
 {
 	enum exception excp = (is_excp ? EXCP_CONTEXT : NO_EXCP);
-	enum context ctx = error_context(m);
+	enum context ctx = error_context(m, regs);
 	struct severity *s;
 
 	for (s = severities;; s++) {
@@ -356,7 +409,7 @@ static int mce_severity_intel(struct mce *m, int tolerant, char **msg, bool is_e
 }
 
 /* Default to mce_severity_intel */
-int (*mce_severity)(struct mce *m, int tolerant, char **msg, bool is_excp) =
+int (*mce_severity)(struct mce *m, struct pt_regs *regs, int tolerant, char **msg, bool is_excp) =
 		    mce_severity_intel;
 
 void __init mcheck_vendor_init_severity(void)

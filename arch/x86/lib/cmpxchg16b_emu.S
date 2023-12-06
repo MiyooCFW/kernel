@@ -13,7 +13,7 @@
  * %rcx : high 64 bits of new value
  * %al  : Operation successful
  */
-ENTRY(this_cpu_cmpxchg16b_emu)
+SYM_FUNC_START(this_cpu_cmpxchg16b_emu)
 
 #
 # Emulate 'cmpxchg16b %gs:(%rsi)' except we return the result in %al not
@@ -37,11 +37,11 @@ ENTRY(this_cpu_cmpxchg16b_emu)
 
 	popfq
 	mov $1, %al
-	ret
+	RET
 
 .Lnot_same:
 	popfq
 	xor %al,%al
-	ret
+	RET
 
-ENDPROC(this_cpu_cmpxchg16b_emu)
+SYM_FUNC_END(this_cpu_cmpxchg16b_emu)

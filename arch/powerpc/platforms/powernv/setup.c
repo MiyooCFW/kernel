@@ -98,7 +98,7 @@ static void init_fw_feat_flags(struct device_node *np)
 		security_ftr_clear(SEC_FTR_BNDS_CHK_SPEC_BAR);
 }
 
-static void pnv_setup_rfi_flush(void)
+static void pnv_setup_security_mitigations(void)
 {
 	struct device_node *np, *fw_features;
 	enum l1d_flush_type type;
@@ -145,20 +145,40 @@ static void pnv_setup_rfi_flush(void)
 	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
 		 security_ftr_enabled(SEC_FTR_L1D_FLUSH_UACCESS);
 	setup_uaccess_flush(enable);
+
+	setup_stf_barrier();
+}
+
+static void __init pnv_check_guarded_cores(void)
+{
+	struct device_node *dn;
+	int bad_count = 0;
+
+	for_each_node_by_type(dn, "cpu") {
+		if (of_property_match_string(dn, "status", "bad") >= 0)
+			bad_count++;
+	}
+
+	if (bad_count) {
+		printk("  _     _______________\n");
+		pr_cont(" | |   /               \\\n");
+		pr_cont(" | |   |    WARNING!   |\n");
+		pr_cont(" | |   |               |\n");
+		pr_cont(" | |   | It looks like |\n");
+		pr_cont(" |_|   |  you have %*d |\n", 3, bad_count);
+		pr_cont("  _    | guarded cores |\n");
+		pr_cont(" (_)   \\_______________/\n");
+	}
 }
 
 static void __init pnv_setup_arch(void)
 {
 	set_arch_panic_timeout(10, ARCH_PANIC_TIMEOUT);
 
-	pnv_setup_rfi_flush();
-	setup_stf_barrier();
+	pnv_setup_security_mitigations();
 
 	/* Initialize SMP */
 	pnv_smp_init();
-
-	/* Setup PCI */
-	pnv_pci_init();
 
 	/* Setup RTC and NVRAM callbacks */
 	if (firmware_has_feature(FW_FEATURE_OPAL))
@@ -166,6 +186,8 @@ static void __init pnv_setup_arch(void)
 
 	/* Enable NAP mode */
 	powersave_nap = 1;
+
+	pnv_check_guarded_cores();
 
 	/* XXX PMCS */
 
@@ -253,10 +275,16 @@ static void  __noreturn pnv_restart(char *cmd)
 	pnv_prepare_going_down();
 
 	do {
-		if (!cmd)
+		if (!cmd || !strlen(cmd))
 			rc = opal_cec_reboot();
 		else if (strcmp(cmd, "full") == 0)
 			rc = opal_cec_reboot2(OPAL_REBOOT_FULL_IPL, NULL);
+		else if (strcmp(cmd, "mpipl") == 0)
+			rc = opal_cec_reboot2(OPAL_REBOOT_MPIPL, NULL);
+		else if (strcmp(cmd, "error") == 0)
+			rc = opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR, NULL);
+		else if (strcmp(cmd, "fast") == 0)
+			rc = opal_cec_reboot2(OPAL_REBOOT_FAST, NULL);
 		else
 			rc = OPAL_UNSUPPORTED;
 
@@ -417,7 +445,15 @@ static void pnv_kexec_cpu_down(int crash_shutdown, int secondary)
 #ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
 static unsigned long pnv_memory_block_size(void)
 {
-	return 256UL * 1024 * 1024;
+	/*
+	 * We map the kernel linear region with 1GB large pages on radix. For
+	 * memory hot unplug to work our memory block size must be at least
+	 * this size.
+	 */
+	if (radix_enabled())
+		return radix_mem_block_size;
+	else
+		return 256UL * 1024 * 1024;
 }
 #endif
 
@@ -510,6 +546,7 @@ define_machine(powernv) {
 	.init_IRQ		= pnv_init_IRQ,
 	.show_cpuinfo		= pnv_show_cpuinfo,
 	.get_proc_freq          = pnv_get_proc_freq,
+	.discover_phbs		= pnv_pci_init,
 	.progress		= pnv_progress,
 	.machine_shutdown	= pnv_shutdown,
 	.power_save             = NULL,

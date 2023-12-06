@@ -271,6 +271,7 @@ struct tegra_dfll {
 	struct clk			*ref_clk;
 	struct clk			*i2c_clk;
 	struct clk			*dfll_clk;
+	struct reset_control		*dfll_rst;
 	struct reset_control		*dvco_rst;
 	unsigned long			ref_rate;
 	unsigned long			i2c_clk_rate;
@@ -1377,7 +1378,7 @@ static void dfll_debug_init(struct tegra_dfll *td)
 }
 
 #else
-static void inline dfll_debug_init(struct tegra_dfll *td) { }
+static inline void dfll_debug_init(struct tegra_dfll *td) { }
 #endif /* CONFIG_DEBUG_FS */
 
 /*
@@ -1464,6 +1465,7 @@ static int dfll_init(struct tegra_dfll *td)
 		return -EINVAL;
 	}
 
+	reset_control_deassert(td->dfll_rst);
 	reset_control_deassert(td->dvco_rst);
 
 	ret = clk_prepare(td->ref_clk);
@@ -1509,9 +1511,67 @@ di_err1:
 	clk_unprepare(td->ref_clk);
 
 	reset_control_assert(td->dvco_rst);
+	reset_control_assert(td->dfll_rst);
 
 	return ret;
 }
+
+/**
+ * tegra_dfll_suspend - check DFLL is disabled
+ * @dev: DFLL instance
+ *
+ * DFLL clock should be disabled by the CPUFreq driver. So, make
+ * sure it is disabled and disable all clocks needed by the DFLL.
+ */
+int tegra_dfll_suspend(struct device *dev)
+{
+	struct tegra_dfll *td = dev_get_drvdata(dev);
+
+	if (dfll_is_running(td)) {
+		dev_err(td->dev, "DFLL still enabled while suspending\n");
+		return -EBUSY;
+	}
+
+	reset_control_assert(td->dvco_rst);
+	reset_control_assert(td->dfll_rst);
+
+	return 0;
+}
+EXPORT_SYMBOL(tegra_dfll_suspend);
+
+/**
+ * tegra_dfll_resume - reinitialize DFLL on resume
+ * @dev: DFLL instance
+ *
+ * DFLL is disabled and reset during suspend and resume.
+ * So, reinitialize the DFLL IP block back for use.
+ * DFLL clock is enabled later in closed loop mode by CPUFreq
+ * driver before switching its clock source to DFLL output.
+ */
+int tegra_dfll_resume(struct device *dev)
+{
+	struct tegra_dfll *td = dev_get_drvdata(dev);
+
+	reset_control_deassert(td->dfll_rst);
+	reset_control_deassert(td->dvco_rst);
+
+	pm_runtime_get_sync(td->dev);
+
+	dfll_set_mode(td, DFLL_DISABLED);
+	dfll_set_default_params(td);
+
+	if (td->soc->init_clock_trimmers)
+		td->soc->init_clock_trimmers();
+
+	dfll_set_open_loop_config(td);
+
+	dfll_init_out_if(td);
+
+	pm_runtime_put_sync(td->dev);
+
+	return 0;
+}
+EXPORT_SYMBOL(tegra_dfll_resume);
 
 /*
  * DT data fetch
@@ -1896,6 +1956,12 @@ int tegra_dfll_register(struct platform_device *pdev,
 
 	td->soc = soc;
 
+	td->dfll_rst = devm_reset_control_get_optional(td->dev, "dfll");
+	if (IS_ERR(td->dfll_rst)) {
+		dev_err(td->dev, "couldn't get dfll reset\n");
+		return PTR_ERR(td->dfll_rst);
+	}
+
 	td->dvco_rst = devm_reset_control_get(td->dev, "dvco");
 	if (IS_ERR(td->dvco_rst)) {
 		dev_err(td->dev, "couldn't get dvco reset\n");
@@ -2032,6 +2098,7 @@ struct tegra_dfll_soc_data *tegra_dfll_unregister(struct platform_device *pdev)
 	clk_unprepare(td->i2c_clk);
 
 	reset_control_assert(td->dvco_rst);
+	reset_control_assert(td->dfll_rst);
 
 	return td->soc;
 }

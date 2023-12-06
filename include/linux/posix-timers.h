@@ -4,8 +4,10 @@
 
 #include <linux/spinlock.h>
 #include <linux/list.h>
+#include <linux/mutex.h>
 #include <linux/alarmtimer.h>
 #include <linux/timerqueue.h>
+#include <linux/task_work.h>
 
 struct kernel_siginfo;
 struct task_struct;
@@ -62,16 +64,18 @@ static inline int clockid_to_fd(const clockid_t clk)
  * cpu_timer - Posix CPU timer representation for k_itimer
  * @node:	timerqueue node to queue in the task/sig
  * @head:	timerqueue head on which this timer is queued
- * @task:	Pointer to target task
+ * @pid:	Pointer to target task PID
  * @elist:	List head for the expiry list
  * @firing:	Timer is currently firing
+ * @handling:	Pointer to the task which handles expiry
  */
 struct cpu_timer {
-	struct timerqueue_node	node;
-	struct timerqueue_head	*head;
-	struct task_struct	*task;
-	struct list_head	elist;
-	int			firing;
+	struct timerqueue_node		node;
+	struct timerqueue_head		*head;
+	struct pid			*pid;
+	struct list_head		elist;
+	int				firing;
+	struct task_struct __rcu	*handling;
 };
 
 static inline bool cpu_timer_enqueue(struct timerqueue_head *head,
@@ -81,12 +85,19 @@ static inline bool cpu_timer_enqueue(struct timerqueue_head *head,
 	return timerqueue_add(head, &ctmr->node);
 }
 
-static inline void cpu_timer_dequeue(struct cpu_timer *ctmr)
+static inline bool cpu_timer_queued(struct cpu_timer *ctmr)
 {
-	if (ctmr->head) {
+	return !!ctmr->head;
+}
+
+static inline bool cpu_timer_dequeue(struct cpu_timer *ctmr)
+{
+	if (cpu_timer_queued(ctmr)) {
 		timerqueue_del(ctmr->head, &ctmr->node);
 		ctmr->head = NULL;
+		return true;
 	}
+	return false;
 }
 
 static inline u64 cpu_timer_getexpires(struct cpu_timer *ctmr)
@@ -123,6 +134,18 @@ struct posix_cputimers {
 	struct posix_cputimer_base	bases[CPUCLOCK_MAX];
 	unsigned int			timers_active;
 	unsigned int			expiry_active;
+};
+
+/**
+ * posix_cputimers_work - Container for task work based posix CPU timer expiry
+ * @work:	The task work to be scheduled
+ * @mutex:	Mutex held around expiry in context of this task work
+ * @scheduled:  @work has been scheduled already, no further processing
+ */
+struct posix_cputimers_work {
+	struct callback_head	work;
+	struct mutex		mutex;
+	unsigned int		scheduled;
 };
 
 static inline void posix_cputimers_init(struct posix_cputimers *pct)
@@ -163,6 +186,14 @@ struct cpu_timer { };
 static inline void posix_cputimers_init(struct posix_cputimers *pct) { }
 static inline void posix_cputimers_group_init(struct posix_cputimers *pct,
 					      u64 cpu_limit) { }
+#endif
+
+#ifdef CONFIG_POSIX_CPU_TIMERS_TASK_WORK
+void clear_posix_cputimers_work(struct task_struct *p);
+void posix_cputimers_init_work(void);
+#else
+static inline void clear_posix_cputimers_work(struct task_struct *p) { }
+static inline void posix_cputimers_init_work(void) { }
 #endif
 
 #define REQUEUE_PENDING 1

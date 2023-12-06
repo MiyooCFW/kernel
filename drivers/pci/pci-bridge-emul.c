@@ -25,6 +25,17 @@
 #define PCI_CAP_PCIE_START	PCI_BRIDGE_CONF_END
 #define PCI_CAP_PCIE_END	(PCI_CAP_PCIE_START + PCI_CAP_PCIE_SIZEOF)
 
+/**
+ * struct pci_bridge_reg_behavior - register bits behaviors
+ * @ro:		Read-Only bits
+ * @rw:		Read-Write bits
+ * @w1c:	Write-1-to-Clear bits
+ *
+ * Reads and Writes will be filtered by specified behavior. All other bits not
+ * declared are assumed 'Reserved' and will return 0 on reads, per PCIe 5.0:
+ * "Reserved register fields must be read only and must return 0 (all 0's for
+ * multi-bit fields) when read".
+ */
 struct pci_bridge_reg_behavior {
 	/* Read-only bits */
 	u32 ro;
@@ -34,9 +45,6 @@ struct pci_bridge_reg_behavior {
 
 	/* Write-1-to-clear bits */
 	u32 w1c;
-
-	/* Reserved bits (hardwired to 0) */
-	u32 rsvd;
 };
 
 static const
@@ -51,13 +59,7 @@ struct pci_bridge_reg_behavior pci_regs_behavior[PCI_STD_HEADER_SIZEOF / 4] = {
 			PCI_COMMAND_FAST_BACK) |
 		       (PCI_STATUS_CAP_LIST | PCI_STATUS_66MHZ |
 			PCI_STATUS_FAST_BACK | PCI_STATUS_DEVSEL_MASK) << 16),
-		.rsvd = GENMASK(15, 10) | ((BIT(6) | GENMASK(3, 0)) << 16),
-		.w1c = (PCI_STATUS_PARITY |
-			PCI_STATUS_SIG_TARGET_ABORT |
-			PCI_STATUS_REC_TARGET_ABORT |
-			PCI_STATUS_REC_MASTER_ABORT |
-			PCI_STATUS_SIG_SYSTEM_ERROR |
-			PCI_STATUS_DETECTED_PARITY) << 16,
+		.w1c = PCI_STATUS_ERROR_BITS << 16,
 	},
 	[PCI_CLASS_REVISION / 4] = { .ro = ~0 },
 
@@ -102,14 +104,7 @@ struct pci_bridge_reg_behavior pci_regs_behavior[PCI_STD_HEADER_SIZEOF / 4] = {
 			 PCI_STATUS_DEVSEL_MASK) << 16) |
 		       GENMASK(11, 8) | GENMASK(3, 0)),
 
-		.w1c = (PCI_STATUS_PARITY |
-			PCI_STATUS_SIG_TARGET_ABORT |
-			PCI_STATUS_REC_TARGET_ABORT |
-			PCI_STATUS_REC_MASTER_ABORT |
-			PCI_STATUS_SIG_SYSTEM_ERROR |
-			PCI_STATUS_DETECTED_PARITY) << 16,
-
-		.rsvd = ((BIT(6) | GENMASK(4, 0)) << 16),
+		.w1c = PCI_STATUS_ERROR_BITS << 16,
 	},
 
 	[PCI_MEMORY_BASE / 4] = {
@@ -142,12 +137,15 @@ struct pci_bridge_reg_behavior pci_regs_behavior[PCI_STD_HEADER_SIZEOF / 4] = {
 
 	[PCI_CAPABILITY_LIST / 4] = {
 		.ro = GENMASK(7, 0),
-		.rsvd = GENMASK(31, 8),
 	},
 
+	/*
+	 * If expansion ROM is unsupported then ROM Base Address register must
+	 * be implemented as read-only register that return 0 when read, same
+	 * as for unused Base Address registers.
+	 */
 	[PCI_ROM_ADDRESS1 / 4] = {
-		.rw = GENMASK(31, 11) | BIT(0),
-		.rsvd = GENMASK(10, 1),
+		.ro = ~0,
 	},
 
 	/*
@@ -170,8 +168,6 @@ struct pci_bridge_reg_behavior pci_regs_behavior[PCI_STD_HEADER_SIZEOF / 4] = {
 		.ro = (GENMASK(15, 8) | ((PCI_BRIDGE_CTL_FAST_BACK) << 16)),
 
 		.w1c = BIT(10) << 16,
-
-		.rsvd = (GENMASK(15, 12) | BIT(4)) << 16,
 	},
 };
 
@@ -180,45 +176,57 @@ struct pci_bridge_reg_behavior pcie_cap_regs_behavior[PCI_CAP_PCIE_SIZEOF / 4] =
 	[PCI_CAP_LIST_ID / 4] = {
 		/*
 		 * Capability ID, Next Capability Pointer and
-		 * Capabilities register are all read-only.
+		 * bits [14:0] of Capabilities register are all read-only.
+		 * Bit 15 of Capabilities register is reserved.
 		 */
-		.ro = ~0,
+		.ro = GENMASK(30, 0),
 	},
 
 	[PCI_EXP_DEVCAP / 4] = {
-		.ro = ~0,
+		/*
+		 * Bits [31:29] and [17:16] are reserved.
+		 * Bits [27:18] are reserved for non-upstream ports.
+		 * Bits 28 and [14:6] are reserved for non-endpoint devices.
+		 * Other bits are read-only.
+		 */
+		.ro = BIT(15) | GENMASK(5, 0),
 	},
 
 	[PCI_EXP_DEVCTL / 4] = {
-		/* Device control register is RW */
-		.rw = GENMASK(15, 0),
+		/*
+		 * Device control register is RW, except bit 15 which is
+		 * reserved for non-endpoints or non-PCIe-to-PCI/X bridges.
+		 */
+		.rw = GENMASK(14, 0),
 
 		/*
-		 * Device status register has 4 bits W1C, then 2 bits
-		 * RO, the rest is reserved
+		 * Device status register has bits 6 and [3:0] W1C, [5:4] RO,
+		 * the rest is reserved. Also bit 6 is reserved for non-upstream
+		 * ports.
 		 */
-		.w1c = GENMASK(19, 16),
-		.ro = GENMASK(21, 20),
-		.rsvd = GENMASK(31, 22),
+		.w1c = GENMASK(3, 0) << 16,
+		.ro = GENMASK(5, 4) << 16,
 	},
 
 	[PCI_EXP_LNKCAP / 4] = {
-		/* All bits are RO, except bit 23 which is reserved */
-		.ro = lower_32_bits(~BIT(23)),
-		.rsvd = BIT(23),
+		/*
+		 * All bits are RO, except bit 23 which is reserved and
+		 * bit 18 which is reserved for non-upstream ports.
+		 */
+		.ro = lower_32_bits(~(BIT(23) | PCI_EXP_LNKCAP_CLKPM)),
 	},
 
 	[PCI_EXP_LNKCTL / 4] = {
 		/*
-		 * Link control has bits [1:0] and [11:3] RW, the
-		 * other bits are reserved.
-		 * Link status has bits [13:0] RO, and bits [14:15]
+		 * Link control has bits [15:14], [11:3] and [1:0] RW, the
+		 * rest is reserved. Bit 8 is reserved for non-upstream ports.
+		 *
+		 * Link status has bits [13:0] RO, and bits [15:14]
 		 * W1C.
 		 */
-		.rw = GENMASK(11, 3) | GENMASK(1, 0),
+		.rw = GENMASK(15, 14) | GENMASK(11, 9) | GENMASK(7, 3) | GENMASK(1, 0),
 		.ro = GENMASK(13, 0) << 16,
 		.w1c = GENMASK(15, 14) << 16,
-		.rsvd = GENMASK(15, 12) | BIT(2),
 	},
 
 	[PCI_EXP_SLTCAP / 4] = {
@@ -227,19 +235,18 @@ struct pci_bridge_reg_behavior pcie_cap_regs_behavior[PCI_CAP_PCIE_SIZEOF / 4] =
 
 	[PCI_EXP_SLTCTL / 4] = {
 		/*
-		 * Slot control has bits [12:0] RW, the rest is
+		 * Slot control has bits [14:0] RW, the rest is
 		 * reserved.
 		 *
-		 * Slot status has a mix of W1C and RO bits, as well
-		 * as reserved bits.
+		 * Slot status has bits 8 and [4:0] W1C, bits [7:5] RO, the
+		 * rest is reserved.
 		 */
-		.rw = GENMASK(12, 0),
+		.rw = GENMASK(14, 0),
 		.w1c = (PCI_EXP_SLTSTA_ABP | PCI_EXP_SLTSTA_PFD |
 			PCI_EXP_SLTSTA_MRLSC | PCI_EXP_SLTSTA_PDC |
 			PCI_EXP_SLTSTA_CC | PCI_EXP_SLTSTA_DLLSC) << 16,
 		.ro = (PCI_EXP_SLTSTA_MRLSS | PCI_EXP_SLTSTA_PDS |
 		       PCI_EXP_SLTSTA_EIS) << 16,
-		.rsvd = GENMASK(15, 13) | (GENMASK(15, 9) << 16),
 	},
 
 	[PCI_EXP_RTCTL / 4] = {
@@ -247,19 +254,64 @@ struct pci_bridge_reg_behavior pcie_cap_regs_behavior[PCI_CAP_PCIE_SIZEOF / 4] =
 		 * Root control has bits [4:0] RW, the rest is
 		 * reserved.
 		 *
-		 * Root status has bit 0 RO, the rest is reserved.
+		 * Root capabilities has bit 0 RO, the rest is reserved.
 		 */
 		.rw = (PCI_EXP_RTCTL_SECEE | PCI_EXP_RTCTL_SENFEE |
 		       PCI_EXP_RTCTL_SEFEE | PCI_EXP_RTCTL_PMEIE |
 		       PCI_EXP_RTCTL_CRSSVE),
 		.ro = PCI_EXP_RTCAP_CRSVIS << 16,
-		.rsvd = GENMASK(15, 5) | (GENMASK(15, 1) << 16),
 	},
 
 	[PCI_EXP_RTSTA / 4] = {
+		/*
+		 * Root status has bits 17 and [15:0] RO, bit 16 W1C, the rest
+		 * is reserved.
+		 */
 		.ro = GENMASK(15, 0) | PCI_EXP_RTSTA_PENDING,
 		.w1c = PCI_EXP_RTSTA_PME,
-		.rsvd = GENMASK(31, 18),
+	},
+
+	[PCI_EXP_DEVCAP2 / 4] = {
+		/*
+		 * Device capabilities 2 register has reserved bits [30:27].
+		 * Also bits [26:24] are reserved for non-upstream ports.
+		 */
+		.ro = BIT(31) | GENMASK(23, 0),
+	},
+
+	[PCI_EXP_DEVCTL2 / 4] = {
+		/*
+		 * Device control 2 register is RW. Bit 11 is reserved for
+		 * non-upstream ports.
+		 *
+		 * Device status 2 register is reserved.
+		 */
+		.rw = GENMASK(15, 12) | GENMASK(10, 0),
+	},
+
+	[PCI_EXP_LNKCAP2 / 4] = {
+		/* Link capabilities 2 register has reserved bits [30:25] and 0. */
+		.ro = BIT(31) | GENMASK(24, 1),
+	},
+
+	[PCI_EXP_LNKCTL2 / 4] = {
+		/*
+		 * Link control 2 register is RW.
+		 *
+		 * Link status 2 register has bits 5, 15 W1C;
+		 * bits 10, 11 reserved and others are RO.
+		 */
+		.rw = GENMASK(15, 0),
+		.w1c = (BIT(15) | BIT(5)) << 16,
+		.ro = (GENMASK(14, 12) | GENMASK(9, 6) | GENMASK(4, 0)) << 16,
+	},
+
+	[PCI_EXP_SLTCAP2 / 4] = {
+		/* Slot capabilities 2 register is reserved. */
+	},
+
+	[PCI_EXP_SLTCTL2 / 4] = {
+		/* Both Slot control 2 and Slot status 2 registers are reserved. */
 	},
 };
 
@@ -275,7 +327,11 @@ int pci_bridge_emul_init(struct pci_bridge_emul *bridge,
 {
 	BUILD_BUG_ON(sizeof(bridge->conf) != PCI_BRIDGE_CONF_END);
 
-	bridge->conf.class_revision |= cpu_to_le32(PCI_CLASS_BRIDGE_PCI << 16);
+	/*
+	 * class_revision: Class is high 24 bits and revision is low 8 bit of this member,
+	 * while class for PCI Bridge Normal Decode has the 24-bit value: PCI_CLASS_BRIDGE_PCI << 8
+	 */
+	bridge->conf.class_revision |= cpu_to_le32((PCI_CLASS_BRIDGE_PCI << 8) << 8);
 	bridge->conf.header_type = PCI_HEADER_TYPE_BRIDGE;
 	bridge->conf.cache_line_size = 0x10;
 	bridge->conf.status = cpu_to_le16(PCI_STATUS_CAP_LIST);
@@ -328,6 +384,7 @@ int pci_bridge_emul_init(struct pci_bridge_emul *bridge,
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(pci_bridge_emul_init);
 
 /*
  * Cleanup a pci_bridge_emul structure that was previously initialized
@@ -339,6 +396,7 @@ void pci_bridge_emul_cleanup(struct pci_bridge_emul *bridge)
 		kfree(bridge->pcie_cap_regs_behavior);
 	kfree(bridge->pci_regs_behavior);
 }
+EXPORT_SYMBOL_GPL(pci_bridge_emul_cleanup);
 
 /*
  * Should be called by the PCI controller driver when reading the PCI
@@ -388,7 +446,8 @@ int pci_bridge_emul_conf_read(struct pci_bridge_emul *bridge, int where,
 	 * Make sure we never return any reserved bit with a value
 	 * different from 0.
 	 */
-	*value &= ~behavior[reg / 4].rsvd;
+	*value &= behavior[reg / 4].ro | behavior[reg / 4].rw |
+		  behavior[reg / 4].w1c;
 
 	if (size == 1)
 		*value = (*value >> (8 * (where & 3))) & 0xff;
@@ -399,6 +458,7 @@ int pci_bridge_emul_conf_read(struct pci_bridge_emul *bridge, int where,
 
 	return PCIBIOS_SUCCESSFUL;
 }
+EXPORT_SYMBOL_GPL(pci_bridge_emul_conf_read);
 
 /*
  * Should be called by the PCI controller driver when writing the PCI
@@ -476,3 +536,4 @@ int pci_bridge_emul_conf_write(struct pci_bridge_emul *bridge, int where,
 
 	return PCIBIOS_SUCCESSFUL;
 }
+EXPORT_SYMBOL_GPL(pci_bridge_emul_conf_write);

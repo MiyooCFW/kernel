@@ -167,6 +167,7 @@ static const struct phy_ops gpio_usb_ops = {
 /**
  * phy_mdm6600_cmd() - send a command request to mdm6600
  * @ddata: device driver data
+ * @val: value of cmd to be set
  *
  * Configures the three command request GPIOs to the specified value.
  */
@@ -183,7 +184,7 @@ static void phy_mdm6600_cmd(struct phy_mdm6600 *ddata, int val)
 
 /**
  * phy_mdm6600_status() - read mdm6600 status lines
- * @ddata: device driver data
+ * @work: work structure
  */
 static void phy_mdm6600_status(struct work_struct *work)
 {

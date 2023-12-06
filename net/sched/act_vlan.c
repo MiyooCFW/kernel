@@ -29,7 +29,7 @@ static int tcf_vlan_act(struct sk_buff *skb, const struct tc_action *a,
 	u16 tci;
 
 	tcf_lastuse_update(&v->tcf_tm);
-	bstats_cpu_update(this_cpu_ptr(v->common.cpu_bstats), skb);
+	tcf_action_update_bstats(&v->common, skb);
 
 	/* Ensure 'data' points at mac_header prior calling vlan manipulating
 	 * functions.
@@ -77,6 +77,16 @@ static int tcf_vlan_act(struct sk_buff *skb, const struct tc_action *a,
 		/* put updated tci as hwaccel tag */
 		__vlan_hwaccel_put_tag(skb, p->tcfv_push_proto, tci);
 		break;
+	case TCA_VLAN_ACT_POP_ETH:
+		err = skb_eth_pop(skb);
+		if (err)
+			goto drop;
+		break;
+	case TCA_VLAN_ACT_PUSH_ETH:
+		err = skb_eth_push(skb, p->tcfv_push_dst, p->tcfv_push_src);
+		if (err)
+			goto drop;
+		break;
 	default:
 		BUG();
 	}
@@ -88,23 +98,27 @@ out:
 	return action;
 
 drop:
-	qstats_drop_inc(this_cpu_ptr(v->common.cpu_qstats));
+	tcf_action_inc_drop_qstats(&v->common);
 	return TC_ACT_SHOT;
 }
 
 static const struct nla_policy vlan_policy[TCA_VLAN_MAX + 1] = {
+	[TCA_VLAN_UNSPEC]		= { .strict_start_type = TCA_VLAN_PUSH_ETH_DST },
 	[TCA_VLAN_PARMS]		= { .len = sizeof(struct tc_vlan) },
 	[TCA_VLAN_PUSH_VLAN_ID]		= { .type = NLA_U16 },
 	[TCA_VLAN_PUSH_VLAN_PROTOCOL]	= { .type = NLA_U16 },
 	[TCA_VLAN_PUSH_VLAN_PRIORITY]	= { .type = NLA_U8 },
+	[TCA_VLAN_PUSH_ETH_DST]		= NLA_POLICY_ETH_ADDR,
+	[TCA_VLAN_PUSH_ETH_SRC]		= NLA_POLICY_ETH_ADDR,
 };
 
 static int tcf_vlan_init(struct net *net, struct nlattr *nla,
 			 struct nlattr *est, struct tc_action **a,
-			 int ovr, int bind, bool rtnl_held,
-			 struct tcf_proto *tp, struct netlink_ext_ack *extack)
+			 struct tcf_proto *tp, u32 flags,
+			 struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, vlan_net_id);
+	bool bind = flags & TCA_ACT_FLAGS_BIND;
 	struct nlattr *tb[TCA_VLAN_MAX + 1];
 	struct tcf_chain *goto_ch = NULL;
 	bool push_prio_exists = false;
@@ -180,6 +194,17 @@ static int tcf_vlan_init(struct net *net, struct nlattr *nla,
 		if (push_prio_exists)
 			push_prio = nla_get_u8(tb[TCA_VLAN_PUSH_VLAN_PRIORITY]);
 		break;
+	case TCA_VLAN_ACT_POP_ETH:
+		break;
+	case TCA_VLAN_ACT_PUSH_ETH:
+		if (!tb[TCA_VLAN_PUSH_ETH_DST] || !tb[TCA_VLAN_PUSH_ETH_SRC]) {
+			if (exists)
+				tcf_idr_release(*a, bind);
+			else
+				tcf_idr_cleanup(tn, index);
+			return -EINVAL;
+		}
+		break;
 	default:
 		if (exists)
 			tcf_idr_release(*a, bind);
@@ -190,15 +215,15 @@ static int tcf_vlan_init(struct net *net, struct nlattr *nla,
 	action = parm->v_action;
 
 	if (!exists) {
-		ret = tcf_idr_create(tn, index, est, a,
-				     &act_vlan_ops, bind, true);
+		ret = tcf_idr_create_from_flags(tn, index, est, a,
+						&act_vlan_ops, bind, flags);
 		if (ret) {
 			tcf_idr_cleanup(tn, index);
 			return ret;
 		}
 
 		ret = ACT_P_CREATED;
-	} else if (!ovr) {
+	} else if (!(flags & TCA_ACT_FLAGS_REPLACE)) {
 		tcf_idr_release(*a, bind);
 		return -EEXIST;
 	}
@@ -221,9 +246,16 @@ static int tcf_vlan_init(struct net *net, struct nlattr *nla,
 	p->tcfv_push_prio_exists = push_prio_exists || action == TCA_VLAN_ACT_PUSH;
 	p->tcfv_push_proto = push_proto;
 
+	if (action == TCA_VLAN_ACT_PUSH_ETH) {
+		nla_memcpy(&p->tcfv_push_dst, tb[TCA_VLAN_PUSH_ETH_DST],
+			   ETH_ALEN);
+		nla_memcpy(&p->tcfv_push_src, tb[TCA_VLAN_PUSH_ETH_SRC],
+			   ETH_ALEN);
+	}
+
 	spin_lock_bh(&v->tcf_lock);
 	goto_ch = tcf_action_set_ctrlact(*a, parm->action, goto_ch);
-	rcu_swap_protected(v->vlan_p, p, lockdep_is_held(&v->tcf_lock));
+	p = rcu_replace_pointer(v->vlan_p, p, lockdep_is_held(&v->tcf_lock));
 	spin_unlock_bh(&v->tcf_lock);
 
 	if (goto_ch)
@@ -275,9 +307,18 @@ static int tcf_vlan_dump(struct sk_buff *skb, struct tc_action *a,
 	    (nla_put_u16(skb, TCA_VLAN_PUSH_VLAN_ID, p->tcfv_push_vid) ||
 	     nla_put_be16(skb, TCA_VLAN_PUSH_VLAN_PROTOCOL,
 			  p->tcfv_push_proto) ||
-	     (nla_put_u8(skb, TCA_VLAN_PUSH_VLAN_PRIORITY,
-					      p->tcfv_push_prio))))
+	     (p->tcfv_push_prio_exists &&
+	      nla_put_u8(skb, TCA_VLAN_PUSH_VLAN_PRIORITY, p->tcfv_push_prio))))
 		goto nla_put_failure;
+
+	if (p->tcfv_action == TCA_VLAN_ACT_PUSH_ETH) {
+		if (nla_put(skb, TCA_VLAN_PUSH_ETH_DST, ETH_ALEN,
+			    p->tcfv_push_dst))
+			goto nla_put_failure;
+		if (nla_put(skb, TCA_VLAN_PUSH_ETH_SRC, ETH_ALEN,
+			    p->tcfv_push_src))
+			goto nla_put_failure;
+	}
 
 	tcf_tm_dump(&t, &v->tcf_tm);
 	if (nla_put_64bit(skb, TCA_VLAN_TM, sizeof(t), &t, TCA_VLAN_PAD))
@@ -302,16 +343,13 @@ static int tcf_vlan_walker(struct net *net, struct sk_buff *skb,
 	return tcf_generic_walker(tn, skb, cb, type, ops, extack);
 }
 
-static void tcf_vlan_stats_update(struct tc_action *a, u64 bytes, u32 packets,
-				  u64 lastuse, bool hw)
+static void tcf_vlan_stats_update(struct tc_action *a, u64 bytes, u64 packets,
+				  u64 drops, u64 lastuse, bool hw)
 {
 	struct tcf_vlan *v = to_vlan(a);
 	struct tcf_t *tm = &v->tcf_tm;
 
-	_bstats_cpu_update(this_cpu_ptr(a->cpu_bstats), bytes, packets);
-	if (hw)
-		_bstats_cpu_update(this_cpu_ptr(a->cpu_bstats_hw),
-				   bytes, packets);
+	tcf_action_update_stats(a, bytes, packets, drops, hw);
 	tm->lastuse = max_t(u64, tm->lastuse, lastuse);
 }
 

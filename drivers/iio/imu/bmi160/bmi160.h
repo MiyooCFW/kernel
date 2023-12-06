@@ -3,10 +3,13 @@
 #define BMI160_H_
 
 #include <linux/iio/iio.h>
+#include <linux/regulator/consumer.h>
 
 struct bmi160_data {
 	struct regmap *regmap;
 	struct iio_trigger *trig;
+	struct regulator_bulk_data supplies[2];
+	struct iio_mount_matrix orientation;
 	/*
 	 * Ensure natural alignment for timestamp if present.
 	 * Max length needed: 2 * 3 channels + 4 bytes padding + 8 byte ts.

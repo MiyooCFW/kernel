@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/**
+/*
  * udc.c - Core UDC Framework
  *
  * Copyright (C) 2016 Intel Corporation
@@ -87,6 +87,11 @@ DEFINE_EVENT(udc_log_gadget, usb_gadget_frame_number,
 );
 
 DEFINE_EVENT(udc_log_gadget, usb_gadget_wakeup,
+	TP_PROTO(struct usb_gadget *g, int ret),
+	TP_ARGS(g, ret)
+);
+
+DEFINE_EVENT(udc_log_gadget, usb_gadget_set_remote_wakeup,
 	TP_PROTO(struct usb_gadget *g, int ret),
 	TP_ARGS(g, ret)
 );

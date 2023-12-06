@@ -9,6 +9,8 @@
  *  			- Added processor hotplug support
  */
 
+#define pr_fmt(fmt) "ACPI: " fmt
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -20,12 +22,7 @@
 #include <asm/cpufeature.h>
 #endif
 
-#define PREFIX "ACPI: "
-
-#define ACPI_PROCESSOR_CLASS		"processor"
 #define ACPI_PROCESSOR_FILE_PERFORMANCE	"performance"
-#define _COMPONENT		ACPI_PROCESSOR_COMPONENT
-ACPI_MODULE_NAME("processor_perflib");
 
 static DEFINE_MUTEX(performance_mutex);
 
@@ -68,13 +65,13 @@ static int acpi_processor_get_platform_limit(struct acpi_processor *pr)
 	 * (e.g. 0 = states 0..n; 1 = states 1..n; etc.
 	 */
 	status = acpi_evaluate_integer(pr->handle, "_PPC", NULL, &ppc);
-
-	if (status != AE_NOT_FOUND)
+	if (status != AE_NOT_FOUND) {
 		acpi_processor_ppc_in_use = true;
 
-	if (ACPI_FAILURE(status) && status != AE_NOT_FOUND) {
-		ACPI_EXCEPTION((AE_INFO, status, "Evaluating _PPC"));
-		return -ENODEV;
+		if (ACPI_FAILURE(status)) {
+			acpi_evaluation_failure_warn(pr->handle, "_PPC", status);
+			return -ENODEV;
+		}
 	}
 
 	index = ppc;
@@ -114,7 +111,7 @@ static int acpi_processor_get_platform_limit(struct acpi_processor *pr)
  * acpi_processor_ppc_ost: Notify firmware the _PPC evaluation status
  * @handle: ACPI processor handle
  * @status: the status code of _PPC evaluation
- *	0: success. OSPM is now using the performance state specificed.
+ *	0: success. OSPM is now using the performance state specified.
  *	1: failure. OSPM has not changed the number of P-states in use
  */
 static void acpi_processor_ppc_ost(acpi_handle handle, int status)
@@ -219,17 +216,16 @@ static int acpi_processor_get_performance_control(struct acpi_processor *pr)
 	union acpi_object *pct = NULL;
 	union acpi_object obj = { 0 };
 
-
 	status = acpi_evaluate_object(pr->handle, "_PCT", NULL, &buffer);
 	if (ACPI_FAILURE(status)) {
-		ACPI_EXCEPTION((AE_INFO, status, "Evaluating _PCT"));
+		acpi_evaluation_failure_warn(pr->handle, "_PCT", status);
 		return -ENODEV;
 	}
 
 	pct = (union acpi_object *)buffer.pointer;
 	if (!pct || (pct->type != ACPI_TYPE_PACKAGE)
 	    || (pct->package.count != 2)) {
-		printk(KERN_ERR PREFIX "Invalid _PCT data\n");
+		pr_err("Invalid _PCT data\n");
 		result = -EFAULT;
 		goto end;
 	}
@@ -243,7 +239,7 @@ static int acpi_processor_get_performance_control(struct acpi_processor *pr)
 	if ((obj.type != ACPI_TYPE_BUFFER)
 	    || (obj.buffer.length < sizeof(struct acpi_pct_register))
 	    || (obj.buffer.pointer == NULL)) {
-		printk(KERN_ERR PREFIX "Invalid _PCT data (control_register)\n");
+		pr_err("Invalid _PCT data (control_register)\n");
 		result = -EFAULT;
 		goto end;
 	}
@@ -259,7 +255,7 @@ static int acpi_processor_get_performance_control(struct acpi_processor *pr)
 	if ((obj.type != ACPI_TYPE_BUFFER)
 	    || (obj.buffer.length < sizeof(struct acpi_pct_register))
 	    || (obj.buffer.pointer == NULL)) {
-		printk(KERN_ERR PREFIX "Invalid _PCT data (status_register)\n");
+		pr_err("Invalid _PCT data (status_register)\n");
 		result = -EFAULT;
 		goto end;
 	}
@@ -267,7 +263,7 @@ static int acpi_processor_get_performance_control(struct acpi_processor *pr)
 	memcpy(&pr->performance->status_register, obj.buffer.pointer,
 	       sizeof(struct acpi_pct_register));
 
-      end:
+end:
 	kfree(buffer.pointer);
 
 	return result;
@@ -319,22 +315,21 @@ static int acpi_processor_get_performance_states(struct acpi_processor *pr)
 	int i;
 	int last_invalid = -1;
 
-
 	status = acpi_evaluate_object(pr->handle, "_PSS", NULL, &buffer);
 	if (ACPI_FAILURE(status)) {
-		ACPI_EXCEPTION((AE_INFO, status, "Evaluating _PSS"));
+		acpi_evaluation_failure_warn(pr->handle, "_PSS", status);
 		return -ENODEV;
 	}
 
 	pss = buffer.pointer;
 	if (!pss || (pss->type != ACPI_TYPE_PACKAGE)) {
-		printk(KERN_ERR PREFIX "Invalid _PSS data\n");
+		pr_err("Invalid _PSS data\n");
 		result = -EFAULT;
 		goto end;
 	}
 
-	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Found %d performance states\n",
-			  pss->package.count));
+	acpi_handle_debug(pr->handle, "Found %d performance states\n",
+			  pss->package.count);
 
 	pr->performance->state_count = pss->package.count;
 	pr->performance->states =
@@ -353,12 +348,13 @@ static int acpi_processor_get_performance_states(struct acpi_processor *pr)
 		state.length = sizeof(struct acpi_processor_px);
 		state.pointer = px;
 
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Extracting state %d\n", i));
+		acpi_handle_debug(pr->handle, "Extracting state %d\n", i);
 
 		status = acpi_extract_package(&(pss->package.elements[i]),
 					      &format, &state);
 		if (ACPI_FAILURE(status)) {
-			ACPI_EXCEPTION((AE_INFO, status, "Invalid _PSS data"));
+			acpi_handle_warn(pr->handle, "Invalid _PSS data: %s\n",
+					 acpi_format_exception(status));
 			result = -EFAULT;
 			kfree(pr->performance->states);
 			goto end;
@@ -366,22 +362,22 @@ static int acpi_processor_get_performance_states(struct acpi_processor *pr)
 
 		amd_fixup_frequency(px, i);
 
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+		acpi_handle_debug(pr->handle,
 				  "State [%d]: core_frequency[%d] power[%d] transition_latency[%d] bus_master_latency[%d] control[0x%x] status[0x%x]\n",
 				  i,
 				  (u32) px->core_frequency,
 				  (u32) px->power,
 				  (u32) px->transition_latency,
 				  (u32) px->bus_master_latency,
-				  (u32) px->control, (u32) px->status));
+				  (u32) px->control, (u32) px->status);
 
 		/*
- 		 * Check that ACPI's u64 MHz will be valid as u32 KHz in cpufreq
+		 * Check that ACPI's u64 MHz will be valid as u32 KHz in cpufreq
 		 */
 		if (!px->core_frequency ||
 		    ((u32)(px->core_frequency * 1000) !=
 		     (px->core_frequency * 1000))) {
-			printk(KERN_ERR FW_BUG PREFIX
+			pr_err(FW_BUG
 			       "Invalid BIOS _PSS frequency found for processor %d: 0x%llx MHz\n",
 			       pr->id, px->core_frequency);
 			if (last_invalid == -1)
@@ -399,8 +395,8 @@ static int acpi_processor_get_performance_states(struct acpi_processor *pr)
 	}
 
 	if (last_invalid == 0) {
-		printk(KERN_ERR FW_BUG PREFIX
-		       "No valid BIOS _PSS frequency found for processor %d\n", pr->id);
+		pr_err(FW_BUG
+			   "No valid BIOS _PSS frequency found for processor %d\n", pr->id);
 		result = -EFAULT;
 		kfree(pr->performance->states);
 		pr->performance->states = NULL;
@@ -409,7 +405,7 @@ static int acpi_processor_get_performance_states(struct acpi_processor *pr)
 	if (last_invalid > 0)
 		pr->performance->state_count = last_invalid;
 
-      end:
+end:
 	kfree(buffer.pointer);
 
 	return result;
@@ -423,8 +419,8 @@ int acpi_processor_get_performance_info(struct acpi_processor *pr)
 		return -EINVAL;
 
 	if (!acpi_has_method(pr->handle, "_PCT")) {
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-				  "ACPI-based processor performance control unavailable\n"));
+		acpi_handle_debug(pr->handle,
+				  "ACPI-based processor performance control unavailable\n");
 		return -ENODEV;
 	}
 
@@ -450,7 +446,7 @@ int acpi_processor_get_performance_info(struct acpi_processor *pr)
 #ifdef CONFIG_X86
 	if (acpi_has_method(pr->handle, "_PPC")) {
 		if(boot_cpu_has(X86_FEATURE_EST))
-			printk(KERN_WARNING FW_BUG "BIOS needs update for CPU "
+			pr_warn(FW_BUG "BIOS needs update for CPU "
 			       "frequency support\n");
 	}
 #endif
@@ -465,24 +461,23 @@ int acpi_processor_pstate_control(void)
 	if (!acpi_gbl_FADT.smi_command || !acpi_gbl_FADT.pstate_control)
 		return 0;
 
-	ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-			  "Writing pstate_control [0x%x] to smi_command [0x%x]\n",
-			  acpi_gbl_FADT.pstate_control, acpi_gbl_FADT.smi_command));
+	pr_debug("Writing pstate_control [0x%x] to smi_command [0x%x]\n",
+		 acpi_gbl_FADT.pstate_control, acpi_gbl_FADT.smi_command);
 
 	status = acpi_os_write_port(acpi_gbl_FADT.smi_command,
 				    (u32)acpi_gbl_FADT.pstate_control, 8);
 	if (ACPI_SUCCESS(status))
 		return 1;
 
-	ACPI_EXCEPTION((AE_INFO, status,
-			"Failed to write pstate_control [0x%x] to smi_command [0x%x]",
-			acpi_gbl_FADT.pstate_control, acpi_gbl_FADT.smi_command));
+	pr_warn("Failed to write pstate_control [0x%x] to smi_command [0x%x]: %s\n",
+		acpi_gbl_FADT.pstate_control, acpi_gbl_FADT.smi_command,
+		acpi_format_exception(status));
 	return -EIO;
 }
 
 int acpi_processor_notify_smm(struct module *calling_module)
 {
-	static int is_done = 0;
+	static int is_done;
 	int result;
 
 	if (!acpi_processor_cpufreq_init)
@@ -508,7 +503,7 @@ int acpi_processor_notify_smm(struct module *calling_module)
 
 	result = acpi_processor_pstate_control();
 	if (!result) {
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "No SMI port or pstate_control\n"));
+		pr_debug("No SMI port or pstate_control\n");
 		module_put(calling_module);
 		return 0;
 	}
@@ -545,13 +540,13 @@ int acpi_processor_get_psd(acpi_handle handle, struct acpi_psd_package *pdomain)
 
 	psd = buffer.pointer;
 	if (!psd || (psd->type != ACPI_TYPE_PACKAGE)) {
-		printk(KERN_ERR PREFIX "Invalid _PSD data\n");
+		pr_err("Invalid _PSD data\n");
 		result = -EFAULT;
 		goto end;
 	}
 
 	if (psd->package.count != 1) {
-		printk(KERN_ERR PREFIX "Invalid _PSD data\n");
+		pr_err("Invalid _PSD data\n");
 		result = -EFAULT;
 		goto end;
 	}
@@ -562,19 +557,19 @@ int acpi_processor_get_psd(acpi_handle handle, struct acpi_psd_package *pdomain)
 	status = acpi_extract_package(&(psd->package.elements[0]),
 		&format, &state);
 	if (ACPI_FAILURE(status)) {
-		printk(KERN_ERR PREFIX "Invalid _PSD data\n");
+		pr_err("Invalid _PSD data\n");
 		result = -EFAULT;
 		goto end;
 	}
 
 	if (pdomain->num_entries != ACPI_PSD_REV0_ENTRIES) {
-		printk(KERN_ERR PREFIX "Unknown _PSD:num_entries\n");
+		pr_err("Unknown _PSD:num_entries\n");
 		result = -EFAULT;
 		goto end;
 	}
 
 	if (pdomain->revision != ACPI_PSD_REV0_REVISION) {
-		printk(KERN_ERR PREFIX "Unknown _PSD:revision\n");
+		pr_err("Unknown _PSD:revision\n");
 		result = -EFAULT;
 		goto end;
 	}
@@ -582,7 +577,7 @@ int acpi_processor_get_psd(acpi_handle handle, struct acpi_psd_package *pdomain)
 	if (pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ALL &&
 	    pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ANY &&
 	    pdomain->coord_type != DOMAIN_COORD_TYPE_HW_ALL) {
-		printk(KERN_ERR PREFIX "Invalid _PSD:coord_type\n");
+		pr_err("Invalid _PSD:coord_type\n");
 		result = -EFAULT;
 		goto end;
 	}
@@ -638,7 +633,6 @@ int acpi_processor_preregister_performance(
 			continue;
 
 		pr->performance = per_cpu_ptr(performance, i);
-		cpumask_set_cpu(i, pr->performance->shared_cpu_map);
 		pdomain = &(pr->performance->domain_info);
 		if (acpi_processor_get_psd(pr->handle, pdomain)) {
 			retval = -EINVAL;
@@ -649,7 +643,7 @@ int acpi_processor_preregister_performance(
 		goto err_ret;
 
 	/*
-	 * Now that we have _PSD data from all CPUs, lets setup P-state 
+	 * Now that we have _PSD data from all CPUs, lets setup P-state
 	 * domain info.
 	 */
 	for_each_possible_cpu(i) {
@@ -715,7 +709,7 @@ int acpi_processor_preregister_performance(
 			if (match_pdomain->domain != pdomain->domain)
 				continue;
 
-			match_pr->performance->shared_type = 
+			match_pr->performance->shared_type =
 					pr->performance->shared_type;
 			cpumask_copy(match_pr->performance->shared_cpu_map,
 				     pr->performance->shared_cpu_map);
@@ -732,7 +726,7 @@ err_ret:
 		if (retval) {
 			cpumask_clear(pr->performance->shared_cpu_map);
 			cpumask_set_cpu(i, pr->performance->shared_cpu_map);
-			pr->performance->shared_type = CPUFREQ_SHARED_TYPE_ALL;
+			pr->performance->shared_type = CPUFREQ_SHARED_TYPE_NONE;
 		}
 		pr->performance = NULL; /* Will be set for real in register */
 	}

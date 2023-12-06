@@ -231,7 +231,7 @@ struct iw_mgmt_info_element {
 	u8 id; /* one of enum iw_mgmt_info_element_ids,
 		  but sizeof(enum) > sizeof(u8) :-( */
 	u8 len;
-	u8 data[0];
+	u8 data[];
 } __packed;
 
 struct iw_mgmt_essid_pset {
@@ -240,7 +240,7 @@ struct iw_mgmt_essid_pset {
 } __packed;
 
 /*
- * According to 802.11 Wireless Netowors, the definitive guide - O'Reilly
+ * According to 802.11 Wireless Networks, the definitive guide - O'Reilly
  * Pg 75
  */ 
 #define IW_DATA_RATE_MAX_LABELS 8
@@ -549,7 +549,7 @@ struct wl3501_80211_tx_plcp_hdr {
 struct wl3501_80211_tx_hdr {
 	struct wl3501_80211_tx_plcp_hdr	pclp_hdr;
 	struct ieee80211_hdr		mac_hdr;
-} __packed;
+} __packed __aligned(2);
 
 /*
    Reserve the beginning Tx space for descriptor use.

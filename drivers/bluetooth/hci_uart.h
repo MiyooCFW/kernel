@@ -86,9 +86,10 @@ struct hci_uart {
 };
 
 /* HCI_UART proto flag bits */
-#define HCI_UART_PROTO_SET	0
-#define HCI_UART_REGISTERED	1
-#define HCI_UART_PROTO_READY	2
+#define HCI_UART_PROTO_SET		0
+#define HCI_UART_REGISTERED		1
+#define HCI_UART_PROTO_READY		2
+#define HCI_UART_NO_SUSPEND_NOTIFIER	3
 
 /* TX states  */
 #define HCI_UART_SENDING	1
@@ -142,6 +143,13 @@ struct h4_recv_pkt {
 	.loff = 1, \
 	.lsize = 1, \
 	.maxlen = HCI_MAX_EVENT_SIZE
+
+#define H4_RECV_ISO \
+	.type = HCI_ISODATA_PKT, \
+	.hlen = HCI_ISO_HDR_SIZE, \
+	.loff = 2, \
+	.lsize = 2, \
+	.maxlen = HCI_MAX_FRAME_SIZE \
 
 struct sk_buff *h4_recv_buf(struct hci_dev *hdev, struct sk_buff *skb,
 			    const unsigned char *buffer, int count,

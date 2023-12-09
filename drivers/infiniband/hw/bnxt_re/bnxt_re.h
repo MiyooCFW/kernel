@@ -89,6 +89,15 @@
 
 #define BNXT_RE_DEFAULT_ACK_DELAY	16
 
+struct bnxt_re_ring_attr {
+	dma_addr_t	*dma_arr;
+	int		pages;
+	int		type;
+	u32		depth;
+	u32		lrid; /* Logical ring id */
+	u8		mode;
+};
+
 struct bnxt_re_work {
 	struct work_struct	work;
 	unsigned long		event;
@@ -123,17 +132,17 @@ struct bnxt_re_dev {
 	struct list_head		list;
 	unsigned long			flags;
 #define BNXT_RE_FLAG_NETDEV_REGISTERED		0
-#define BNXT_RE_FLAG_IBDEV_REGISTERED		1
 #define BNXT_RE_FLAG_GOT_MSIX			2
 #define BNXT_RE_FLAG_HAVE_L2_REF		3
 #define BNXT_RE_FLAG_RCFW_CHANNEL_EN		4
 #define BNXT_RE_FLAG_QOS_WORK_REG		5
 #define BNXT_RE_FLAG_RESOURCES_ALLOCATED	7
 #define BNXT_RE_FLAG_RESOURCES_INITIALIZED	8
+#define BNXT_RE_FLAG_ERR_DEVICE_DETACHED       17
 #define BNXT_RE_FLAG_ISSUE_ROCE_STATS          29
 	struct net_device		*netdev;
 	unsigned int			version, major, minor;
-	struct bnxt_qplib_chip_ctx	chip_ctx;
+	struct bnxt_qplib_chip_ctx	*chip_ctx;
 	struct bnxt_en_dev		*en_dev;
 	struct bnxt_msix_entry		msix_entries[BNXT_RE_MAX_MSIX];
 	int				num_msix;
@@ -142,7 +151,7 @@ struct bnxt_re_dev {
 
 	struct delayed_work		worker;
 	u8				cur_prio_map;
-	u8				active_speed;
+	u16				active_speed;
 	u8				active_width;
 
 	/* FP Notification Queue (CQ & SRQ) */
@@ -168,7 +177,6 @@ struct bnxt_re_dev {
 	atomic_t			srq_count;
 	atomic_t			mr_count;
 	atomic_t			mw_count;
-	atomic_t			sched_count;
 	/* Max of 2 lossless traffic class supported per port */
 	u16				cosq[2];
 

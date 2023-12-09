@@ -4,9 +4,11 @@
  */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/iommu.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
+#include <linux/reset.h>
 
 #include "drm.h"
 #include "gem.h"
@@ -17,9 +19,9 @@ struct gr2d_soc {
 };
 
 struct gr2d {
-	struct iommu_group *group;
 	struct tegra_drm_client client;
 	struct host1x_channel *channel;
+	struct reset_control *rst;
 	struct clk *clk;
 
 	const struct gr2d_soc *soc;
@@ -35,12 +37,12 @@ static inline struct gr2d *to_gr2d(struct tegra_drm_client *client)
 static int gr2d_init(struct host1x_client *client)
 {
 	struct tegra_drm_client *drm = host1x_to_drm_client(client);
-	struct drm_device *dev = dev_get_drvdata(client->parent);
+	struct drm_device *dev = dev_get_drvdata(client->host);
 	unsigned long flags = HOST1X_SYNCPT_HAS_BASE;
 	struct gr2d *gr2d = to_gr2d(drm);
 	int err;
 
-	gr2d->channel = host1x_channel_request(client->dev);
+	gr2d->channel = host1x_channel_request(client);
 	if (!gr2d->channel)
 		return -ENOMEM;
 
@@ -51,9 +53,8 @@ static int gr2d_init(struct host1x_client *client)
 		goto put;
 	}
 
-	gr2d->group = host1x_client_iommu_attach(client, false);
-	if (IS_ERR(gr2d->group)) {
-		err = PTR_ERR(gr2d->group);
+	err = host1x_client_iommu_attach(client);
+	if (err < 0) {
 		dev_err(client->dev, "failed to attach to domain: %d\n", err);
 		goto free;
 	}
@@ -67,9 +68,9 @@ static int gr2d_init(struct host1x_client *client)
 	return 0;
 
 detach:
-	host1x_client_iommu_detach(client, gr2d->group);
+	host1x_client_iommu_detach(client);
 free:
-	host1x_syncpt_free(client->syncpts[0]);
+	host1x_syncpt_put(client->syncpts[0]);
 put:
 	host1x_channel_put(gr2d->channel);
 	return err;
@@ -78,7 +79,7 @@ put:
 static int gr2d_exit(struct host1x_client *client)
 {
 	struct tegra_drm_client *drm = host1x_to_drm_client(client);
-	struct drm_device *dev = dev_get_drvdata(client->parent);
+	struct drm_device *dev = dev_get_drvdata(client->host);
 	struct tegra_drm *tegra = dev->dev_private;
 	struct gr2d *gr2d = to_gr2d(drm);
 	int err;
@@ -87,8 +88,8 @@ static int gr2d_exit(struct host1x_client *client)
 	if (err < 0)
 		return err;
 
-	host1x_client_iommu_detach(client, gr2d->group);
-	host1x_syncpt_free(client->syncpts[0]);
+	host1x_client_iommu_detach(client);
+	host1x_syncpt_put(client->syncpts[0]);
 	host1x_channel_put(gr2d->channel);
 
 	return 0;
@@ -163,9 +164,14 @@ static const struct gr2d_soc tegra30_gr2d_soc = {
 	.version = 0x30,
 };
 
+static const struct gr2d_soc tegra114_gr2d_soc = {
+	.version = 0x35,
+};
+
 static const struct of_device_id gr2d_match[] = {
-	{ .compatible = "nvidia,tegra30-gr2d", .data = &tegra20_gr2d_soc },
-	{ .compatible = "nvidia,tegra20-gr2d", .data = &tegra30_gr2d_soc },
+	{ .compatible = "nvidia,tegra114-gr2d", .data = &tegra114_gr2d_soc },
+	{ .compatible = "nvidia,tegra30-gr2d", .data = &tegra30_gr2d_soc },
+	{ .compatible = "nvidia,tegra20-gr2d", .data = &tegra20_gr2d_soc },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, gr2d_match);
@@ -179,6 +185,7 @@ static const u32 gr2d_addr_regs[] = {
 	GR2D_DSTC_BASE_ADDR,
 	GR2D_SRCA_BASE_ADDR,
 	GR2D_SRCB_BASE_ADDR,
+	GR2D_PATBASE_ADDR,
 	GR2D_SRC_BASE_ADDR_SB,
 	GR2D_DSTA_BASE_ADDR_SB,
 	GR2D_DSTB_BASE_ADDR_SB,
@@ -204,6 +211,12 @@ static int gr2d_probe(struct platform_device *pdev)
 	if (!syncpts)
 		return -ENOMEM;
 
+	gr2d->rst = devm_reset_control_get(dev, NULL);
+	if (IS_ERR(gr2d->rst)) {
+		dev_err(dev, "cannot get reset\n");
+		return PTR_ERR(gr2d->rst);
+	}
+
 	gr2d->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(gr2d->clk)) {
 		dev_err(dev, "cannot get clock\n");
@@ -214,6 +227,14 @@ static int gr2d_probe(struct platform_device *pdev)
 	if (err) {
 		dev_err(dev, "cannot turn on clock\n");
 		return err;
+	}
+
+	usleep_range(2000, 4000);
+
+	err = reset_control_deassert(gr2d->rst);
+	if (err < 0) {
+		dev_err(dev, "failed to deassert reset: %d\n", err);
+		goto disable_clk;
 	}
 
 	INIT_LIST_HEAD(&gr2d->client.base.list);
@@ -230,8 +251,7 @@ static int gr2d_probe(struct platform_device *pdev)
 	err = host1x_client_register(&gr2d->client.base);
 	if (err < 0) {
 		dev_err(dev, "failed to register host1x client: %d\n", err);
-		clk_disable_unprepare(gr2d->clk);
-		return err;
+		goto assert_rst;
 	}
 
 	/* initialize address register map */
@@ -241,6 +261,13 @@ static int gr2d_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, gr2d);
 
 	return 0;
+
+assert_rst:
+	(void)reset_control_assert(gr2d->rst);
+disable_clk:
+	clk_disable_unprepare(gr2d->clk);
+
+	return err;
 }
 
 static int gr2d_remove(struct platform_device *pdev)
@@ -254,6 +281,12 @@ static int gr2d_remove(struct platform_device *pdev)
 			err);
 		return err;
 	}
+
+	err = reset_control_assert(gr2d->rst);
+	if (err < 0)
+		dev_err(&pdev->dev, "failed to assert reset: %d\n", err);
+
+	usleep_range(2000, 4000);
 
 	clk_disable_unprepare(gr2d->clk);
 

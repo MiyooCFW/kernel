@@ -70,6 +70,12 @@
 #define DRIVER_NAME  "suniv-fb"
 
 #define FBIO_SET_DEBE_MODE _IOWR(0x1000, 0, unsigned long)
+#define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
+#define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
+#define MIYOO_FB0_GET_VER     _IOWR(0x102, 0, unsigned long)
+#define MIYOO_FB0_SET_FLIP    _IOWR(0x103, 0, unsigned long)
+#define MIYOO_FB0_SET_FPBP    _IOWR(0x104, 0, unsigned long)
+#define MIYOO_FB0_GET_FPBP    _IOWR(0x105, 0, unsigned long)
 
 DECLARE_WAIT_QUEUE_HEAD(wait_vsync_queue);
 
@@ -112,6 +118,9 @@ static struct timer_list mytimer;
 static struct suniv_iomm iomm = {0};
 static struct myfb_par *mypar = NULL;
 static struct fb_var_screeninfo myfb_var = {0};
+static int major = -1;
+static struct cdev mycdev;
+static struct class *myclass = NULL;
 
 static struct fb_fix_screeninfo myfb_fix = {
     .id = DRIVER_NAME,
@@ -391,7 +400,7 @@ static void pocketgo_lcd_init(void)
 
 static void smartlcd_init(struct myfb_par *par)
 {
-    uint32_t ret=0, bp=0, total=0, ver=0;
+    uint32_t ret=0, bp=0, total=0;
     uint32_t h_front_porch = 8;
     uint32_t h_back_porch = 8;
     uint32_t h_sync_len = 1;
@@ -809,10 +818,63 @@ static void suniv_iounmap(void)
     iounmap(iomm.debe);
 }
 
+static int myopen(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+
+static int myclose(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+
+static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	int32_t w, bpp;
+
+	switch(cmd){
+	case MIYOO_FB0_PUT_OSD:
+		break;
+	case MIYOO_FB0_SET_MODE:
+		w = (arg >> 16);
+		bpp = (arg & 0xffff);
+		if((bpp != 16)){
+			writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
+			writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+		}
+		else{
+			writel((7 << 8) | 4, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
+			writel((7 << 8) | 4, iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+		}
+		break;
+	case MIYOO_FB0_GET_VER:
+		break;
+	case MIYOO_FB0_SET_FLIP:
+		break;
+	case MIYOO_FB0_GET_FPBP:
+		break;
+	case MIYOO_FB0_SET_FPBP:
+		break;
+	}
+	return 0;
+}
+
+static const struct file_operations myfops = {
+	.owner = THIS_MODULE,
+	.open = myopen,
+	.release = myclose,
+	.unlocked_ioctl = myioctl,
+};
+
 static int __init fb_init(void)
 {
-    suniv_ioremap();
-    return platform_driver_register(&fb_driver);
+	alloc_chrdev_region(&major, 0, 1, "miyoo_fb0");
+	myclass = class_create(THIS_MODULE, "miyoo_fb0");
+	device_create(myclass, NULL, major, NULL, "miyoo_fb0");
+	cdev_init(&mycdev, &myfops);
+	cdev_add(&mycdev, major, 1);
+    	suniv_ioremap();
+    	return platform_driver_register(&fb_driver);
 }
 
 static void __exit fb_cleanup(void)

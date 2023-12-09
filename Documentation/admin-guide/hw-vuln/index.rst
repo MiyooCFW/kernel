@@ -15,5 +15,9 @@ are configurable at compile, boot or run time.
    tsx_async_abort
    multihit.rst
    special-register-buffer-data-sampling.rst
+   core-scheduling.rst
+   l1d_flush.rst
    processor_mmio_stale_data.rst
+   cross-thread-rsb.rst
    gather_data_sampling.rst
+   srso

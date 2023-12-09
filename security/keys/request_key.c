@@ -298,26 +298,26 @@ static int construct_get_dest_keyring(struct key **_dest_keyring)
 				}
 			}
 
-			/* fall through */
+			fallthrough;
 		case KEY_REQKEY_DEFL_THREAD_KEYRING:
 			dest_keyring = key_get(cred->thread_keyring);
 			if (dest_keyring)
 				break;
 
-			/* fall through */
+			fallthrough;
 		case KEY_REQKEY_DEFL_PROCESS_KEYRING:
 			dest_keyring = key_get(cred->process_keyring);
 			if (dest_keyring)
 				break;
 
-			/* fall through */
+			fallthrough;
 		case KEY_REQKEY_DEFL_SESSION_KEYRING:
 			dest_keyring = key_get(cred->session_keyring);
 
 			if (dest_keyring)
 				break;
 
-			/* fall through */
+			fallthrough;
 		case KEY_REQKEY_DEFL_USER_SESSION_KEYRING:
 			ret = look_up_user_keyrings(NULL, &dest_keyring);
 			if (ret < 0)
@@ -428,7 +428,7 @@ static int construct_alloc_key(struct keyring_search_context *ctx,
 		ret = __key_link_begin(dest_keyring, &key->index_key, &edit);
 		if (ret < 0)
 			goto link_alloc_failed;
-		__key_link(key, &edit);
+		__key_link(dest_keyring, key, &edit);
 	}
 
 	mutex_unlock(&key_construction_mutex);
@@ -451,7 +451,7 @@ key_already_present:
 			goto link_alloc_failed_unlocked;
 		ret = __key_link_check_live_key(dest_keyring, key);
 		if (ret == 0)
-			__key_link(key, &edit);
+			__key_link(dest_keyring, key, &edit);
 		__key_link_end(dest_keyring, &key->index_key, edit);
 		if (ret < 0)
 			goto link_check_failed;

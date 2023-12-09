@@ -49,7 +49,7 @@ enum iproc_msi_reg {
 struct iproc_msi;
 
 /**
- * iProc MSI group
+ * struct iproc_msi_grp - iProc MSI group
  *
  * One MSI group is allocated per GIC interrupt, serviced by one iProc MSI
  * event queue.
@@ -65,7 +65,7 @@ struct iproc_msi_grp {
 };
 
 /**
- * iProc event queue based MSI
+ * struct iproc_msi - iProc event queue based MSI
  *
  * Only meant to be used on platforms without MSI support integrated into the
  * GIC.
@@ -302,11 +302,12 @@ static const struct irq_domain_ops msi_domain_ops = {
 
 static inline u32 decode_msi_hwirq(struct iproc_msi *msi, u32 eq, u32 head)
 {
-	u32 *msg, hwirq;
+	u32 __iomem *msg;
+	u32 hwirq;
 	unsigned int offs;
 
 	offs = iproc_msi_eq_offset(msi, eq) + head * sizeof(u32);
-	msg = (u32 *)(msi->eq_cpu + offs);
+	msg = (u32 __iomem *)(msi->eq_cpu + offs);
 	hwirq = readl(msg);
 	hwirq = (hwirq >> 5) + (hwirq & 0x1f);
 
@@ -325,7 +326,6 @@ static void iproc_msi_handler(struct irq_desc *desc)
 	struct iproc_msi *msi;
 	u32 eq, head, tail, nr_events;
 	unsigned long hwirq;
-	int virq;
 
 	chained_irq_enter(chip, desc);
 
@@ -361,8 +361,7 @@ static void iproc_msi_handler(struct irq_desc *desc)
 		/* process all outstanding events */
 		while (nr_events--) {
 			hwirq = decode_msi_hwirq(msi, eq, head);
-			virq = irq_find_mapping(msi->inner_domain, hwirq);
-			generic_handle_irq(virq);
+			generic_handle_domain_irq(msi->inner_domain, hwirq);
 
 			head++;
 			head %= EQ_LEN;

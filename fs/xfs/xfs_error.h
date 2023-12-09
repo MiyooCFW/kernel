@@ -38,32 +38,6 @@ extern void xfs_inode_verifier_error(struct xfs_inode *ip, int error,
 /* Dump 128 bytes of any corrupt buffer */
 #define XFS_CORRUPTION_DUMP_LEN		(128)
 
-/*
- * Macros to set EFSCORRUPTED & return/branch.
- */
-#define	XFS_WANT_CORRUPTED_GOTO(mp, x, l)	\
-	{ \
-		int fs_is_ok = (x); \
-		ASSERT(fs_is_ok); \
-		if (unlikely(!fs_is_ok)) { \
-			XFS_ERROR_REPORT("XFS_WANT_CORRUPTED_GOTO", \
-					 XFS_ERRLEVEL_LOW, mp); \
-			error = -EFSCORRUPTED; \
-			goto l; \
-		} \
-	}
-
-#define	XFS_WANT_CORRUPTED_RETURN(mp, x)	\
-	{ \
-		int fs_is_ok = (x); \
-		ASSERT(fs_is_ok); \
-		if (unlikely(!fs_is_ok)) { \
-			XFS_ERROR_REPORT("XFS_WANT_CORRUPTED_RETURN", \
-					 XFS_ERRLEVEL_LOW, mp); \
-			return -EFSCORRUPTED; \
-		} \
-	}
-
 #ifdef DEBUG
 extern int xfs_errortag_init(struct xfs_mount *mp);
 extern void xfs_errortag_del(struct xfs_mount *mp);
@@ -100,5 +74,17 @@ extern int xfs_errortag_clearall(struct xfs_mount *mp);
 #define		XFS_PTAG_SHUTDOWN_LOGERROR	0x00000040
 #define		XFS_PTAG_FSBLOCK_ZERO		0x00000080
 #define		XFS_PTAG_VERIFIER_ERROR		0x00000100
+
+#define XFS_PTAG_STRINGS \
+	{ XFS_NO_PTAG,			"none" }, \
+	{ XFS_PTAG_IFLUSH,		"iflush" }, \
+	{ XFS_PTAG_LOGRES,		"logres" }, \
+	{ XFS_PTAG_AILDELETE,		"aildelete" }, \
+	{ XFS_PTAG_ERROR_REPORT	,	"error_report" }, \
+	{ XFS_PTAG_SHUTDOWN_CORRUPT,	"corrupt" }, \
+	{ XFS_PTAG_SHUTDOWN_IOERROR,	"ioerror" }, \
+	{ XFS_PTAG_SHUTDOWN_LOGERROR,	"logerror" }, \
+	{ XFS_PTAG_FSBLOCK_ZERO,	"fsb_zero" }, \
+	{ XFS_PTAG_VERIFIER_ERROR,	"verifier" }
 
 #endif	/* __XFS_ERROR_H__ */

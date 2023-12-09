@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016 Chen-Yu Tsai. All rights reserved.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/clk.h>
@@ -254,8 +246,7 @@ static int sun9i_a80_de_clk_probe(struct platform_device *pdev)
 		goto err_disable_clk;
 	}
 
-	ret = sunxi_ccu_probe(pdev->dev.of_node, reg,
-			      &sun9i_a80_de_clk_desc);
+	ret = devm_sunxi_ccu_probe(&pdev->dev, reg, &sun9i_a80_de_clk_desc);
 	if (ret)
 		goto err_assert_reset;
 

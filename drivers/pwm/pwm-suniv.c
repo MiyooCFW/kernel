@@ -231,6 +231,8 @@ static int suniv_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm, const 
   u32 ctrl;
   unsigned long now;
   unsigned int delay_us;
+  unsigned long long ull_period;
+  unsigned long ul_period;
   struct pwm_state cstate;
   struct suniv_pwm_chip *suniv_pwm = to_suniv_pwm_chip(chip);
 
@@ -270,7 +272,10 @@ static int suniv_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm, const 
 
     val = (duty & PWM_DTY_MASK) | PWM_PRD(period);
     suniv_pwm_writel(suniv_pwm, val, PWM_CH_PRD(pwm->hwpwm));
-    suniv_pwm->next_period[pwm->hwpwm] = jiffies + usecs_to_jiffies(cstate.period / 1000 + 1);
+
+    ull_period = cstate.period;
+    ul_period = (unsigned long)ull_period;
+    suniv_pwm->next_period[pwm->hwpwm] = jiffies + usecs_to_jiffies(ul_period / 1000 + 1);
     suniv_pwm->needs_delay[pwm->hwpwm] = true;
   }
 
@@ -491,8 +496,8 @@ static int suniv_pwm_probe(struct platform_device *pdev)
 static int suniv_pwm_remove(struct platform_device *pdev)
 {
   struct suniv_pwm_chip *pwm = platform_get_drvdata(pdev);
-
-  return pwmchip_remove(&pwm->chip);
+  pwmchip_remove(&pwm->chip);
+  return 0;
 }
 
 static struct platform_driver suniv_pwm_driver = {
@@ -506,5 +511,5 @@ static struct platform_driver suniv_pwm_driver = {
 module_platform_driver(suniv_pwm_driver);
 
 MODULE_AUTHOR("Steward Fu <steward.fu@gmail.com>");
-MODULE_DESCRIPTION("Allwinner f1c500s PWM driver");
+MODULE_DESCRIPTION("Allwinner f1c100s PWM driver");
 MODULE_LICENSE("GPL");

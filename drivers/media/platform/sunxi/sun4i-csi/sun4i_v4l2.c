@@ -30,28 +30,6 @@ static const struct sun4i_csi_format sun4i_csi_formats[] = {
 		.hsub		= 2,
 		.vsub		= 2,
 	},
-	/* YUYV8 inputs */
-	{
-		.mbus		= MEDIA_BUS_FMT_YUYV8_2X8,
-		.fourcc		= V4L2_PIX_FMT_YUYV,
-		.input		= CSI_INPUT_RAW,
-		.output		= CSI_OUTPUT_RAW_PASSTHROUGH,
-		.num_planes	= 1,
-		.bpp		= { 16 },
-		.hsub		= 1,
-		.vsub		= 1,
-	},
-	/* UYVY8 inputs */
-	{
-		.mbus		= MEDIA_BUS_FMT_UYVY8_2X8,
-		.fourcc		= V4L2_PIX_FMT_UYVY,
-		.input		= CSI_INPUT_RAW,
-		.output		= CSI_OUTPUT_RAW_PASSTHROUGH,
-		.num_planes	= 1,
-		.bpp		= { 16 },
-		.hsub		= 1,
-		.vsub		= 1,
-	},
 };
 
 const struct sun4i_csi_format *sun4i_csi_find_format(const u32 *fourcc,
@@ -135,8 +113,6 @@ static void _sun4i_csi_try_fmt(struct sun4i_csi *csi,
 	pix->num_planes = _fmt->num_planes;
 	pix->pixelformat = _fmt->fourcc;
 
-	memset(pix->reserved, 0, sizeof(pix->reserved));
-
 	/* Align the width and height on the subsampling */
 	width = ALIGN(pix->width, _fmt->hsub);
 	height = ALIGN(pix->height, _fmt->vsub);
@@ -153,8 +129,6 @@ static void _sun4i_csi_try_fmt(struct sun4i_csi *csi,
 		bpl = pix->width / hsub * _fmt->bpp[i] / 8;
 		pix->plane_fmt[i].bytesperline = bpl;
 		pix->plane_fmt[i].sizeimage = bpl * pix->height / vsub;
-		memset(pix->plane_fmt[i].reserved, 0,
-		       sizeof(pix->plane_fmt[i].reserved));
 	}
 }
 
@@ -189,88 +163,6 @@ static int sun4i_csi_g_fmt_vid_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static void _sun4i_csi_try_fmt_packed(struct sun4i_csi *csi,
-			       struct v4l2_pix_format *pix)
-{
-	const struct sun4i_csi_format *_fmt;
-	unsigned int height, width;
-
-	_fmt = sun4i_csi_find_format(&pix->pixelformat, NULL);
-	if (!_fmt)
-		_fmt = &sun4i_csi_formats[0];
-
-	pix->field = V4L2_FIELD_NONE;
-	pix->colorspace = V4L2_COLORSPACE_RAW;
-	pix->xfer_func = V4L2_YCBCR_ENC_DEFAULT;
-	pix->ycbcr_enc = V4L2_QUANTIZATION_DEFAULT;
-	pix->quantization = V4L2_XFER_FUNC_DEFAULT;
-	pix->pixelformat = _fmt->fourcc;
-
-	/* Align the width and height on the subsampling */
-	width = ALIGN(pix->width, _fmt->hsub);
-	height = ALIGN(pix->height, _fmt->vsub);
-
-	/* Clamp the width and height to our capabilities */
-	pix->width = clamp(width, _fmt->hsub, CSI_MAX_WIDTH);
-	pix->height = clamp(height, _fmt->vsub, CSI_MAX_HEIGHT);
-
-	pix->bytesperline = (pix->width * _fmt->bpp[0]) >> 3;
-	pix->sizeimage = pix->bytesperline * pix->height;
-}
-
-static int sun4i_csi_try_fmt_vid_cap_packed(struct file *file, void *priv,
-				     struct v4l2_format *f)
-{
-	struct sun4i_csi *csi = video_drvdata(file);
-
-	_sun4i_csi_try_fmt_packed(csi, &f->fmt.pix);
-
-	return 0;
-}
-
-static int sun4i_csi_s_fmt_vid_cap_packed(struct file *file, void *priv,
-				   struct v4l2_format *f)
-{
-	struct sun4i_csi *csi = video_drvdata(file);
-
-	_sun4i_csi_try_fmt_packed(csi, &f->fmt.pix);
-
-	csi->fmt.width = f->fmt.pix.width;
-	csi->fmt.height = f->fmt.pix.height;
-	csi->fmt.pixelformat = f->fmt.pix.pixelformat;
-	csi->fmt.field = f->fmt.pix.field;
-	csi->fmt.colorspace = f->fmt.pix.colorspace;
-	csi->fmt.flags = f->fmt.pix.flags;
-	csi->fmt.ycbcr_enc = f->fmt.pix.ycbcr_enc;
-	csi->fmt.quantization = f->fmt.pix.quantization;
-	csi->fmt.xfer_func = f->fmt.pix.xfer_func;
-	csi->fmt.num_planes = 1;
-	csi->fmt.plane_fmt[0].bytesperline =  f->fmt.pix.bytesperline;
-	csi->fmt.plane_fmt[0].sizeimage =  f->fmt.pix.sizeimage;
-
-	return 0;
-}
-
-static int sun4i_csi_g_fmt_vid_cap_packed(struct file *file, void *priv,
-				   struct v4l2_format *f)
-{
-	struct sun4i_csi *csi = video_drvdata(file);
-
-	f->fmt.pix_mp.width = csi->fmt.width;
-	f->fmt.pix.height = csi->fmt.height;
-	f->fmt.pix.pixelformat = csi->fmt.pixelformat;
-	f->fmt.pix.field = csi->fmt.field;
-	f->fmt.pix.colorspace = csi->fmt.colorspace;
-	f->fmt.pix.flags = csi->fmt.flags;
-	f->fmt.pix.ycbcr_enc = csi->fmt.ycbcr_enc;
-	f->fmt.pix.quantization = csi->fmt.quantization;
-	f->fmt.pix.xfer_func = csi->fmt.xfer_func;
-	f->fmt.pix.bytesperline = csi->fmt.plane_fmt[0].bytesperline;
-	f->fmt.pix.sizeimage = csi->fmt.plane_fmt[0].sizeimage;
-
-	return 0;
-}
-
 static int sun4i_csi_enum_fmt_vid_cap(struct file *file, void *priv,
 				      struct v4l2_fmtdesc *f)
 {
@@ -289,10 +181,6 @@ static const struct v4l2_ioctl_ops sun4i_csi_ioctl_ops = {
 	.vidioc_g_fmt_vid_cap_mplane	= sun4i_csi_g_fmt_vid_cap,
 	.vidioc_s_fmt_vid_cap_mplane	= sun4i_csi_s_fmt_vid_cap,
 	.vidioc_try_fmt_vid_cap_mplane	= sun4i_csi_try_fmt_vid_cap,
-
-	.vidioc_g_fmt_vid_cap	= sun4i_csi_g_fmt_vid_cap_packed,
-	.vidioc_s_fmt_vid_cap	= sun4i_csi_s_fmt_vid_cap_packed,
-	.vidioc_try_fmt_vid_cap	= sun4i_csi_try_fmt_vid_cap_packed,
 
 	.vidioc_enum_input		= sun4i_csi_enum_input,
 	.vidioc_g_input			= sun4i_csi_g_input,
@@ -318,11 +206,11 @@ static int sun4i_csi_open(struct file *file)
 	if (ret)
 		return ret;
 
-	ret = pm_runtime_get_sync(csi->dev);
+	ret = pm_runtime_resume_and_get(csi->dev);
 	if (ret < 0)
-		goto err_pm_put;
+		goto err_unlock;
 
-	ret = v4l2_pipeline_pm_use(&csi->vdev.entity, 1);
+	ret = v4l2_pipeline_pm_get(&csi->vdev.entity);
 	if (ret)
 		goto err_pm_put;
 
@@ -335,10 +223,12 @@ static int sun4i_csi_open(struct file *file)
 	return 0;
 
 err_pipeline_pm_put:
-	v4l2_pipeline_pm_use(&csi->vdev.entity, 0);
+	v4l2_pipeline_pm_put(&csi->vdev.entity);
 
 err_pm_put:
 	pm_runtime_put(csi->dev);
+
+err_unlock:
 	mutex_unlock(&csi->lock);
 
 	return ret;
@@ -351,7 +241,8 @@ static int sun4i_csi_release(struct file *file)
 	mutex_lock(&csi->lock);
 
 	_vb2_fop_release(file, NULL);
-	v4l2_pipeline_pm_use(&csi->vdev.entity, 0);
+
+	v4l2_pipeline_pm_put(&csi->vdev.entity);
 	pm_runtime_put(csi->dev);
 
 	mutex_unlock(&csi->lock);
@@ -364,8 +255,6 @@ static const struct v4l2_file_operations sun4i_csi_fops = {
 	.open		= sun4i_csi_open,
 	.release	= sun4i_csi_release,
 	.unlocked_ioctl	= video_ioctl2,
-	.read		= vb2_fop_read,
-	.write		= vb2_fop_write,
 	.poll		= vb2_fop_poll,
 	.mmap		= vb2_fop_mmap,
 };
@@ -382,25 +271,26 @@ static const struct v4l2_mbus_framefmt sun4i_csi_pad_fmt_default = {
 };
 
 static int sun4i_csi_subdev_init_cfg(struct v4l2_subdev *subdev,
-				     struct v4l2_subdev_pad_config *cfg)
+				     struct v4l2_subdev_state *sd_state)
 {
 	struct v4l2_mbus_framefmt *fmt;
 
-	fmt = v4l2_subdev_get_try_format(subdev, cfg, CSI_SUBDEV_SINK);
+	fmt = v4l2_subdev_get_try_format(subdev, sd_state, CSI_SUBDEV_SINK);
 	*fmt = sun4i_csi_pad_fmt_default;
 
 	return 0;
 }
 
 static int sun4i_csi_subdev_get_fmt(struct v4l2_subdev *subdev,
-				    struct v4l2_subdev_pad_config *cfg,
+				    struct v4l2_subdev_state *sd_state,
 				    struct v4l2_subdev_format *fmt)
 {
 	struct sun4i_csi *csi = container_of(subdev, struct sun4i_csi, subdev);
 	struct v4l2_mbus_framefmt *subdev_fmt;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
-		subdev_fmt = v4l2_subdev_get_try_format(subdev, cfg, fmt->pad);
+		subdev_fmt = v4l2_subdev_get_try_format(subdev, sd_state,
+							fmt->pad);
 	else
 		subdev_fmt = &csi->subdev_fmt;
 
@@ -410,14 +300,15 @@ static int sun4i_csi_subdev_get_fmt(struct v4l2_subdev *subdev,
 }
 
 static int sun4i_csi_subdev_set_fmt(struct v4l2_subdev *subdev,
-				    struct v4l2_subdev_pad_config *cfg,
+				    struct v4l2_subdev_state *sd_state,
 				    struct v4l2_subdev_format *fmt)
 {
 	struct sun4i_csi *csi = container_of(subdev, struct sun4i_csi, subdev);
 	struct v4l2_mbus_framefmt *subdev_fmt;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
-		subdev_fmt = v4l2_subdev_get_try_format(subdev, cfg, fmt->pad);
+		subdev_fmt = v4l2_subdev_get_try_format(subdev, sd_state,
+							fmt->pad);
 	else
 		subdev_fmt = &csi->subdev_fmt;
 
@@ -436,7 +327,7 @@ static int sun4i_csi_subdev_set_fmt(struct v4l2_subdev *subdev,
 
 static int
 sun4i_csi_subdev_enum_mbus_code(struct v4l2_subdev *subdev,
-				struct v4l2_subdev_pad_config *cfg,
+				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_mbus_code_enum *mbus)
 {
 	if (mbus->index >= ARRAY_SIZE(sun4i_csi_formats))
@@ -464,12 +355,7 @@ int sun4i_csi_v4l2_register(struct sun4i_csi *csi)
 	struct video_device *vdev = &csi->vdev;
 	int ret;
 
-	if (!csi->packed) {
-		vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE_MPLANE;
-	} else {
-		vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE;
-	}
-	vdev->device_caps |= V4L2_CAP_STREAMING;
+	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE_MPLANE | V4L2_CAP_STREAMING;
 	vdev->v4l2_dev = &csi->v4l;
 	vdev->queue = &csi->queue;
 	strscpy(vdev->name, KBUILD_MODNAME, sizeof(vdev->name));
@@ -477,7 +363,7 @@ int sun4i_csi_v4l2_register(struct sun4i_csi *csi)
 	vdev->lock = &csi->lock;
 
 	/* Set a default format */
-	csi->fmt.pixelformat = sun4i_csi_formats[0].fourcc,
+	csi->fmt.pixelformat = sun4i_csi_formats[0].fourcc;
 	csi->fmt.width = CSI_DEFAULT_WIDTH;
 	csi->fmt.height = CSI_DEFAULT_HEIGHT;
 	_sun4i_csi_try_fmt(csi, &csi->fmt);
@@ -487,7 +373,7 @@ int sun4i_csi_v4l2_register(struct sun4i_csi *csi)
 	vdev->ioctl_ops = &sun4i_csi_ioctl_ops;
 	video_set_drvdata(vdev, csi);
 
-	ret = video_register_device(&csi->vdev, VFL_TYPE_GRABBER, -1);
+	ret = video_register_device(&csi->vdev, VFL_TYPE_VIDEO, -1);
 	if (ret)
 		return ret;
 

@@ -362,8 +362,8 @@ error:
 
 /**
  *	hgafb_open - open the framebuffer device
- *	@info:pointer to fb_info object containing info for current hga board
- *	@int:open by console system or userland.
+ *	@info: pointer to fb_info object containing info for current hga board
+ *	@init: open by console system or userland.
  */
 
 static int hgafb_open(struct fb_info *info, int init)
@@ -375,9 +375,9 @@ static int hgafb_open(struct fb_info *info, int init)
 }
 
 /**
- *	hgafb_open - open the framebuffer device
- *	@info:pointer to fb_info object containing info for current hga board
- *	@int:open by console system or userland.
+ *	hgafb_release - open the framebuffer device
+ *	@info: pointer to fb_info object containing info for current hga board
+ *	@init: open by console system or userland.
  */
 
 static int hgafb_release(struct fb_info *info, int init)
@@ -528,7 +528,7 @@ static void hgafb_imageblit(struct fb_info *info, const struct fb_image *image)
 	}
 }
 
-static struct fb_ops hgafb_ops = {
+static const struct fb_ops hgafb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_open	= hgafb_open,
 	.fb_release	= hgafb_release,

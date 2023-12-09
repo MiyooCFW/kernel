@@ -584,11 +584,9 @@ static int btmtkuart_open(struct hci_dev *hdev)
 
 	/* Enable the power domain and clock the device requires */
 	pm_runtime_enable(dev);
-	err = pm_runtime_get_sync(dev);
-	if (err < 0) {
-		pm_runtime_put_noidle(dev);
+	err = pm_runtime_resume_and_get(dev);
+	if (err < 0)
 		goto err_disable_rpm;
-	}
 
 	err = clk_prepare_enable(bdev->clk);
 	if (err < 0)
@@ -698,8 +696,7 @@ static int btmtkuart_change_baudrate(struct hci_dev *hdev)
 
 	/* Send a dummy byte 0xff to activate the new baudrate */
 	param = 0xff;
-	err = serdev_device_write(bdev->serdev, &param, sizeof(param),
-				  MAX_SCHEDULE_TIMEOUT);
+	err = serdev_device_write_buf(bdev->serdev, &param, sizeof(param));
 	if (err < 0 || err < sizeof(param))
 		return err;
 

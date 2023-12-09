@@ -6,6 +6,7 @@
 #include <linux/bitfield.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/pci.h>
 #include <linux/of_address.h>
 #include <linux/of_pci.h>
 #include <linux/pci-acpi.h>
@@ -18,6 +19,15 @@
 
 #define PEM_CFG_WR 0x28
 #define PEM_CFG_RD 0x30
+
+/*
+ * Enhanced Configuration Access Mechanism (ECAM)
+ *
+ * N.B. This is a non-standard platform-specific ECAM bus shift value.  For
+ * standard values defined in the PCI Express Base Specification see
+ * include/linux/pci-ecam.h.
+ */
+#define THUNDER_PCIE_ECAM_BUS_SHIFT	24
 
 struct thunder_pem_pci {
 	u32		ea_entry[3];
@@ -403,8 +413,8 @@ static int thunder_pem_acpi_init(struct pci_config_window *cfg)
 	return thunder_pem_init(dev, cfg, res_pem);
 }
 
-struct pci_ecam_ops thunder_pem_ecam_ops = {
-	.bus_shift	= 24,
+const struct pci_ecam_ops thunder_pem_ecam_ops = {
+	.bus_shift	= THUNDER_PCIE_ECAM_BUS_SHIFT,
 	.init		= thunder_pem_acpi_init,
 	.pci_ops	= {
 		.map_bus	= pci_ecam_map_bus,
@@ -440,8 +450,8 @@ static int thunder_pem_platform_init(struct pci_config_window *cfg)
 	return thunder_pem_init(dev, cfg, res_pem);
 }
 
-static struct pci_ecam_ops pci_thunder_pem_ops = {
-	.bus_shift	= 24,
+static const struct pci_ecam_ops pci_thunder_pem_ops = {
+	.bus_shift	= THUNDER_PCIE_ECAM_BUS_SHIFT,
 	.init		= thunder_pem_platform_init,
 	.pci_ops	= {
 		.map_bus	= pci_ecam_map_bus,
@@ -451,14 +461,12 @@ static struct pci_ecam_ops pci_thunder_pem_ops = {
 };
 
 static const struct of_device_id thunder_pem_of_match[] = {
-	{ .compatible = "cavium,pci-host-thunder-pem" },
+	{
+		.compatible = "cavium,pci-host-thunder-pem",
+		.data = &pci_thunder_pem_ops,
+	},
 	{ },
 };
-
-static int thunder_pem_probe(struct platform_device *pdev)
-{
-	return pci_host_common_probe(pdev, &pci_thunder_pem_ops);
-}
 
 static struct platform_driver thunder_pem_driver = {
 	.driver = {
@@ -466,7 +474,7 @@ static struct platform_driver thunder_pem_driver = {
 		.of_match_table = thunder_pem_of_match,
 		.suppress_bind_attrs = true,
 	},
-	.probe = thunder_pem_probe,
+	.probe = pci_host_common_probe,
 };
 builtin_platform_driver(thunder_pem_driver);
 

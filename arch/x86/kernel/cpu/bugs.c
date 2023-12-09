@@ -14,6 +14,8 @@
 #include <linux/nospec.h>
 #include <linux/prctl.h>
 #include <linux/sched/smt.h>
+#include <linux/pgtable.h>
+#include <linux/bpf.h>
 
 #include <asm/spec-ctrl.h>
 #include <asm/cmdline.h>
@@ -24,11 +26,10 @@
 #include <asm/msr.h>
 #include <asm/vmx.h>
 #include <asm/paravirt.h>
-#include <asm/pgtable.h>
 #include <asm/intel-family.h>
 #include <asm/e820/api.h>
 #include <asm/hypervisor.h>
-#include <linux/bpf.h>
+#include <asm/tlbflush.h>
 
 #include "cpu.h"
 
@@ -44,7 +45,9 @@ static void __init md_clear_select_mitigation(void);
 static void __init taa_select_mitigation(void);
 static void __init mmio_select_mitigation(void);
 static void __init srbds_select_mitigation(void);
+static void __init l1d_flush_select_mitigation(void);
 static void __init gds_select_mitigation(void);
+static void __init srso_select_mitigation(void);
 
 /* The base value of the SPEC_CTRL MSR without task-specific bits set */
 u64 x86_spec_ctrl_base;
@@ -54,7 +57,12 @@ EXPORT_SYMBOL_GPL(x86_spec_ctrl_base);
 DEFINE_PER_CPU(u64, x86_spec_ctrl_current);
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_current);
 
+u64 x86_pred_cmd __ro_after_init = PRED_CMD_IBPB;
+EXPORT_SYMBOL_GPL(x86_pred_cmd);
+
 static DEFINE_MUTEX(spec_ctrl_mutex);
+
+void (*x86_return_thunk)(void) __ro_after_init = &__x86_return_thunk;
 
 /* Update SPEC_CTRL MSR and its cached copy unconditionally */
 static void update_spec_ctrl(u64 val)
@@ -109,6 +117,13 @@ EXPORT_SYMBOL_GPL(mds_user_clear);
 DEFINE_STATIC_KEY_FALSE(mds_idle_clear);
 EXPORT_SYMBOL_GPL(mds_idle_clear);
 
+/*
+ * Controls whether l1d flush based mitigations are enabled,
+ * based on hw features and admin setting via boot parameter
+ * defaults to false
+ */
+DEFINE_STATIC_KEY_FALSE(switch_mm_cond_l1d_flush);
+
 /* Controls CPU Fill buffer clear before KVM guest MMIO accesses */
 DEFINE_STATIC_KEY_FALSE(mmio_stale_data_clear);
 EXPORT_SYMBOL_GPL(mmio_stale_data_clear);
@@ -143,13 +158,20 @@ void __init cpu_select_mitigations(void)
 	/*
 	 * spectre_v2_user_select_mitigation() relies on the state set by
 	 * retbleed_select_mitigation(); specifically the STIBP selection is
-	 * forced for UNRET.
+	 * forced for UNRET or IBPB.
 	 */
 	spectre_v2_user_select_mitigation();
 	ssb_select_mitigation();
 	l1tf_select_mitigation();
 	md_clear_select_mitigation();
 	srbds_select_mitigation();
+	l1d_flush_select_mitigation();
+
+	/*
+	 * srso_select_mitigation() depends and must run after
+	 * retbleed_select_mitigation().
+	 */
+	srso_select_mitigation();
 	gds_select_mitigation();
 }
 
@@ -267,6 +289,13 @@ early_param("mds", mds_cmdline);
 
 #undef pr_fmt
 #define pr_fmt(fmt)	"TAA: " fmt
+
+enum taa_mitigations {
+	TAA_MITIGATION_OFF,
+	TAA_MITIGATION_UCODE_NEEDED,
+	TAA_MITIGATION_VERW,
+	TAA_MITIGATION_TSX_DISABLED,
+};
 
 /* Default mitigation for TAA-affected CPUs */
 static enum taa_mitigations taa_mitigation __ro_after_init = TAA_MITIGATION_VERW;
@@ -602,6 +631,34 @@ static int __init srbds_parse_cmdline(char *str)
 early_param("srbds", srbds_parse_cmdline);
 
 #undef pr_fmt
+#define pr_fmt(fmt)     "L1D Flush : " fmt
+
+enum l1d_flush_mitigations {
+	L1D_FLUSH_OFF = 0,
+	L1D_FLUSH_ON,
+};
+
+static enum l1d_flush_mitigations l1d_flush_mitigation __initdata = L1D_FLUSH_OFF;
+
+static void __init l1d_flush_select_mitigation(void)
+{
+	if (!l1d_flush_mitigation || !boot_cpu_has(X86_FEATURE_FLUSH_L1D))
+		return;
+
+	static_branch_enable(&switch_mm_cond_l1d_flush);
+	pr_info("Conditional flush on switch_mm() enabled\n");
+}
+
+static int __init l1d_flush_parse_cmdline(char *str)
+{
+	if (!strcmp(str, "on"))
+		l1d_flush_mitigation = L1D_FLUSH_ON;
+
+	return 0;
+}
+early_param("l1d_flush", l1d_flush_parse_cmdline);
+
+#undef pr_fmt
 #define pr_fmt(fmt)	"GDS: " fmt
 
 enum gds_mitigations {
@@ -797,14 +854,12 @@ static void __init spectre_v1_select_mitigation(void)
 		 * If FSGSBASE is enabled, the user can put a kernel address in
 		 * GS, in which case SMAP provides no protection.
 		 *
-		 * [ NOTE: Don't check for X86_FEATURE_FSGSBASE until the
-		 *	   FSGSBASE enablement patches have been merged. ]
-		 *
 		 * If FSGSBASE is disabled, the user can only put a user space
 		 * address in GS.  That makes an attack harder, but still
 		 * possible if there's no SMAP protection.
 		 */
-		if (!smap_works_speculatively()) {
+		if (boot_cpu_has(X86_FEATURE_FSGSBASE) ||
+		    !smap_works_speculatively()) {
 			/*
 			 * Mitigation can be provided from SWAPGS itself or
 			 * PTI as the CR3 write in the Meltdown mitigation
@@ -844,6 +899,8 @@ static enum spectre_v2_mitigation spectre_v2_enabled __ro_after_init =
 
 enum retbleed_mitigation {
 	RETBLEED_MITIGATION_NONE,
+	RETBLEED_MITIGATION_UNRET,
+	RETBLEED_MITIGATION_IBPB,
 	RETBLEED_MITIGATION_IBRS,
 	RETBLEED_MITIGATION_EIBRS,
 };
@@ -851,10 +908,14 @@ enum retbleed_mitigation {
 enum retbleed_mitigation_cmd {
 	RETBLEED_CMD_OFF,
 	RETBLEED_CMD_AUTO,
+	RETBLEED_CMD_UNRET,
+	RETBLEED_CMD_IBPB,
 };
 
 const char * const retbleed_strings[] = {
 	[RETBLEED_MITIGATION_NONE]	= "Vulnerable",
+	[RETBLEED_MITIGATION_UNRET]	= "Mitigation: untrained return thunk",
+	[RETBLEED_MITIGATION_IBPB]	= "Mitigation: IBPB",
 	[RETBLEED_MITIGATION_IBRS]	= "Mitigation: IBRS",
 	[RETBLEED_MITIGATION_EIBRS]	= "Mitigation: Enhanced IBRS",
 };
@@ -864,28 +925,48 @@ static enum retbleed_mitigation retbleed_mitigation __ro_after_init =
 static enum retbleed_mitigation_cmd retbleed_cmd __ro_after_init =
 	RETBLEED_CMD_AUTO;
 
+static int __ro_after_init retbleed_nosmt = false;
+
 static int __init retbleed_parse_cmdline(char *str)
 {
 	if (!str)
 		return -EINVAL;
 
-	if (!strcmp(str, "off"))
-		retbleed_cmd = RETBLEED_CMD_OFF;
-	else if (!strcmp(str, "auto"))
-		retbleed_cmd = RETBLEED_CMD_AUTO;
-	else
-		pr_err("Unknown retbleed option (%s). Defaulting to 'auto'\n", str);
+	while (str) {
+		char *next = strchr(str, ',');
+		if (next) {
+			*next = 0;
+			next++;
+		}
+
+		if (!strcmp(str, "off")) {
+			retbleed_cmd = RETBLEED_CMD_OFF;
+		} else if (!strcmp(str, "auto")) {
+			retbleed_cmd = RETBLEED_CMD_AUTO;
+		} else if (!strcmp(str, "unret")) {
+			retbleed_cmd = RETBLEED_CMD_UNRET;
+		} else if (!strcmp(str, "ibpb")) {
+			retbleed_cmd = RETBLEED_CMD_IBPB;
+		} else if (!strcmp(str, "nosmt")) {
+			retbleed_nosmt = true;
+		} else {
+			pr_err("Ignoring unknown retbleed option (%s).", str);
+		}
+
+		str = next;
+	}
 
 	return 0;
 }
 early_param("retbleed", retbleed_parse_cmdline);
 
 #define RETBLEED_UNTRAIN_MSG "WARNING: BTB untrained return thunk mitigation is only effective on AMD/Hygon!\n"
-#define RETBLEED_COMPILER_MSG "WARNING: kernel not compiled with RETPOLINE or -mfunction-return capable compiler!\n"
 #define RETBLEED_INTEL_MSG "WARNING: Spectre v2 mitigation leaves CPU vulnerable to RETBleed attacks, data leaks possible!\n"
 
 static void __init retbleed_select_mitigation(void)
 {
+	bool mitigate_smt = false;
+
 	if (!boot_cpu_has_bug(X86_BUG_RETBLEED) || cpu_mitigations_off())
 		return;
 
@@ -893,20 +974,74 @@ static void __init retbleed_select_mitigation(void)
 	case RETBLEED_CMD_OFF:
 		return;
 
+	case RETBLEED_CMD_UNRET:
+		if (IS_ENABLED(CONFIG_CPU_UNRET_ENTRY)) {
+			retbleed_mitigation = RETBLEED_MITIGATION_UNRET;
+		} else {
+			pr_err("WARNING: kernel not compiled with CPU_UNRET_ENTRY.\n");
+			goto do_cmd_auto;
+		}
+		break;
+
+	case RETBLEED_CMD_IBPB:
+		if (!boot_cpu_has(X86_FEATURE_IBPB)) {
+			pr_err("WARNING: CPU does not support IBPB.\n");
+			goto do_cmd_auto;
+		} else if (IS_ENABLED(CONFIG_CPU_IBPB_ENTRY)) {
+			retbleed_mitigation = RETBLEED_MITIGATION_IBPB;
+		} else {
+			pr_err("WARNING: kernel not compiled with CPU_IBPB_ENTRY.\n");
+			goto do_cmd_auto;
+		}
+		break;
+
+do_cmd_auto:
 	case RETBLEED_CMD_AUTO:
 	default:
+		if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
+		    boot_cpu_data.x86_vendor == X86_VENDOR_HYGON) {
+			if (IS_ENABLED(CONFIG_CPU_UNRET_ENTRY))
+				retbleed_mitigation = RETBLEED_MITIGATION_UNRET;
+			else if (IS_ENABLED(CONFIG_CPU_IBPB_ENTRY) && boot_cpu_has(X86_FEATURE_IBPB))
+				retbleed_mitigation = RETBLEED_MITIGATION_IBPB;
+		}
+
 		/*
-		 * The Intel mitigation (IBRS) was already selected in
-		 * spectre_v2_select_mitigation().
+		 * The Intel mitigation (IBRS or eIBRS) was already selected in
+		 * spectre_v2_select_mitigation().  'retbleed_mitigation' will
+		 * be set accordingly below.
 		 */
 
 		break;
 	}
 
 	switch (retbleed_mitigation) {
+	case RETBLEED_MITIGATION_UNRET:
+		setup_force_cpu_cap(X86_FEATURE_RETHUNK);
+		setup_force_cpu_cap(X86_FEATURE_UNRET);
+
+		if (IS_ENABLED(CONFIG_RETHUNK))
+			x86_return_thunk = retbleed_return_thunk;
+
+		if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD &&
+		    boot_cpu_data.x86_vendor != X86_VENDOR_HYGON)
+			pr_err(RETBLEED_UNTRAIN_MSG);
+
+		mitigate_smt = true;
+		break;
+
+	case RETBLEED_MITIGATION_IBPB:
+		setup_force_cpu_cap(X86_FEATURE_ENTRY_IBPB);
+		mitigate_smt = true;
+		break;
+
 	default:
 		break;
 	}
+
+	if (mitigate_smt && !boot_cpu_has(X86_FEATURE_STIBP) &&
+	    (retbleed_nosmt || cpu_mitigations_auto_nosmt()))
+		cpu_smt_disable(false);
 
 	/*
 	 * Let IBRS trump all on Intel without affecting the effects of the
@@ -1177,6 +1312,14 @@ spectre_v2_user_select_mitigation(void)
 	    boot_cpu_has(X86_FEATURE_AMD_STIBP_ALWAYS_ON))
 		mode = SPECTRE_V2_USER_STRICT_PREFERRED;
 
+	if (retbleed_mitigation == RETBLEED_MITIGATION_UNRET ||
+	    retbleed_mitigation == RETBLEED_MITIGATION_IBPB) {
+		if (mode != SPECTRE_V2_USER_STRICT &&
+		    mode != SPECTRE_V2_USER_STRICT_PREFERRED)
+			pr_info("Selecting STIBP always-on mode to complement retbleed mitigation\n");
+		mode = SPECTRE_V2_USER_STRICT_PREFERRED;
+	}
+
 	spectre_v2_user_stibp = mode;
 
 set_mode:
@@ -1267,6 +1410,12 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 	     cmd == SPECTRE_V2_CMD_EIBRS_LFENCE) &&
 	    !boot_cpu_has(X86_FEATURE_LFENCE_RDTSC)) {
 		pr_err("%s selected, but CPU doesn't have a serializing LFENCE. Switching to AUTO select\n",
+		       mitigation_options[i].option);
+		return SPECTRE_V2_CMD_AUTO;
+	}
+
+	if (cmd == SPECTRE_V2_CMD_IBRS && !IS_ENABLED(CONFIG_CPU_IBRS_ENTRY)) {
+		pr_err("%s selected but not compiled in. Switching to AUTO select\n",
 		       mitigation_options[i].option);
 		return SPECTRE_V2_CMD_AUTO;
 	}
@@ -1391,7 +1540,8 @@ static void __init spectre_v2_select_mitigation(void)
 			break;
 		}
 
-		if (boot_cpu_has_bug(X86_BUG_RETBLEED) &&
+		if (IS_ENABLED(CONFIG_CPU_IBRS_ENTRY) &&
+		    boot_cpu_has_bug(X86_BUG_RETBLEED) &&
 		    retbleed_cmd != RETBLEED_CMD_OFF &&
 		    boot_cpu_has(X86_FEATURE_IBRS) &&
 		    boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
@@ -1529,7 +1679,17 @@ static void __init spectre_v2_select_mitigation(void)
 	 * the CPU supports Enhanced IBRS, kernel might un-intentionally not
 	 * enable IBRS around firmware calls.
 	 */
-	if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode)) {
+	if (boot_cpu_has_bug(X86_BUG_RETBLEED) &&
+	    boot_cpu_has(X86_FEATURE_IBPB) &&
+	    (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
+	     boot_cpu_data.x86_vendor == X86_VENDOR_HYGON)) {
+
+		if (retbleed_cmd != RETBLEED_CMD_IBPB) {
+			setup_force_cpu_cap(X86_FEATURE_USE_IBPB_FW);
+			pr_info("Enabling Speculation Barrier for firmware calls\n");
+		}
+
+	} else if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode)) {
 		setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
 		pr_info("Enabling Restricted Speculation for firmware calls\n");
 	}
@@ -1809,6 +1969,24 @@ static void task_update_spec_tif(struct task_struct *tsk)
 		speculation_ctrl_update_current();
 }
 
+static int l1d_flush_prctl_set(struct task_struct *task, unsigned long ctrl)
+{
+
+	if (!static_branch_unlikely(&switch_mm_cond_l1d_flush))
+		return -EPERM;
+
+	switch (ctrl) {
+	case PR_SPEC_ENABLE:
+		set_ti_thread_flag(&task->thread_info, TIF_SPEC_L1D_FLUSH);
+		return 0;
+	case PR_SPEC_DISABLE:
+		clear_ti_thread_flag(&task->thread_info, TIF_SPEC_L1D_FLUSH);
+		return 0;
+	default:
+		return -ERANGE;
+	}
+}
+
 static int ssb_prctl_set(struct task_struct *task, unsigned long ctrl)
 {
 	if (ssb_mode != SPEC_STORE_BYPASS_PRCTL &&
@@ -1863,6 +2041,7 @@ static int ib_prctl_set(struct task_struct *task, unsigned long ctrl)
 		if (spectre_v2_user_ibpb == SPECTRE_V2_USER_NONE &&
 		    spectre_v2_user_stibp == SPECTRE_V2_USER_NONE)
 			return 0;
+
 		/*
 		 * With strict mode for both IBPB and STIBP, the instruction
 		 * code paths avoid checking this task flag and instead,
@@ -1919,6 +2098,8 @@ int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
 		return ssb_prctl_set(task, ctrl);
 	case PR_SPEC_INDIRECT_BRANCH:
 		return ib_prctl_set(task, ctrl);
+	case PR_SPEC_L1D_FLUSH:
+		return l1d_flush_prctl_set(task, ctrl);
 	default:
 		return -ENODEV;
 	}
@@ -1934,6 +2115,17 @@ void arch_seccomp_spec_mitigate(struct task_struct *task)
 		ib_prctl_set(task, PR_SPEC_FORCE_DISABLE);
 }
 #endif
+
+static int l1d_flush_prctl_get(struct task_struct *task)
+{
+	if (!static_branch_unlikely(&switch_mm_cond_l1d_flush))
+		return PR_SPEC_FORCE_DISABLE;
+
+	if (test_ti_thread_flag(&task->thread_info, TIF_SPEC_L1D_FLUSH))
+		return PR_SPEC_PRCTL | PR_SPEC_ENABLE;
+	else
+		return PR_SPEC_PRCTL | PR_SPEC_DISABLE;
+}
 
 static int ssb_prctl_get(struct task_struct *task)
 {
@@ -1985,6 +2177,8 @@ int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which)
 		return ssb_prctl_get(task);
 	case PR_SPEC_INDIRECT_BRANCH:
 		return ib_prctl_get(task);
+	case PR_SPEC_L1D_FLUSH:
+		return l1d_flush_prctl_get(task);
 	default:
 		return -ENODEV;
 	}
@@ -2125,6 +2319,170 @@ static int __init l1tf_cmdline(char *str)
 early_param("l1tf", l1tf_cmdline);
 
 #undef pr_fmt
+#define pr_fmt(fmt)	"Speculative Return Stack Overflow: " fmt
+
+enum srso_mitigation {
+	SRSO_MITIGATION_NONE,
+	SRSO_MITIGATION_MICROCODE,
+	SRSO_MITIGATION_SAFE_RET,
+	SRSO_MITIGATION_IBPB,
+	SRSO_MITIGATION_IBPB_ON_VMEXIT,
+};
+
+enum srso_mitigation_cmd {
+	SRSO_CMD_OFF,
+	SRSO_CMD_MICROCODE,
+	SRSO_CMD_SAFE_RET,
+	SRSO_CMD_IBPB,
+	SRSO_CMD_IBPB_ON_VMEXIT,
+};
+
+static const char * const srso_strings[] = {
+	[SRSO_MITIGATION_NONE]           = "Vulnerable",
+	[SRSO_MITIGATION_MICROCODE]      = "Mitigation: microcode",
+	[SRSO_MITIGATION_SAFE_RET]	 = "Mitigation: safe RET",
+	[SRSO_MITIGATION_IBPB]		 = "Mitigation: IBPB",
+	[SRSO_MITIGATION_IBPB_ON_VMEXIT] = "Mitigation: IBPB on VMEXIT only"
+};
+
+static enum srso_mitigation srso_mitigation __ro_after_init = SRSO_MITIGATION_NONE;
+static enum srso_mitigation_cmd srso_cmd __ro_after_init = SRSO_CMD_SAFE_RET;
+
+static int __init srso_parse_cmdline(char *str)
+{
+	if (!str)
+		return -EINVAL;
+
+	if (!strcmp(str, "off"))
+		srso_cmd = SRSO_CMD_OFF;
+	else if (!strcmp(str, "microcode"))
+		srso_cmd = SRSO_CMD_MICROCODE;
+	else if (!strcmp(str, "safe-ret"))
+		srso_cmd = SRSO_CMD_SAFE_RET;
+	else if (!strcmp(str, "ibpb"))
+		srso_cmd = SRSO_CMD_IBPB;
+	else if (!strcmp(str, "ibpb-vmexit"))
+		srso_cmd = SRSO_CMD_IBPB_ON_VMEXIT;
+	else
+		pr_err("Ignoring unknown SRSO option (%s).", str);
+
+	return 0;
+}
+early_param("spec_rstack_overflow", srso_parse_cmdline);
+
+#define SRSO_NOTICE "WARNING: See https://kernel.org/doc/html/latest/admin-guide/hw-vuln/srso.html for mitigation options."
+
+static void __init srso_select_mitigation(void)
+{
+	bool has_microcode;
+
+	if (!boot_cpu_has_bug(X86_BUG_SRSO) || cpu_mitigations_off())
+		goto pred_cmd;
+
+	/*
+	 * The first check is for the kernel running as a guest in order
+	 * for guests to verify whether IBPB is a viable mitigation.
+	 */
+	has_microcode = boot_cpu_has(X86_FEATURE_IBPB_BRTYPE) || cpu_has_ibpb_brtype_microcode();
+	if (!has_microcode) {
+		pr_warn("IBPB-extending microcode not applied!\n");
+		pr_warn(SRSO_NOTICE);
+	} else {
+		/*
+		 * Enable the synthetic (even if in a real CPUID leaf)
+		 * flags for guests.
+		 */
+		setup_force_cpu_cap(X86_FEATURE_IBPB_BRTYPE);
+
+		/*
+		 * Zen1/2 with SMT off aren't vulnerable after the right
+		 * IBPB microcode has been applied.
+		 */
+		if (boot_cpu_data.x86 < 0x19 && !cpu_smt_possible()) {
+			setup_force_cpu_cap(X86_FEATURE_SRSO_NO);
+			return;
+		}
+	}
+
+	if (retbleed_mitigation == RETBLEED_MITIGATION_IBPB) {
+		if (has_microcode) {
+			pr_err("Retbleed IBPB mitigation enabled, using same for SRSO\n");
+			srso_mitigation = SRSO_MITIGATION_IBPB;
+			goto pred_cmd;
+		}
+	}
+
+	switch (srso_cmd) {
+	case SRSO_CMD_OFF:
+		goto pred_cmd;
+
+	case SRSO_CMD_MICROCODE:
+		if (has_microcode) {
+			srso_mitigation = SRSO_MITIGATION_MICROCODE;
+			pr_warn(SRSO_NOTICE);
+		}
+		break;
+
+	case SRSO_CMD_SAFE_RET:
+		if (IS_ENABLED(CONFIG_CPU_SRSO)) {
+			/*
+			 * Enable the return thunk for generated code
+			 * like ftrace, static_call, etc.
+			 */
+			setup_force_cpu_cap(X86_FEATURE_RETHUNK);
+			setup_force_cpu_cap(X86_FEATURE_UNRET);
+
+			if (boot_cpu_data.x86 == 0x19) {
+				setup_force_cpu_cap(X86_FEATURE_SRSO_ALIAS);
+				x86_return_thunk = srso_alias_return_thunk;
+			} else {
+				setup_force_cpu_cap(X86_FEATURE_SRSO);
+				x86_return_thunk = srso_return_thunk;
+			}
+			srso_mitigation = SRSO_MITIGATION_SAFE_RET;
+		} else {
+			pr_err("WARNING: kernel not compiled with CPU_SRSO.\n");
+			goto pred_cmd;
+		}
+		break;
+
+	case SRSO_CMD_IBPB:
+		if (IS_ENABLED(CONFIG_CPU_IBPB_ENTRY)) {
+			if (has_microcode) {
+				setup_force_cpu_cap(X86_FEATURE_ENTRY_IBPB);
+				srso_mitigation = SRSO_MITIGATION_IBPB;
+			}
+		} else {
+			pr_err("WARNING: kernel not compiled with CPU_IBPB_ENTRY.\n");
+			goto pred_cmd;
+		}
+		break;
+
+	case SRSO_CMD_IBPB_ON_VMEXIT:
+		if (IS_ENABLED(CONFIG_CPU_SRSO)) {
+			if (!boot_cpu_has(X86_FEATURE_ENTRY_IBPB) && has_microcode) {
+				setup_force_cpu_cap(X86_FEATURE_IBPB_ON_VMEXIT);
+				srso_mitigation = SRSO_MITIGATION_IBPB_ON_VMEXIT;
+			}
+		} else {
+			pr_err("WARNING: kernel not compiled with CPU_SRSO.\n");
+			goto pred_cmd;
+                }
+		break;
+
+	default:
+		break;
+	}
+
+	pr_info("%s%s\n", srso_strings[srso_mitigation], (has_microcode ? "" : ", no microcode"));
+
+pred_cmd:
+	if ((!boot_cpu_has_bug(X86_BUG_SRSO) || srso_cmd == SRSO_CMD_OFF) &&
+	     boot_cpu_has(X86_FEATURE_SBPB))
+		x86_pred_cmd = PRED_CMD_SBPB;
+}
+
+#undef pr_fmt
 #define pr_fmt(fmt) fmt
 
 #ifdef CONFIG_SYSFS
@@ -2160,7 +2518,12 @@ static ssize_t l1tf_show_state(char *buf)
 
 static ssize_t itlb_multihit_show_state(char *buf)
 {
-	if (itlb_multihit_kvm_mitigation)
+	if (!boot_cpu_has(X86_FEATURE_MSR_IA32_FEAT_CTL) ||
+	    !boot_cpu_has(X86_FEATURE_VMX))
+		return sprintf(buf, "KVM: Mitigation: VMX unsupported\n");
+	else if (!(cr4_read_shadow() & X86_CR4_VMXE))
+		return sprintf(buf, "KVM: Mitigation: VMX disabled\n");
+	else if (itlb_multihit_kvm_mitigation)
 		return sprintf(buf, "KVM: Mitigation: Split huge pages\n");
 	else
 		return sprintf(buf, "KVM: Vulnerable\n");
@@ -2300,12 +2663,36 @@ static ssize_t srbds_show_state(char *buf)
 
 static ssize_t retbleed_show_state(char *buf)
 {
+	if (retbleed_mitigation == RETBLEED_MITIGATION_UNRET ||
+	    retbleed_mitigation == RETBLEED_MITIGATION_IBPB) {
+	    if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD &&
+		boot_cpu_data.x86_vendor != X86_VENDOR_HYGON)
+		    return sprintf(buf, "Vulnerable: untrained return thunk / IBPB on non-AMD based uarch\n");
+
+	    return sprintf(buf, "%s; SMT %s\n",
+			   retbleed_strings[retbleed_mitigation],
+			   !sched_smt_active() ? "disabled" :
+			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT ||
+			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT_PREFERRED ?
+			   "enabled with STIBP protection" : "vulnerable");
+	}
+
 	return sprintf(buf, "%s\n", retbleed_strings[retbleed_mitigation]);
 }
 
 static ssize_t gds_show_state(char *buf)
 {
 	return sysfs_emit(buf, "%s\n", gds_strings[gds_mitigation]);
+}
+
+static ssize_t srso_show_state(char *buf)
+{
+	if (boot_cpu_has(X86_FEATURE_SRSO_NO))
+		return sysfs_emit(buf, "Mitigation: SMT disabled\n");
+
+	return sysfs_emit(buf, "%s%s\n",
+			  srso_strings[srso_mitigation],
+			  boot_cpu_has(X86_FEATURE_IBPB_BRTYPE) ? "" : ", no microcode");
 }
 
 static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr,
@@ -2359,6 +2746,9 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
 
 	case X86_BUG_GDS:
 		return gds_show_state(buf);
+
+	case X86_BUG_SRSO:
+		return srso_show_state(buf);
 
 	default:
 		break;
@@ -2428,5 +2818,10 @@ ssize_t cpu_show_retbleed(struct device *dev, struct device_attribute *attr, cha
 ssize_t cpu_show_gds(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return cpu_show_common(dev, attr, buf, X86_BUG_GDS);
+}
+
+ssize_t cpu_show_spec_rstack_overflow(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return cpu_show_common(dev, attr, buf, X86_BUG_SRSO);
 }
 #endif

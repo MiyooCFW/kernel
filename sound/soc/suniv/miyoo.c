@@ -203,7 +203,7 @@ static const struct snd_pcm_hardware mypcm_hardware = {
   .buffer_bytes_max = 128 * 2 * PAGE_SIZE,
 };
 
-static int mypcm_open(struct snd_pcm_substream *substream)
+static int mypcm_open(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
   int ret;
   struct mypcm *prtd;
@@ -226,7 +226,7 @@ static int mypcm_open(struct snd_pcm_substream *substream)
   return 0;
 }
 
-static int mypcm_close(struct snd_pcm_substream *substream)
+static int mypcm_close(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
   struct mypcm *prtd = runtime->private_data;
@@ -235,7 +235,7 @@ static int mypcm_close(struct snd_pcm_substream *substream)
   return 0;
 }
 
-static int mypcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
+static int mypcm_hw_params(struct snd_soc_component *component, struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
 {
   uint32_t ret;
   struct snd_pcm_runtime *runtime = substream->runtime;
@@ -317,12 +317,12 @@ static int mypcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_h
   return 0;
 }
 
-static int mypcm_hw_free(struct snd_pcm_substream *substream)
+static int mypcm_hw_free(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
   return 0;
 }
 
-static int mypcm_prepare(struct snd_pcm_substream *substream)
+static int mypcm_prepare(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
   struct mypcm *prtd = substream->runtime->private_data;
 
@@ -330,7 +330,7 @@ static int mypcm_prepare(struct snd_pcm_substream *substream)
   return 0;
 }
 
-static int mypcm_trigger(struct snd_pcm_substream *substream, int cmd)
+static int mypcm_trigger(struct snd_soc_component *component, struct snd_pcm_substream *substream, int cmd)
 { 
   switch (cmd) {
   case SNDRV_PCM_TRIGGER_START:
@@ -351,7 +351,7 @@ static int mypcm_trigger(struct snd_pcm_substream *substream, int cmd)
   return 0;
 }
 
-static snd_pcm_uframes_t mypcm_pointer(struct snd_pcm_substream *substream)
+static snd_pcm_uframes_t mypcm_pointer(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
   struct snd_pcm_runtime *runtime = substream->runtime;
   struct mypcm *prtd = runtime->private_data;
@@ -367,18 +367,13 @@ static snd_pcm_uframes_t mypcm_pointer(struct snd_pcm_substream *substream)
   return offset;
 }
 
-static int mypcm_mmap(struct snd_pcm_substream *substream, struct vm_area_struct *vma)
-{
-  return remap_pfn_range(vma, vma->vm_start, substream->dma_buffer.addr >> PAGE_SHIFT, vma->vm_end - vma->vm_start, vma->vm_page_prot);
-}
-
-static int mypcm_new(struct snd_soc_pcm_runtime *rtd)
+static int mypcm_new(struct snd_soc_component *component, struct snd_soc_pcm_runtime *rtd)
 {
   struct snd_pcm *pcm = rtd->pcm;
   struct snd_card *card = rtd->card->snd_card;
   struct snd_pcm_substream *substream = pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
   struct snd_dma_buffer *buf = &substream->dma_buffer;
-
+  suniv_ioremap();
   suniv_setbits(iomm.ccm + BUS_CLK_GATING_REG0, (1 << 6));
   suniv_setbits(iomm.ccm + BUS_SOFT_RST_REG0, (1 << 6));
   writel(0x00000000, iomm.dma + DMA_INT_CTRL_REG);
@@ -404,12 +399,6 @@ static int mypcm_new(struct snd_soc_pcm_runtime *rtd)
   return 0;
 }
 
-static void mypcm_free(struct snd_pcm *pcm)
-{
-	dma_free_coherent(NULL, DMA_SIZE, iomm.dma_virt, iomm.dma_phys);
-	free_irq(iomm.irq, NULL);
-}
-
 static const struct snd_soc_component_driver mycodec_comp = {
   .name = "miyoo codec",
 };
@@ -430,22 +419,16 @@ static const struct snd_soc_dapm_widget mycard_dapm_widgets[] = {
   SND_SOC_DAPM_SPK("Speaker", mycard_spk_event),
 };
 
-static const struct snd_pcm_ops mypcm_ops = {
-  .open = mypcm_open,
-  .ioctl = snd_pcm_lib_ioctl,
-  .close = mypcm_close,
-  .hw_params = mypcm_hw_params,
-  .hw_free = mypcm_hw_free,
-  .prepare = mypcm_prepare,
-  .trigger = mypcm_trigger,
-  .pointer = mypcm_pointer,
-  .mmap = mypcm_mmap,
-};
 
 static const struct snd_soc_component_driver myplatform = {
-  .ops = &mypcm_ops,
-  .pcm_new = mypcm_new,
-  .pcm_free = mypcm_free
+	.open = mypcm_open,
+	.close = mypcm_close,
+	.hw_params = mypcm_hw_params,
+	.hw_free = mypcm_hw_free,
+	.prepare = mypcm_prepare,
+	.trigger = mypcm_trigger,
+	.pointer = mypcm_pointer,
+	.pcm_construct = mypcm_new,
 };
 
 static int myopen(struct inode *inode, struct file *file)
@@ -511,7 +494,7 @@ static int myaudio_probe(struct platform_device *pdev)
   struct snd_soc_card *card;
   struct snd_soc_dai_link_component *compnent;
 
-  suniv_ioremap();
+
   card = devm_kzalloc(&pdev->dev, sizeof(*card), GFP_KERNEL);
   if (card == NULL) {
     dev_err(&pdev->dev, "%s, failed to allocate memory for card\n", __func__);
@@ -570,7 +553,7 @@ static int myaudio_probe(struct platform_device *pdev)
   device_create(myclass, NULL, major, NULL, "miyoo_snd");
   cdev_init(&mycdev, &myfops);
   cdev_add(&mycdev, major, 1);
-
+  suniv_ioremap();
   suniv_gpio_init();
   suniv_codec_init();
   for(ret=0; ret<of_clk_get_parent_count(pdev->dev.of_node); ret++){
@@ -606,6 +589,6 @@ static struct platform_driver myaudio_driver = {
 };
 module_platform_driver(myaudio_driver);
 
-MODULE_DESCRIPTION("Allwinner f1c500s audio codec driver");
+MODULE_DESCRIPTION("Allwinner f1c100s audio codec driver");
 MODULE_AUTHOR("Steward Fu <steward.fu@gmail.com>");
 MODULE_LICENSE("GPL");

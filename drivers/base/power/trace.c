@@ -120,7 +120,11 @@ static unsigned int read_magic_time(void)
 	struct rtc_time time;
 	unsigned int val;
 
-	mc146818_get_time(&time);
+	if (mc146818_get_time(&time) < 0) {
+		pr_err("Unable to read current time from RTC\n");
+		return 0;
+	}
+
 	pr_info("RTC time: %ptRt, date: %ptRd\n", &time, &time);
 	val = time.tm_year;				/* 100 years */
 	if (val > 100)
@@ -269,7 +273,7 @@ static struct notifier_block pm_trace_nb = {
 	.notifier_call = pm_trace_notify,
 };
 
-static int early_resume_init(void)
+static int __init early_resume_init(void)
 {
 	if (!x86_platform.legacy.rtc)
 		return 0;
@@ -279,7 +283,7 @@ static int early_resume_init(void)
 	return 0;
 }
 
-static int late_resume_init(void)
+static int __init late_resume_init(void)
 {
 	unsigned int val = hash_value_early_read;
 	unsigned int user, file, dev;

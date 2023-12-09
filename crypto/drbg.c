@@ -98,6 +98,7 @@
  */
 
 #include <crypto/drbg.h>
+#include <crypto/internal/cipher.h>
 #include <linux/kernel.h>
 
 /***************************************************************
@@ -177,16 +178,16 @@ static const struct drbg_core drbg_cores[] = {
 		.backend_cra_name = "hmac(sha384)",
 	}, {
 		.flags = DRBG_HMAC | DRBG_STRENGTH256,
-		.statelen = 64, /* block length of cipher */
-		.blocklen_bytes = 64,
-		.cra_name = "hmac_sha512",
-		.backend_cra_name = "hmac(sha512)",
-	}, {
-		.flags = DRBG_HMAC | DRBG_STRENGTH256,
 		.statelen = 32, /* block length of cipher */
 		.blocklen_bytes = 32,
 		.cra_name = "hmac_sha256",
 		.backend_cra_name = "hmac(sha256)",
+	}, {
+		.flags = DRBG_HMAC | DRBG_STRENGTH256,
+		.statelen = 64, /* block length of cipher */
+		.blocklen_bytes = 64,
+		.cra_name = "hmac_sha512",
+		.backend_cra_name = "hmac(sha512)",
 	},
 #endif /* CONFIG_CRYPTO_DRBG_HMAC */
 };
@@ -1230,19 +1231,19 @@ static inline void drbg_dealloc_state(struct drbg_state *drbg)
 {
 	if (!drbg)
 		return;
-	kzfree(drbg->Vbuf);
+	kfree_sensitive(drbg->Vbuf);
 	drbg->Vbuf = NULL;
 	drbg->V = NULL;
-	kzfree(drbg->Cbuf);
+	kfree_sensitive(drbg->Cbuf);
 	drbg->Cbuf = NULL;
 	drbg->C = NULL;
-	kzfree(drbg->scratchpadbuf);
+	kfree_sensitive(drbg->scratchpadbuf);
 	drbg->scratchpadbuf = NULL;
 	drbg->reseed_ctr = 0;
 	drbg->d_ops = NULL;
 	drbg->core = NULL;
 	if (IS_ENABLED(CONFIG_CRYPTO_FIPS)) {
-		kzfree(drbg->prev);
+		kfree_sensitive(drbg->prev);
 		drbg->prev = NULL;
 		drbg->fips_primed = false;
 	}
@@ -1678,7 +1679,7 @@ static int drbg_fini_hash_kernel(struct drbg_state *drbg)
 	struct sdesc *sdesc = (struct sdesc *)drbg->priv_data;
 	if (sdesc) {
 		crypto_free_shash(sdesc->shash.tfm);
-		kzfree(sdesc);
+		kfree_sensitive(sdesc);
 	}
 	drbg->priv_data = NULL;
 	return 0;
@@ -2138,3 +2139,4 @@ MODULE_DESCRIPTION("NIST SP800-90A Deterministic Random Bit Generator (DRBG) "
 		   CRYPTO_DRBG_HMAC_STRING
 		   CRYPTO_DRBG_CTR_STRING);
 MODULE_ALIAS_CRYPTO("stdrng");
+MODULE_IMPORT_NS(CRYPTO_INTERNAL);

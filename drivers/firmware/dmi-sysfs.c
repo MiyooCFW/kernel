@@ -262,7 +262,7 @@ struct dmi_system_event_log {
 	u8	header_format;
 	u8	type_descriptors_supported_count;
 	u8	per_log_type_descriptor_length;
-	u8	supported_log_type_descriptos[0];
+	u8	supported_log_type_descriptos[];
 } __packed;
 
 #define DMI_SYSFS_SEL_FIELD(_field) \
@@ -602,15 +602,15 @@ static void __init dmi_sysfs_register_handle(const struct dmi_header *dh,
 	*ret = kobject_init_and_add(&entry->kobj, &dmi_sysfs_entry_ktype, NULL,
 				    "%d-%d", dh->type, entry->instance);
 
-	if (*ret) {
-		kobject_put(&entry->kobj);
-		return;
-	}
-
 	/* Thread on the global list for cleanup */
 	spin_lock(&entry_list_lock);
 	list_add_tail(&entry->list, &entry_list);
 	spin_unlock(&entry_list_lock);
+
+	if (*ret) {
+		kobject_put(&entry->kobj);
+		return;
+	}
 
 	/* Handle specializations by type */
 	switch (dh->type) {

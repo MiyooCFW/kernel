@@ -31,7 +31,9 @@ struct ipv6_devconf {
 	__s32		max_desync_factor;
 	__s32		max_addresses;
 	__s32		accept_ra_defrtr;
+	__u32		ra_defrtr_metric;
 	__s32		accept_ra_min_hop_limit;
+	__s32		accept_ra_min_lft;
 	__s32		accept_ra_pinfo;
 	__s32		ignore_routes_with_linkdown;
 #ifdef CONFIG_IPV6_ROUTER_PREF
@@ -74,6 +76,10 @@ struct ipv6_devconf {
 	__u32		addr_gen_mode;
 	__s32		disable_policy;
 	__s32           ndisc_tclass;
+	__s32		rpl_seg_enabled;
+	__u32		ioam6_id;
+	__u32		ioam6_id_wide;
+	__u8		ioam6_enabled;
 
 	struct ctl_table_header *sysctl_header;
 };
@@ -127,6 +133,7 @@ struct inet6_skb_parm {
 	__u16			dsthao;
 #endif
 	__u16			frag_max_size;
+	__u16			srhoff;
 
 #define IP6SKB_XFRM_TRANSFORMED	1
 #define IP6SKB_FORWARDED	2
@@ -136,6 +143,7 @@ struct inet6_skb_parm {
 #define IP6SKB_HOPBYHOP        32
 #define IP6SKB_L3SLAVE         64
 #define IP6SKB_JUMBOGRAM      128
+#define IP6SKB_SEG6	      256
 };
 
 #if defined(CONFIG_NET_L3_MASTER_DEV)
@@ -175,17 +183,6 @@ static inline int inet6_sdif(const struct sk_buff *skb)
 	return 0;
 }
 
-/* can not be used in TCP layer after tcp_v6_fill_cb */
-static inline bool inet6_exact_dif_match(struct net *net, struct sk_buff *skb)
-{
-#if defined(CONFIG_NET_L3_MASTER_DEV)
-	if (!net->ipv4.sysctl_tcp_l3mdev_accept &&
-	    skb && ipv6_l3mdev_skb(IP6CB(skb)->flags))
-		return true;
-#endif
-	return false;
-}
-
 struct tcp6_request_sock {
 	struct tcp_request_sock	  tcp6rsk_tcp;
 };
@@ -221,7 +218,7 @@ struct ipv6_pinfo {
 
 	/*
 	 * Packed in 16bits.
-	 * Omit one shift by by putting the signed field at MSB.
+	 * Omit one shift by putting the signed field at MSB.
 	 */
 #if defined(__BIG_ENDIAN_BITFIELD)
 	__s16			hop_limit:9;
@@ -281,13 +278,13 @@ struct ipv6_pinfo {
 				autoflowlabel:1,
 				autoflowlabel_set:1,
 				mc_all:1,
+				recverr_rfc4884:1,
 				rtalert_isolate:1;
 	__u8			min_hopcount;
 	__u8			tclass;
 	__be32			rcv_flowinfo;
 
 	__u32			dst_cookie;
-	__u32			rx_dst_cookie;
 
 	struct ipv6_mc_socklist	__rcu *ipv6_mc_list;
 	struct ipv6_ac_socklist	*ipv6_ac_list;
@@ -340,17 +337,6 @@ static inline struct ipv6_pinfo *inet6_sk(const struct sock *__sk)
 static inline struct raw6_sock *raw6_sk(const struct sock *sk)
 {
 	return (struct raw6_sock *)sk;
-}
-
-static inline void inet_sk_copy_descendant(struct sock *sk_to,
-					   const struct sock *sk_from)
-{
-	int ancestor_size = sizeof(struct inet_sock);
-
-	if (sk_from->sk_family == PF_INET6)
-		ancestor_size += sizeof(struct ipv6_pinfo);
-
-	__inet_sk_copy_descendant(sk_to, sk_from, ancestor_size);
 }
 
 #define __ipv6_only_sock(sk)	(sk->sk_ipv6only)

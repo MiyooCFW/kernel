@@ -2,8 +2,6 @@
 #ifndef _LINUX_SUNRPC_RPC_PIPE_FS_H
 #define _LINUX_SUNRPC_RPC_PIPE_FS_H
 
-#ifdef __KERNEL__
-
 #include <linux/workqueue.h>
 
 struct rpc_pipe_dir_head {
@@ -137,5 +135,4 @@ extern void unregister_rpc_pipefs(void);
 
 extern bool gssd_running(struct net *net);
 
-#endif
 #endif

@@ -165,6 +165,9 @@ static int sprd_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	struct pwm_state *cstate = &pwm->state;
 	int ret;
 
+	if (state->polarity != PWM_POLARITY_NORMAL)
+		return -EINVAL;
+
 	if (state->enabled) {
 		if (!cstate->enabled) {
 			/*
@@ -226,11 +229,8 @@ static int sprd_pwm_clk_init(struct sprd_pwm_chip *spc)
 			if (ret == -ENOENT)
 				break;
 
-			if (ret != -EPROBE_DEFER)
-				dev_err(spc->dev,
-					"failed to get channel clocks\n");
-
-			return ret;
+			return dev_err_probe(spc->dev, ret,
+					     "failed to get channel clocks\n");
 		}
 
 		clk_pwm = chn->clks[SPRD_PWM_CHN_OUTPUT_CLK].clk;
@@ -269,7 +269,6 @@ static int sprd_pwm_probe(struct platform_device *pdev)
 
 	spc->chip.dev = &pdev->dev;
 	spc->chip.ops = &sprd_pwm_ops;
-	spc->chip.base = -1;
 	spc->chip.npwm = spc->num_pwms;
 
 	ret = pwmchip_add(&spc->chip);
@@ -283,7 +282,9 @@ static int sprd_pwm_remove(struct platform_device *pdev)
 {
 	struct sprd_pwm_chip *spc = platform_get_drvdata(pdev);
 
-	return pwmchip_remove(&spc->chip);
+	pwmchip_remove(&spc->chip);
+
+	return 0;
 }
 
 static const struct of_device_id sprd_pwm_of_match[] = {

@@ -78,7 +78,6 @@ static void rtl_fw_do_work(const struct firmware *firmware, void *context,
 
 	rtl_dbg(rtlpriv, COMP_ERR, DBG_LOUD,
 		"Firmware callback routine entered!\n");
-	complete(&rtlpriv->firmware_loading_complete);
 	if (!firmware) {
 		if (rtlpriv->cfg->alt_fw_name) {
 			err = request_firmware(&firmware,
@@ -91,13 +90,13 @@ static void rtl_fw_do_work(const struct firmware *firmware, void *context,
 		}
 		pr_err("Selected firmware is not available\n");
 		rtlpriv->max_fw_size = 0;
-		return;
+		goto exit;
 	}
 found_alt:
 	if (firmware->size > rtlpriv->max_fw_size) {
 		pr_err("Firmware is too big!\n");
 		release_firmware(firmware);
-		return;
+		goto exit;
 	}
 	if (!is_wow) {
 		memcpy(rtlpriv->rtlhal.pfirmware, firmware->data,
@@ -109,6 +108,9 @@ found_alt:
 		rtlpriv->rtlhal.wowlan_fwsize = firmware->size;
 	}
 	release_firmware(firmware);
+
+exit:
+	complete(&rtlpriv->firmware_loading_complete);
 }
 
 void rtl_fw_cb(const struct firmware *firmware, void *context)
@@ -227,7 +229,7 @@ static int rtl_op_add_interface(struct ieee80211_hw *hw,
 	switch (ieee80211_vif_type_p2p(vif)) {
 	case NL80211_IFTYPE_P2P_CLIENT:
 		mac->p2p = P2P_ROLE_CLIENT;
-		/*fall through*/
+		fallthrough;
 	case NL80211_IFTYPE_STATION:
 		if (mac->beacon_enabled == 1) {
 			rtl_dbg(rtlpriv, COMP_MAC80211, DBG_LOUD,
@@ -254,7 +256,7 @@ static int rtl_op_add_interface(struct ieee80211_hw *hw,
 		break;
 	case NL80211_IFTYPE_P2P_GO:
 		mac->p2p = P2P_ROLE_GO;
-		/*fall through*/
+		fallthrough;
 	case NL80211_IFTYPE_AP:
 		rtl_dbg(rtlpriv, COMP_MAC80211, DBG_LOUD,
 			"NL80211_IFTYPE_AP\n");
@@ -544,7 +546,7 @@ static int rtl_op_suspend(struct ieee80211_hw *hw,
 	rtlhal->driver_is_goingto_unload = true;
 	rtlhal->enter_pnp_sleep = true;
 
-	rtl_lps_leave(hw);
+	rtl_lps_leave(hw, true);
 	rtl_op_stop(hw);
 	device_set_wakeup_enable(wiphy_dev(hw->wiphy), true);
 	return 0;
@@ -562,7 +564,7 @@ static int rtl_op_resume(struct ieee80211_hw *hw)
 	rtlhal->enter_pnp_sleep = false;
 	rtlhal->wake_from_pnp_sleep = true;
 
-	/* to resovle s4 can not wake up*/
+	/* to resolve s4 can not wake up*/
 	now = ktime_get_real_seconds();
 	if (now - rtlhal->last_suspend_sec < 5)
 		return -1;
@@ -804,7 +806,7 @@ static void rtl_op_configure_filter(struct ieee80211_hw *hw,
 	if (0 == changed_flags)
 		return;
 
-	/*TODO: we disable broadcase now, so enable here */
+	/*TODO: we disable broadcast now, so enable here */
 	if (changed_flags & FIF_ALLMULTI) {
 		if (*new_flags & FIF_ALLMULTI) {
 			mac->rx_conf |= rtlpriv->cfg->maps[MAC_RCR_AM] |
@@ -1016,6 +1018,25 @@ static void send_beacon_frame(struct ieee80211_hw *hw,
 	}
 }
 
+void rtl_update_beacon_work_callback(struct work_struct *work)
+{
+	struct rtl_works *rtlworks =
+	    container_of(work, struct rtl_works, update_beacon_work);
+	struct ieee80211_hw *hw = rtlworks->hw;
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct ieee80211_vif *vif = rtlpriv->mac80211.vif;
+
+	if (!vif) {
+		WARN_ONCE(true, "no vif to update beacon\n");
+		return;
+	}
+
+	mutex_lock(&rtlpriv->locks.conf_mutex);
+	send_beacon_frame(hw, vif);
+	mutex_unlock(&rtlpriv->locks.conf_mutex);
+}
+EXPORT_SYMBOL_GPL(rtl_update_beacon_work_callback);
+
 static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 				    struct ieee80211_vif *vif,
 				    struct ieee80211_bss_conf *bss_conf,
@@ -1151,7 +1172,7 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			mstatus = RT_MEDIA_DISCONNECT;
 
 			if (mac->link_state == MAC80211_LINKED)
-				rtl_lps_leave(hw);
+				rtl_lps_leave(hw, true);
 			if (ppsc->p2p_ps_info.p2p_ps_mode > P2P_PS_NONE)
 				rtl_p2p_ps_cmd(hw, P2P_PS_DISABLE);
 			mac->link_state = MAC80211_NOLINK;
@@ -1448,7 +1469,7 @@ static void rtl_op_sw_scan_start(struct ieee80211_hw *hw,
 	}
 
 	if (mac->link_state == MAC80211_LINKED) {
-		rtl_lps_leave(hw);
+		rtl_lps_leave(hw, true);
 		mac->link_state = MAC80211_LINKED_SCANNING;
 	} else {
 		rtl_ips_nic_on(hw);
@@ -1722,7 +1743,7 @@ static void rtl_op_rfkill_poll(struct ieee80211_hw *hw)
 				"wireless radio switch turned %s\n",
 				radio_state ? "on" : "off");
 
-			blocked = (rtlpriv->rfkill.rfkill_state == 1) ? 0 : 1;
+			blocked = !rtlpriv->rfkill.rfkill_state;
 			wiphy_rfkill_set_hw_state(hw->wiphy, blocked);
 		}
 	}
@@ -1743,6 +1764,18 @@ static void rtl_op_flush(struct ieee80211_hw *hw,
 
 	if (rtlpriv->intf_ops->flush)
 		rtlpriv->intf_ops->flush(hw, queues, drop);
+}
+
+static int rtl_op_set_tim(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
+			  bool set)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
+
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8192CU)
+		schedule_work(&rtlpriv->works.update_beacon_work);
+
+	return 0;
 }
 
 /*	Description:
@@ -1794,7 +1827,7 @@ bool rtl_hal_pwrseqcmdparsing(struct rtl_priv *rtlpriv, u8 cut_version,
 				value |= (GET_PWR_CFG_VALUE(cfg_cmd) &
 					  GET_PWR_CFG_MASK(cfg_cmd));
 
-				/*Write the value back to sytem register*/
+				/*Write the value back to system register*/
 				rtl_write_byte(rtlpriv, offset, value);
 				break;
 			case PWR_CMD_POLLING:
@@ -1901,6 +1934,7 @@ const struct ieee80211_ops rtl_ops = {
 	.sta_add = rtl_op_sta_add,
 	.sta_remove = rtl_op_sta_remove,
 	.flush = rtl_op_flush,
+	.set_tim = rtl_op_set_tim,
 };
 EXPORT_SYMBOL_GPL(rtl_ops);
 

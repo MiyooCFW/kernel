@@ -242,9 +242,7 @@ static void altera_uart_rx_chars(struct uart_port *port)
 				 flag);
 	}
 
-	spin_unlock(&port->lock);
 	tty_flip_buffer_push(&port->state->port);
-	spin_lock(&port->lock);
 }
 
 static void altera_uart_tx_chars(struct uart_port *port)

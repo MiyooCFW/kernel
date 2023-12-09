@@ -12,8 +12,8 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/atomic.h>
+#include <linux/debugfs.h>
 #include <asm/pci-bridge.h>
-#include <asm/debugfs.h>
 #include <asm/ppc-pci.h>
 
 
@@ -159,18 +159,10 @@ eeh_addr_cache_insert(struct pci_dev *dev, resource_size_t alo,
 
 static void __eeh_addr_cache_insert_dev(struct pci_dev *dev)
 {
-	struct pci_dn *pdn;
 	struct eeh_dev *edev;
 	int i;
 
-	pdn = pci_get_pdn_by_devfn(dev->bus, dev->devfn);
-	if (!pdn) {
-		pr_warn("PCI: no pci dn found for dev=%s\n",
-			pci_name(dev));
-		return;
-	}
-
-	edev = pdn_to_eeh_dev(pdn);
+	edev = pci_dev_to_eeh_dev(dev);
 	if (!edev) {
 		pr_warn("PCI: no EEH dev found for %s\n",
 			pci_name(dev));
@@ -291,6 +283,6 @@ DEFINE_SHOW_ATTRIBUTE(eeh_addr_cache);
 void eeh_cache_debugfs_init(void)
 {
 	debugfs_create_file_unsafe("eeh_address_cache", 0400,
-			powerpc_debugfs_root, NULL,
+			arch_debugfs_dir, NULL,
 			&eeh_addr_cache_fops);
 }

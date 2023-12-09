@@ -229,10 +229,12 @@ static struct {
 struct crng {
 	u8 key[CHACHA_KEY_SIZE];
 	unsigned long generation;
+	local_lock_t lock;
 };
 
 static DEFINE_PER_CPU(struct crng, crngs) = {
-	.generation = ULONG_MAX
+	.generation = ULONG_MAX,
+	.lock = INIT_LOCAL_LOCK(crngs.lock),
 };
 
 /* Used by crng_reseed() and crng_make_state() to extract a new seed from the input pool. */
@@ -281,7 +283,7 @@ static void crng_reseed(void)
  * that this function overwrites it before returning.
  */
 static void crng_fast_key_erasure(u8 key[CHACHA_KEY_SIZE],
-				  u32 chacha_state[CHACHA_BLOCK_SIZE / sizeof(u32)],
+				  u32 chacha_state[CHACHA_STATE_WORDS],
 				  u8 *random_data, size_t random_data_len)
 {
 	u8 first_block[CHACHA_BLOCK_SIZE];
@@ -325,7 +327,7 @@ static bool crng_has_old_seed(void)
  * random data. It also returns up to 32 bytes on its own of random data
  * that may be used; random_data_len may not be greater than 32.
  */
-static void crng_make_state(u32 chacha_state[CHACHA_BLOCK_SIZE / sizeof(u32)],
+static void crng_make_state(u32 chacha_state[CHACHA_STATE_WORDS],
 			    u8 *random_data, size_t random_data_len)
 {
 	unsigned long flags;
@@ -362,7 +364,7 @@ static void crng_make_state(u32 chacha_state[CHACHA_BLOCK_SIZE / sizeof(u32)],
 	if (unlikely(crng_has_old_seed()))
 		crng_reseed();
 
-	local_irq_save(flags);
+	local_lock_irqsave(&crngs.lock, flags);
 	crng = raw_cpu_ptr(&crngs);
 
 	/*
@@ -387,12 +389,12 @@ static void crng_make_state(u32 chacha_state[CHACHA_BLOCK_SIZE / sizeof(u32)],
 	 * should wind up here immediately.
 	 */
 	crng_fast_key_erasure(crng->key, chacha_state, random_data, random_data_len);
-	local_irq_restore(flags);
+	local_unlock_irqrestore(&crngs.lock, flags);
 }
 
 static void _get_random_bytes(void *buf, size_t len)
 {
-	u32 chacha_state[CHACHA_BLOCK_SIZE / sizeof(u32)];
+	u32 chacha_state[CHACHA_STATE_WORDS];
 	u8 tmp[CHACHA_BLOCK_SIZE];
 	size_t first_block_len;
 
@@ -441,7 +443,7 @@ EXPORT_SYMBOL(get_random_bytes);
 
 static ssize_t get_random_bytes_user(struct iov_iter *iter)
 {
-	u32 chacha_state[CHACHA_BLOCK_SIZE / sizeof(u32)];
+	u32 chacha_state[CHACHA_STATE_WORDS];
 	u8 block[CHACHA_BLOCK_SIZE];
 	size_t ret = 0, copied;
 
@@ -505,11 +507,13 @@ struct batch_ ##type {								\
 	 * formula of (integer_blocks + 0.5) * CHACHA_BLOCK_SIZE.		\
 	 */									\
 	type entropy[CHACHA_BLOCK_SIZE * 3 / (2 * sizeof(type))];		\
+	local_lock_t lock;							\
 	unsigned long generation;						\
 	unsigned int position;							\
 };										\
 										\
 static DEFINE_PER_CPU(struct batch_ ##type, batched_entropy_ ##type) = {	\
+	.lock = INIT_LOCAL_LOCK(batched_entropy_ ##type.lock),			\
 	.position = UINT_MAX							\
 };										\
 										\
@@ -527,7 +531,7 @@ type get_random_ ##type(void)							\
 		return ret;							\
 	}									\
 										\
-	local_irq_save(flags);		\
+	local_lock_irqsave(&batched_entropy_ ##type.lock, flags);		\
 	batch = raw_cpu_ptr(&batched_entropy_##type);				\
 										\
 	next_gen = READ_ONCE(base_crng.generation);				\
@@ -541,7 +545,7 @@ type get_random_ ##type(void)							\
 	ret = batch->entropy[batch->position];					\
 	batch->entropy[batch->position] = 0;					\
 	++batch->position;							\
-	local_irq_restore(flags);		\
+	local_unlock_irqrestore(&batched_entropy_ ##type.lock, flags);		\
 	return ret;								\
 }										\
 EXPORT_SYMBOL(get_random_ ##type);
@@ -1033,7 +1037,7 @@ static void add_timer_randomness(struct timer_rand_state *state, unsigned int nu
 	 * If we're in a hard IRQ, add_interrupt_randomness() will be called
 	 * sometime after, so mix into the fast pool.
 	 */
-	if (in_irq()) {
+	if (in_hardirq()) {
 		fast_mix(this_cpu_ptr(&irq_randomness)->pool, entropy, num);
 	} else {
 		spin_lock_irqsave(&input_pool.lock, flags);
@@ -1083,7 +1087,7 @@ static void add_timer_randomness(struct timer_rand_state *state, unsigned int nu
 	 * close to the one in this function, we credit a full 64/64 bit per bit,
 	 * and then subtract one to account for the extra one added.
 	 */
-	if (in_irq())
+	if (in_hardirq())
 		this_cpu_ptr(&irq_randomness)->count += max(1u, bits * 64) - 1;
 	else
 		_credit_init_bits(bits);
@@ -1299,7 +1303,7 @@ static ssize_t random_read_iter(struct kiocb *kiocb, struct iov_iter *iter)
 	int ret;
 
 	if (!crng_ready() &&
-	    ((kiocb->ki_flags & IOCB_NOWAIT) ||
+	    ((kiocb->ki_flags & (IOCB_NOWAIT | IOCB_NOIO)) ||
 	     (kiocb->ki_filp->f_flags & O_NONBLOCK)))
 		return -EAGAIN;
 
@@ -1446,7 +1450,7 @@ static u8 sysctl_bootid[UUID_SIZE];
  * UUID. The difference is in whether table->data is NULL; if it is,
  * then a new UUID is generated and returned to the user.
  */
-static int proc_do_uuid(struct ctl_table *table, int write, void __user *buf,
+static int proc_do_uuid(struct ctl_table *table, int write, void *buf,
 			size_t *lenp, loff_t *ppos)
 {
 	u8 tmp_uuid[UUID_SIZE], *uuid;
@@ -1477,7 +1481,7 @@ static int proc_do_uuid(struct ctl_table *table, int write, void __user *buf,
 }
 
 /* The same as proc_dointvec, but writes don't change anything. */
-static int proc_do_rointvec(struct ctl_table *table, int write, void __user *buf,
+static int proc_do_rointvec(struct ctl_table *table, int write, void *buf,
 			    size_t *lenp, loff_t *ppos)
 {
 	return write ? 0 : proc_dointvec(table, 0, buf, lenp, ppos);

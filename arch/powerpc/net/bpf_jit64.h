@@ -39,7 +39,7 @@
 #define TMP_REG_2	(MAX_BPF_JIT_REG + 1)
 
 /* BPF to ppc register mappings */
-static const int b2p[] = {
+const int b2p[MAX_BPF_JIT_REG + 2] = {
 	/* function return value */
 	[BPF_REG_0] = 8,
 	/* function arguments */
@@ -70,38 +70,21 @@ static const int b2p[] = {
  */
 #define PPC_BPF_LL(r, base, i) do {					      \
 				if ((i) % 4) {				      \
-					PPC_LI(b2p[TMP_REG_2], (i));	      \
-					PPC_LDX(r, base, b2p[TMP_REG_2]);     \
+					EMIT(PPC_RAW_LI(b2p[TMP_REG_2], (i)));\
+					EMIT(PPC_RAW_LDX(r, base,	      \
+							b2p[TMP_REG_2]));     \
 				} else					      \
-					PPC_LD(r, base, i);		      \
+					EMIT(PPC_RAW_LD(r, base, i));	      \
 				} while(0)
 #define PPC_BPF_STL(r, base, i) do {					      \
 				if ((i) % 4) {				      \
-					PPC_LI(b2p[TMP_REG_2], (i));	      \
-					PPC_STDX(r, base, b2p[TMP_REG_2]);    \
+					EMIT(PPC_RAW_LI(b2p[TMP_REG_2], (i)));\
+					EMIT(PPC_RAW_STDX(r, base,	      \
+							b2p[TMP_REG_2]));     \
 				} else					      \
-					PPC_STD(r, base, i);		      \
+					EMIT(PPC_RAW_STD(r, base, i));	      \
 				} while(0)
-#define PPC_BPF_STLU(r, base, i) do { PPC_STDU(r, base, i); } while(0)
-
-#define SEEN_FUNC	0x1000 /* might call external helpers */
-#define SEEN_STACK	0x2000 /* uses BPF stack */
-#define SEEN_TAILCALL	0x4000 /* uses tail calls */
-
-struct codegen_context {
-	/*
-	 * This is used to track register usage as well
-	 * as calls to external helpers.
-	 * - register usage is tracked with corresponding
-	 *   bits (r3-r10 and r27-r31)
-	 * - rest of the bits can be used to track other
-	 *   things -- for now, we use bits 16 to 23
-	 *   encoded in SEEN_* macros above
-	 */
-	unsigned int seen;
-	unsigned int idx;
-	unsigned int stack_size;
-};
+#define PPC_BPF_STLU(r, base, i) do { EMIT(PPC_RAW_STDU(r, base, i)); } while(0)
 
 #endif /* !__ASSEMBLY__ */
 

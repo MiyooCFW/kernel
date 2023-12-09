@@ -14,10 +14,9 @@
 #include <linux/acpi.h>
 #include <acpi/processor.h>
 
-#include "internal.h"
+#include <xen/xen.h>
 
-#define _COMPONENT              ACPI_PROCESSOR_COMPONENT
-ACPI_MODULE_NAME("processor_pdc");
+#include "internal.h"
 
 static bool __init processor_physically_present(acpi_handle handle)
 {
@@ -49,6 +48,15 @@ static bool __init processor_physically_present(acpi_handle handle)
 	default:
 		return false;
 	}
+
+	if (xen_initial_domain())
+		/*
+		 * When running as a Xen dom0 the number of processors Linux
+		 * sees can be different from the real number of processors on
+		 * the system, and we still need to execute _PDC for all of
+		 * them.
+		 */
+		return xen_processor_present(acpi_id);
 
 	type = (acpi_type == ACPI_TYPE_DEVICE) ? 1 : 0;
 	cpuid = acpi_get_cpuid(handle, type, acpi_id);
@@ -132,8 +140,8 @@ acpi_processor_eval_pdc(acpi_handle handle, struct acpi_object_list *pdc_in)
 	status = acpi_evaluate_object(handle, "_PDC", pdc_in, NULL);
 
 	if (ACPI_FAILURE(status))
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-		    "Could not evaluate _PDC, using legacy perf. control.\n"));
+		acpi_handle_debug(handle,
+		    "Could not evaluate _PDC, using legacy perf control\n");
 
 	return status;
 }

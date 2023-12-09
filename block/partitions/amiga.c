@@ -16,7 +16,6 @@
 #include <linux/affs_hardblocks.h>
 
 #include "check.h"
-#include "amiga.h"
 
 /* magic offsets in partition DosEnvVec */
 #define NR_HD	3
@@ -47,16 +46,14 @@ int amiga_partition(struct parsed_partitions *state)
 	int part, res = 0;
 	unsigned int blksize = 1;	/* Multiplier for disk block size */
 	int slot = 1;
-	char b[BDEVNAME_SIZE];
 
 	for (blk = 0; ; blk++, put_dev_sector(sect)) {
 		if (blk == RDB_ALLOCATION_LIMIT)
 			goto rdb_done;
 		data = read_part_sector(state, blk, &sect);
 		if (!data) {
-			if (warn_no_part)
-				pr_err("Dev %s: unable to read RDB block %llu\n",
-				       bdevname(state->bdev, b), blk);
+			pr_err("Dev %s: unable to read RDB block %llu\n",
+			       state->disk->disk_name, blk);
 			res = -1;
 			goto rdb_done;
 		}
@@ -78,7 +75,7 @@ int amiga_partition(struct parsed_partitions *state)
 		}
 
 		pr_err("Dev %s: RDB in block %llu has bad checksum\n",
-		       bdevname(state->bdev, b), blk);
+		       state->disk->disk_name, blk);
 	}
 
 	/* blksize is blocks per 512 byte standard block */
@@ -97,14 +94,13 @@ int amiga_partition(struct parsed_partitions *state)
 		/* Read in terms partition table understands */
 		if (check_mul_overflow(blk, (sector_t) blksize, &blk)) {
 			pr_err("Dev %s: overflow calculating partition block %llu! Skipping partitions %u and beyond\n",
-				bdevname(state->bdev, b), blk, part);
+				state->disk->disk_name, blk, part);
 			break;
 		}
 		data = read_part_sector(state, blk, &sect);
 		if (!data) {
-			if (warn_no_part)
-				pr_err("Dev %s: unable to read partition block %llu\n",
-				       bdevname(state->bdev, b), blk);
+			pr_err("Dev %s: unable to read partition block %llu\n",
+			       state->disk->disk_name, blk);
 			res = -1;
 			goto rdb_done;
 		}
@@ -128,14 +124,14 @@ int amiga_partition(struct parsed_partitions *state)
 		/* CylBlocks is total number of blocks per cylinder */
 		if (check_mul_overflow(nr_hd, nr_sect, &cylblk)) {
 			pr_err("Dev %s: heads*sects %u overflows u32, skipping partition!\n",
-				bdevname(state->bdev, b), cylblk);
+				state->disk->disk_name, cylblk);
 			continue;
 		}
 
 		/* check for consistency with RDB defined CylBlocks */
 		if (cylblk > be32_to_cpu(rdb->rdb_CylBlocks)) {
 			pr_warn("Dev %s: cylblk %u > rdb_CylBlocks %u!\n",
-				bdevname(state->bdev, b), cylblk,
+				state->disk->disk_name, cylblk,
 				be32_to_cpu(rdb->rdb_CylBlocks));
 		}
 
@@ -145,7 +141,7 @@ int amiga_partition(struct parsed_partitions *state)
 
 		if (check_mul_overflow(cylblk, blksize, &cylblk)) {
 			pr_err("Dev %s: partition %u bytes per cyl. overflows u32, skipping partition!\n",
-				bdevname(state->bdev, b), part);
+				state->disk->disk_name, part);
 			continue;
 		}
 
@@ -166,13 +162,13 @@ int amiga_partition(struct parsed_partitions *state)
 
 		if ((start_sect + nr_sects) > UINT_MAX) {
 			pr_warn("Dev %s: partition %u (%llu-%llu) needs 64 bit device support!\n",
-				bdevname(state->bdev, b), part,
+				state->disk->disk_name, part,
 				start_sect, start_sect + nr_sects);
 		}
 
 		if (check_add_overflow(start_sect, nr_sects, &end_sect)) {
 			pr_err("Dev %s: partition %u (%llu-%llu) needs LBD device support, skipping partition!\n",
-				bdevname(state->bdev, b), part,
+				state->disk->disk_name, part,
 				start_sect, end_sect);
 			continue;
 		}

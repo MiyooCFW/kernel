@@ -20,6 +20,8 @@
 #include "bnxt.h"
 #include "bnxt_xdp.h"
 
+DEFINE_STATIC_KEY_FALSE(bnxt_xdp_locking_key);
+
 struct bnxt_sw_tx_bd *bnxt_xmit_bd(struct bnxt *bp,
 				   struct bnxt_tx_ring_info *txr,
 				   dma_addr_t mapping, u32 len)
@@ -87,7 +89,7 @@ void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
 			dma_unmap_single(&pdev->dev,
 					 dma_unmap_addr(tx_buf, mapping),
 					 dma_unmap_len(tx_buf, len),
-					 PCI_DMA_TODEVICE);
+					 DMA_TO_DEVICE);
 			xdp_return_frame(tx_buf->xdpf);
 			tx_buf->action = 0;
 			tx_buf->xdpf = NULL;
@@ -133,16 +135,12 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	dma_sync_single_for_cpu(&pdev->dev, mapping + offset, *len, bp->rx_dir);
 
 	txr = rxr->bnapi->tx_ring;
-	xdp.data_hard_start = *data_ptr - offset;
-	xdp.data = *data_ptr;
-	xdp_set_data_meta_invalid(&xdp);
-	xdp.data_end = *data_ptr + *len;
-	xdp.rxq = &rxr->xdp_rxq;
+	/* BNXT_RX_PAGE_MODE(bp) when XDP enabled */
+	xdp_init_buff(&xdp, PAGE_SIZE, &rxr->xdp_rxq);
+	xdp_prepare_buff(&xdp, *data_ptr - offset, offset, *len, false);
 	orig_data = xdp.data;
 
-	rcu_read_lock();
 	act = bpf_prog_run_xdp(xdp_prog, &xdp);
-	rcu_read_unlock();
 
 	tx_avail = bnxt_tx_avail(bp, txr);
 	/* If the tx ring is not full, we must not update the rx producer yet
@@ -200,10 +198,10 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 		break;
 	default:
 		bpf_warn_invalid_xdp_action(act);
-		/* Fall thru */
+		fallthrough;
 	case XDP_ABORTED:
 		trace_xdp_exception(bp->dev, xdp_prog, act);
-		/* Fall thru */
+		fallthrough;
 	case XDP_DROP:
 		bnxt_reuse_rx_data(rxr, cons, page);
 		break;
@@ -219,7 +217,7 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 	struct pci_dev *pdev = bp->pdev;
 	struct bnxt_tx_ring_info *txr;
 	dma_addr_t mapping;
-	int drops = 0;
+	int nxmit = 0;
 	int ring;
 	int i;
 
@@ -231,25 +229,26 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 	ring = smp_processor_id() % bp->tx_nr_rings_xdp;
 	txr = &bp->tx_ring[ring];
 
+	if (READ_ONCE(txr->dev_state) == BNXT_DEV_STATE_CLOSING)
+		return -EINVAL;
+
+	if (static_branch_unlikely(&bnxt_xdp_locking_key))
+		spin_lock(&txr->xdp_tx_lock);
+
 	for (i = 0; i < num_frames; i++) {
 		struct xdp_frame *xdp = frames[i];
 
-		if (!txr || !bnxt_tx_avail(bp, txr) ||
-		    !(bp->bnapi[ring]->flags & BNXT_NAPI_FLAG_XDP)) {
-			xdp_return_frame_rx_napi(xdp);
-			drops++;
-			continue;
-		}
+		if (!bnxt_tx_avail(bp, txr))
+			break;
 
 		mapping = dma_map_single(&pdev->dev, xdp->data, xdp->len,
 					 DMA_TO_DEVICE);
 
-		if (dma_mapping_error(&pdev->dev, mapping)) {
-			xdp_return_frame_rx_napi(xdp);
-			drops++;
-			continue;
-		}
+		if (dma_mapping_error(&pdev->dev, mapping))
+			break;
+
 		__bnxt_xmit_xdp_redirect(bp, txr, mapping, xdp->len, xdp);
+		nxmit++;
 	}
 
 	if (flags & XDP_XMIT_FLUSH) {
@@ -258,7 +257,10 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 		bnxt_db_write(bp, &txr->tx_db, txr->tx_prod);
 	}
 
-	return num_frames - drops;
+	if (static_branch_unlikely(&bnxt_xdp_locking_key))
+		spin_unlock(&txr->xdp_tx_lock);
+
+	return nxmit;
 }
 
 /* Under rtnl_lock */
@@ -328,10 +330,6 @@ int bnxt_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 	switch (xdp->command) {
 	case XDP_SETUP_PROG:
 		rc = bnxt_xdp_set(bp, xdp->prog);
-		break;
-	case XDP_QUERY_PROG:
-		xdp->prog_id = bp->xdp_prog ? bp->xdp_prog->aux->id : 0;
-		rc = 0;
 		break;
 	default:
 		rc = -EINVAL;

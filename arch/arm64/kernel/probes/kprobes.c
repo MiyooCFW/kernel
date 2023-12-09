@@ -7,26 +7,31 @@
  * Copyright (C) 2013 Linaro Limited.
  * Author: Sandeepa Prabhu <sandeepa.prabhu@linaro.org>
  */
+
+#define pr_fmt(fmt) "kprobes: " fmt
+
+#include <linux/extable.h>
 #include <linux/kasan.h>
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
-#include <linux/extable.h>
-#include <linux/slab.h>
-#include <linux/stop_machine.h>
 #include <linux/sched/debug.h>
 #include <linux/set_memory.h>
+#include <linux/slab.h>
+#include <linux/stop_machine.h>
 #include <linux/stringify.h>
-#include <linux/vmalloc.h>
-#include <asm/traps.h>
-#include <asm/ptrace.h>
-#include <asm/cacheflush.h>
-#include <asm/debug-monitors.h>
-#include <asm/daifflags.h>
-#include <asm/system_misc.h>
-#include <asm/insn.h>
 #include <linux/uaccess.h>
+#include <linux/vmalloc.h>
+
+#include <asm/cacheflush.h>
+#include <asm/daifflags.h>
+#include <asm/debug-monitors.h>
+#include <asm/insn.h>
 #include <asm/irq.h>
+#include <asm/patching.h>
+#include <asm/ptrace.h>
 #include <asm/sections.h>
+#include <asm/system_misc.h>
+#include <asm/traps.h>
 
 #include "decode-insn.h"
 
@@ -34,7 +39,7 @@ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
 DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
 
 static void __kprobes
-post_kprobe_handler(struct kprobe_ctlblk *, struct pt_regs *);
+post_kprobe_handler(struct kprobe *, struct kprobe_ctlblk *, struct pt_regs *);
 
 static void __kprobes arch_prepare_ss_slot(struct kprobe *p)
 {
@@ -68,7 +73,7 @@ static void __kprobes arch_simulate_insn(struct kprobe *p, struct pt_regs *regs)
 		p->ainsn.api.handler((u32)p->opcode, (long)p->addr, regs);
 
 	/* single step simulated, now go for post processing */
-	post_kprobe_handler(kcb, regs);
+	post_kprobe_handler(p, kcb, regs);
 }
 
 int __kprobes arch_prepare_kprobe(struct kprobe *p)
@@ -111,15 +116,9 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
 
 void *alloc_insn_page(void)
 {
-	void *page;
-
-	page = vmalloc_exec(PAGE_SIZE);
-	if (page) {
-		set_memory_ro((unsigned long)page, 1);
-		set_vm_flush_reset_perms(page);
-	}
-
-	return page;
+	return __vmalloc_node_range(PAGE_SIZE, 1, VMALLOC_START, VMALLOC_END,
+			GFP_KERNEL, PAGE_KERNEL_ROX, VM_FLUSH_RESET_PERMS,
+			NUMA_NO_NODE, __builtin_return_address(0));
 }
 
 /* arm kprobe: install breakpoint in text */
@@ -183,19 +182,6 @@ static void __kprobes kprobes_restore_local_irqflag(struct kprobe_ctlblk *kcb,
 	regs->pstate |= kcb->saved_irqflag;
 }
 
-static void __kprobes
-set_ss_context(struct kprobe_ctlblk *kcb, unsigned long addr)
-{
-	kcb->ss_ctx.ss_pending = true;
-	kcb->ss_ctx.match_addr = addr + sizeof(kprobe_opcode_t);
-}
-
-static void __kprobes clear_ss_context(struct kprobe_ctlblk *kcb)
-{
-	kcb->ss_ctx.ss_pending = false;
-	kcb->ss_ctx.match_addr = 0;
-}
-
 static void __kprobes setup_singlestep(struct kprobe *p,
 				       struct pt_regs *regs,
 				       struct kprobe_ctlblk *kcb, int reenter)
@@ -215,7 +201,6 @@ static void __kprobes setup_singlestep(struct kprobe *p,
 		/* prepare for single stepping */
 		slot = (unsigned long)p->ainsn.api.insn;
 
-		set_ss_context(kcb, slot);	/* mark pending ss */
 		kprobes_save_local_irqflag(kcb, regs);
 		instruction_pointer_set(regs, slot);
 	} else {
@@ -236,7 +221,7 @@ static int __kprobes reenter_kprobe(struct kprobe *p,
 		break;
 	case KPROBE_HIT_SS:
 	case KPROBE_REENTER:
-		pr_warn("Unrecoverable kprobe detected.\n");
+		pr_warn("Failed to recover from reentered kprobes.\n");
 		dump_kprobe(p);
 		BUG();
 		break;
@@ -249,13 +234,8 @@ static int __kprobes reenter_kprobe(struct kprobe *p,
 }
 
 static void __kprobes
-post_kprobe_handler(struct kprobe_ctlblk *kcb, struct pt_regs *regs)
+post_kprobe_handler(struct kprobe *cur, struct kprobe_ctlblk *kcb, struct pt_regs *regs)
 {
-	struct kprobe *cur = kprobe_running();
-
-	if (!cur)
-		return;
-
 	/* return addr restore if non-branching insn */
 	if (cur->ainsn.api.restore != 0)
 		instruction_pointer_set(regs, cur->ainsn.api.restore);
@@ -289,34 +269,18 @@ int __kprobes kprobe_fault_handler(struct pt_regs *regs, unsigned int fsr)
 		 * normal page fault.
 		 */
 		instruction_pointer_set(regs, (unsigned long) cur->addr);
-		if (!instruction_pointer(regs))
-			BUG();
+		BUG_ON(!instruction_pointer(regs));
 
-		if (kcb->kprobe_status == KPROBE_REENTER)
+		if (kcb->kprobe_status == KPROBE_REENTER) {
 			restore_previous_kprobe(kcb);
-		else
+		} else {
+			kprobes_restore_local_irqflag(kcb, regs);
 			reset_current_kprobe();
+		}
 
 		break;
 	case KPROBE_HIT_ACTIVE:
 	case KPROBE_HIT_SSDONE:
-		/*
-		 * We increment the nmissed count for accounting,
-		 * we can also use npre/npostfault count for accounting
-		 * these specific fault cases.
-		 */
-		kprobes_inc_nmissed_count(cur);
-
-		/*
-		 * We come here because instructions in the pre/post
-		 * handler caused the page_fault, this could happen
-		 * if handler tries to access user space by
-		 * copy_from_user(), get_user() etc. Let the
-		 * user-specified handler try to fix it first.
-		 */
-		if (cur->fault_handler && cur->fault_handler(cur, regs, fsr))
-			return 1;
-
 		/*
 		 * In case the user-specified fault handler returned
 		 * zero, try to fix up.
@@ -371,32 +335,22 @@ static void __kprobes kprobe_handler(struct pt_regs *regs)
 }
 
 static int __kprobes
-kprobe_ss_hit(struct kprobe_ctlblk *kcb, unsigned long addr)
-{
-	if ((kcb->ss_ctx.ss_pending)
-	    && (kcb->ss_ctx.match_addr == addr)) {
-		clear_ss_context(kcb);	/* clear pending ss */
-		return DBG_HOOK_HANDLED;
-	}
-	/* not ours, kprobes should ignore it */
-	return DBG_HOOK_ERROR;
-}
-
-static int __kprobes
-kprobe_breakpoint_ss_handler(struct pt_regs *regs, unsigned int esr)
+kprobe_breakpoint_ss_handler(struct pt_regs *regs, unsigned long esr)
 {
 	struct kprobe_ctlblk *kcb = get_kprobe_ctlblk();
-	int retval;
+	unsigned long addr = instruction_pointer(regs);
+	struct kprobe *cur = kprobe_running();
 
-	/* return error if this is not our step */
-	retval = kprobe_ss_hit(kcb, instruction_pointer(regs));
-
-	if (retval == DBG_HOOK_HANDLED) {
+	if (cur && (kcb->kprobe_status & (KPROBE_HIT_SS | KPROBE_REENTER)) &&
+	    ((unsigned long)&cur->ainsn.api.insn[1] == addr)) {
 		kprobes_restore_local_irqflag(kcb, regs);
-		post_kprobe_handler(kcb, regs);
+		post_kprobe_handler(cur, kcb, regs);
+
+		return DBG_HOOK_HANDLED;
 	}
 
-	return retval;
+	/* not ours, kprobes should ignore it */
+	return DBG_HOOK_ERROR;
 }
 
 static struct break_hook kprobes_break_ss_hook = {
@@ -405,7 +359,7 @@ static struct break_hook kprobes_break_ss_hook = {
 };
 
 static int __kprobes
-kprobe_breakpoint_handler(struct pt_regs *regs, unsigned int esr)
+kprobe_breakpoint_handler(struct pt_regs *regs, unsigned long esr)
 {
 	kprobe_handler(regs);
 	return DBG_HOOK_HANDLED;
@@ -432,10 +386,6 @@ int __init arch_populate_kprobe_blacklist(void)
 					(unsigned long)__irqentry_text_end);
 	if (ret)
 		return ret;
-	ret = kprobe_add_area_blacklist((unsigned long)__exception_text_start,
-					(unsigned long)__exception_text_end);
-	if (ret)
-		return ret;
 	ret = kprobe_add_area_blacklist((unsigned long)__idmap_text_start,
 					(unsigned long)__idmap_text_end);
 	if (ret)
@@ -451,87 +401,15 @@ int __init arch_populate_kprobe_blacklist(void)
 
 void __kprobes __used *trampoline_probe_handler(struct pt_regs *regs)
 {
-	struct kretprobe_instance *ri = NULL;
-	struct hlist_head *head, empty_rp;
-	struct hlist_node *tmp;
-	unsigned long flags, orig_ret_address = 0;
-	unsigned long trampoline_address =
-		(unsigned long)&kretprobe_trampoline;
-	kprobe_opcode_t *correct_ret_addr = NULL;
-
-	INIT_HLIST_HEAD(&empty_rp);
-	kretprobe_hash_lock(current, &head, &flags);
-
-	/*
-	 * It is possible to have multiple instances associated with a given
-	 * task either because multiple functions in the call path have
-	 * return probes installed on them, and/or more than one
-	 * return probe was registered for a target function.
-	 *
-	 * We can handle this because:
-	 *     - instances are always pushed into the head of the list
-	 *     - when multiple return probes are registered for the same
-	 *	 function, the (chronologically) first instance's ret_addr
-	 *	 will be the real return address, and all the rest will
-	 *	 point to kretprobe_trampoline.
-	 */
-	hlist_for_each_entry_safe(ri, tmp, head, hlist) {
-		if (ri->task != current)
-			/* another task is sharing our hash bucket */
-			continue;
-
-		orig_ret_address = (unsigned long)ri->ret_addr;
-
-		if (orig_ret_address != trampoline_address)
-			/*
-			 * This is the real return address. Any other
-			 * instances associated with this task are for
-			 * other calls deeper on the call stack
-			 */
-			break;
-	}
-
-	kretprobe_assert(ri, orig_ret_address, trampoline_address);
-
-	correct_ret_addr = ri->ret_addr;
-	hlist_for_each_entry_safe(ri, tmp, head, hlist) {
-		if (ri->task != current)
-			/* another task is sharing our hash bucket */
-			continue;
-
-		orig_ret_address = (unsigned long)ri->ret_addr;
-		if (ri->rp && ri->rp->handler) {
-			__this_cpu_write(current_kprobe, &ri->rp->kp);
-			get_kprobe_ctlblk()->kprobe_status = KPROBE_HIT_ACTIVE;
-			ri->ret_addr = correct_ret_addr;
-			ri->rp->handler(ri, regs);
-			__this_cpu_write(current_kprobe, NULL);
-		}
-
-		recycle_rp_inst(ri, &empty_rp);
-
-		if (orig_ret_address != trampoline_address)
-			/*
-			 * This is the real return address. Any other
-			 * instances associated with this task are for
-			 * other calls deeper on the call stack
-			 */
-			break;
-	}
-
-	kretprobe_hash_unlock(current, &flags);
-
-	hlist_for_each_entry_safe(ri, tmp, &empty_rp, hlist) {
-		hlist_del(&ri->hlist);
-		kfree(ri);
-	}
-	return (void *)orig_ret_address;
+	return (void *)kretprobe_trampoline_handler(regs, &kretprobe_trampoline,
+					(void *)kernel_stack_pointer(regs));
 }
 
 void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 				      struct pt_regs *regs)
 {
 	ri->ret_addr = (kprobe_opcode_t *)regs->regs[30];
+	ri->fp = (void *)kernel_stack_pointer(regs);
 
 	/* replace return addr (x30) with trampoline */
 	regs->regs[30] = (long)&kretprobe_trampoline;

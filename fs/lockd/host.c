@@ -163,7 +163,7 @@ static struct nlm_host *nlm_alloc_host(struct nlm_lookup_host_info *ni,
 	host->h_nsmhandle  = nsm;
 	host->h_addrbuf    = nsm->sm_addrbuf;
 	host->net	   = ni->net;
-	host->h_cred	   = get_cred(ni->cred),
+	host->h_cred	   = get_cred(ni->cred);
 	strlcpy(host->nodename, utsname()->nodename, sizeof(host->nodename));
 
 out:
@@ -459,7 +459,8 @@ nlm_bind_host(struct nlm_host *host)
 			.version	= host->h_version,
 			.authflavor	= RPC_AUTH_UNIX,
 			.flags		= (RPC_CLNT_CREATE_NOPING |
-					   RPC_CLNT_CREATE_AUTOBIND),
+					   RPC_CLNT_CREATE_AUTOBIND |
+					   RPC_CLNT_CREATE_REUSEPORT),
 			.cred		= host->h_cred,
 		};
 

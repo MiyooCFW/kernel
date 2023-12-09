@@ -99,7 +99,7 @@ static int nft_osf_dump(struct sk_buff *skb, const struct nft_expr *expr)
 	if (nla_put_u8(skb, NFTA_OSF_TTL, priv->ttl))
 		goto nla_put_failure;
 
-	if (nla_put_be32(skb, NFTA_OSF_FLAGS, ntohl(priv->flags)))
+	if (nla_put_u32(skb, NFTA_OSF_FLAGS, ntohl((__force __be32)priv->flags)))
 		goto nla_put_failure;
 
 	if (nft_dump_register(skb, NFTA_OSF_DREG, priv->dreg))
@@ -166,3 +166,4 @@ module_exit(nft_osf_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Fernando Fernandez <ffmancera@riseup.net>");
 MODULE_ALIAS_NFT_EXPR("osf");
+MODULE_DESCRIPTION("nftables passive OS fingerprint support");

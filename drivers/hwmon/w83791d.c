@@ -312,8 +312,7 @@ struct w83791d_data {
 	u8 vrm;			/* hwmon-vid */
 };
 
-static int w83791d_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id);
+static int w83791d_probe(struct i2c_client *client);
 static int w83791d_detect(struct i2c_client *client,
 			  struct i2c_board_info *info);
 static int w83791d_remove(struct i2c_client *client);
@@ -339,7 +338,7 @@ static struct i2c_driver w83791d_driver = {
 	.driver = {
 		.name = "w83791d",
 	},
-	.probe		= w83791d_probe,
+	.probe_new	= w83791d_probe,
 	.remove		= w83791d_remove,
 	.id_table	= w83791d_id,
 	.detect		= w83791d_detect,
@@ -1339,8 +1338,7 @@ static int w83791d_detect(struct i2c_client *client,
 	return 0;
 }
 
-static int w83791d_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
+static int w83791d_probe(struct i2c_client *client)
 {
 	struct w83791d_data *data;
 	struct device *dev = &client->dev;

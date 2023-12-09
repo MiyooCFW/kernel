@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016 Maxime Ripard. All rights reserved.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #ifndef _COMMON_H_
@@ -71,7 +63,9 @@ struct ccu_pll_nb {
 
 int ccu_pll_notifier_register(struct ccu_pll_nb *pll_nb);
 
-int sunxi_ccu_probe(struct device_node *node, void __iomem *reg,
-		    const struct sunxi_ccu_desc *desc);
+int devm_sunxi_ccu_probe(struct device *dev, void __iomem *reg,
+			 const struct sunxi_ccu_desc *desc);
+void of_sunxi_ccu_probe(struct device_node *node, void __iomem *reg,
+			const struct sunxi_ccu_desc *desc);
 
 #endif /* _COMMON_H_ */

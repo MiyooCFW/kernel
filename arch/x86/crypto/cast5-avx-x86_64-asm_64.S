@@ -209,7 +209,7 @@
 .text
 
 .align 16
-__cast5_enc_blk16:
+SYM_FUNC_START_LOCAL(__cast5_enc_blk16)
 	/* input:
 	 *	%rdi: ctx
 	 *	RL1: blocks 1 and 2
@@ -279,11 +279,11 @@ __cast5_enc_blk16:
 	outunpack_blocks(RR3, RL3, RTMP, RX, RKM);
 	outunpack_blocks(RR4, RL4, RTMP, RX, RKM);
 
-	ret;
-ENDPROC(__cast5_enc_blk16)
+	RET;
+SYM_FUNC_END(__cast5_enc_blk16)
 
 .align 16
-__cast5_dec_blk16:
+SYM_FUNC_START_LOCAL(__cast5_dec_blk16)
 	/* input:
 	 *	%rdi: ctx
 	 *	RL1: encrypted blocks 1 and 2
@@ -352,14 +352,14 @@ __cast5_dec_blk16:
 	outunpack_blocks(RR3, RL3, RTMP, RX, RKM);
 	outunpack_blocks(RR4, RL4, RTMP, RX, RKM);
 
-	ret;
+	RET;
 
 .L__skip_dec:
 	vpsrldq $4, RKR, RKR;
 	jmp .L__dec_tail;
-ENDPROC(__cast5_dec_blk16)
+SYM_FUNC_END(__cast5_dec_blk16)
 
-ENTRY(cast5_ecb_enc_16way)
+SYM_FUNC_START(cast5_ecb_enc_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -393,10 +393,10 @@ ENTRY(cast5_ecb_enc_16way)
 
 	popq %r15;
 	FRAME_END
-	ret;
-ENDPROC(cast5_ecb_enc_16way)
+	RET;
+SYM_FUNC_END(cast5_ecb_enc_16way)
 
-ENTRY(cast5_ecb_dec_16way)
+SYM_FUNC_START(cast5_ecb_dec_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -431,10 +431,10 @@ ENTRY(cast5_ecb_dec_16way)
 
 	popq %r15;
 	FRAME_END
-	ret;
-ENDPROC(cast5_ecb_dec_16way)
+	RET;
+SYM_FUNC_END(cast5_ecb_dec_16way)
 
-ENTRY(cast5_cbc_dec_16way)
+SYM_FUNC_START(cast5_cbc_dec_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -483,10 +483,10 @@ ENTRY(cast5_cbc_dec_16way)
 	popq %r15;
 	popq %r12;
 	FRAME_END
-	ret;
-ENDPROC(cast5_cbc_dec_16way)
+	RET;
+SYM_FUNC_END(cast5_cbc_dec_16way)
 
-ENTRY(cast5_ctr_16way)
+SYM_FUNC_START(cast5_ctr_16way)
 	/* input:
 	 *	%rdi: ctx
 	 *	%rsi: dst
@@ -559,5 +559,5 @@ ENTRY(cast5_ctr_16way)
 	popq %r15;
 	popq %r12;
 	FRAME_END
-	ret;
-ENDPROC(cast5_ctr_16way)
+	RET;
+SYM_FUNC_END(cast5_ctr_16way)

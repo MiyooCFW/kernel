@@ -9,6 +9,7 @@
  * Many thanks to all socketcan devs!
  */
 
+#include <linux/ethtool.h>
 #include <linux/init.h>
 #include <linux/signal.h>
 #include <linux/module.h>
@@ -339,7 +340,7 @@ static void gs_usb_receive_bulk_callback(struct urb *urb)
 
 		cf->can_id = le32_to_cpu(hf->can_id);
 
-		cf->can_dlc = get_can_dlc(hf->can_dlc);
+		can_frame_set_cc_len(cf, hf->can_dlc, dev->can.ctrlmode);
 		memcpy(cf->data, hf->data, 8);
 
 		/* ERROR frames tell us information about the controller */
@@ -371,7 +372,7 @@ static void gs_usb_receive_bulk_callback(struct urb *urb)
 			goto resubmit_urb;
 		}
 
-		can_get_echo_skb(netdev, hf->echo_id);
+		can_get_echo_skb(netdev, hf->echo_id, NULL);
 
 		gs_free_tx_context(txc);
 
@@ -389,7 +390,7 @@ static void gs_usb_receive_bulk_callback(struct urb *urb)
 			goto resubmit_urb;
 
 		cf->can_id |= CAN_ERR_CRTL;
-		cf->can_dlc = CAN_ERR_DLC;
+		cf->len = CAN_ERR_DLC;
 		cf->data[1] = CAN_ERR_CRTL_RX_OVERFLOW;
 		netif_rx(skb);
 	}
@@ -516,8 +517,9 @@ static netdev_tx_t gs_can_start_xmit(struct sk_buff *skb,
 	cf = (struct can_frame *)skb->data;
 
 	hf->can_id = cpu_to_le32(cf->can_id);
-	hf->can_dlc = cf->can_dlc;
-	memcpy(hf->data, cf->data, cf->can_dlc);
+	hf->can_dlc = can_get_cc_dlc(cf, dev->can.ctrlmode);
+
+	memcpy(hf->data, cf->data, cf->len);
 
 	usb_fill_bulk_urb(urb, dev->udev,
 			  usb_sndbulkpipe(dev->udev, GSUSB_ENDPOINT_OUT),
@@ -529,7 +531,7 @@ static netdev_tx_t gs_can_start_xmit(struct sk_buff *skb,
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 	usb_anchor_urb(urb, &dev->tx_submitted);
 
-	can_put_echo_skb(skb, netdev, idx);
+	can_put_echo_skb(skb, netdev, idx, 0);
 
 	atomic_inc(&dev->active_tx_urbs);
 
@@ -537,7 +539,7 @@ static netdev_tx_t gs_can_start_xmit(struct sk_buff *skb,
 	if (unlikely(rc)) {			/* usb send failed */
 		atomic_dec(&dev->active_tx_urbs);
 
-		can_free_echo_skb(netdev, idx);
+		can_free_echo_skb(netdev, idx, NULL);
 		gs_free_tx_context(txc);
 
 		usb_unanchor_urb(urb);
@@ -863,7 +865,7 @@ static struct gs_can *gs_make_candev(unsigned int channel,
 
 	netdev->flags |= IFF_ECHO; /* we support full roundtrip echo */
 
-	/* dev settup */
+	/* dev setup */
 	strcpy(dev->bt_const.name, "gs_usb");
 	dev->bt_const.tseg1_min = le32_to_cpu(bt_const->tseg1_min);
 	dev->bt_const.tseg1_max = le32_to_cpu(bt_const->tseg1_max);
@@ -887,13 +889,13 @@ static struct gs_can *gs_make_candev(unsigned int channel,
 		dev->tx_context[rc].echo_id = GS_MAX_TX_URBS;
 	}
 
-	/* can settup */
+	/* can setup */
 	dev->can.state = CAN_STATE_STOPPED;
 	dev->can.clock.freq = le32_to_cpu(bt_const->fclk_can);
 	dev->can.bittiming_const = &dev->bt_const;
 	dev->can.do_set_bittiming = gs_usb_set_bittiming;
 
-	dev->can.ctrlmode_supported = 0;
+	dev->can.ctrlmode_supported = CAN_CTRLMODE_CC_LEN8_DLC;
 
 	feature = le32_to_cpu(bt_const->feature);
 	if (feature & GS_CAN_FEATURE_LISTEN_ONLY)

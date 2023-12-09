@@ -35,9 +35,8 @@ void flush_icache_page(struct vm_area_struct *vma, struct page *page)
 	kunmap_atomic((void *)kaddr);
 	local_irq_restore(flags);
 }
-EXPORT_SYMBOL(flush_icache_page);
 
-void flush_icache_user_range(struct vm_area_struct *vma, struct page *page,
+void flush_icache_user_page(struct vm_area_struct *vma, struct page *page,
 	                     unsigned long addr, int len)
 {
 	unsigned long kaddr;
@@ -318,15 +317,6 @@ void flush_anon_page(struct vm_area_struct *vma,
 	}
 	local_irq_restore(flags);
 }
-
-void flush_kernel_dcache_page(struct page *page)
-{
-	unsigned long flags;
-	local_irq_save(flags);
-	cpu_dcache_wbinval_page((unsigned long)page_address(page));
-	local_irq_restore(flags);
-}
-EXPORT_SYMBOL(flush_kernel_dcache_page);
 
 void flush_kernel_vmap_range(void *addr, int size)
 {

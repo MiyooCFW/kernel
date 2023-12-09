@@ -1,22 +1,18 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2008-2009 Michal Simek <monstr@monstr.eu>
  * Copyright (C) 2008-2009 PetaLogix
  * Copyright (C) 2006 Atmark Techno, Inc.
- *
- * This file is subject to the terms and conditions of the GNU General Public
- * License. See the file "COPYING" in the main directory of this archive
- * for more details.
  */
 
 #ifndef _ASM_MICROBLAZE_UACCESS_H
 #define _ASM_MICROBLAZE_UACCESS_H
 
 #include <linux/kernel.h>
-#include <linux/mm.h>
 
 #include <asm/mmu.h>
 #include <asm/page.h>
-#include <asm/pgtable.h>
+#include <linux/pgtable.h>
 #include <asm/extable.h>
 #include <linux/string.h>
 
@@ -34,62 +30,25 @@
  */
 # define MAKE_MM_SEG(s)       ((mm_segment_t) { (s) })
 
-#  ifndef CONFIG_MMU
-#  define KERNEL_DS	MAKE_MM_SEG(0)
-#  define USER_DS	KERNEL_DS
-#  else
 #  define KERNEL_DS	MAKE_MM_SEG(0xFFFFFFFF)
 #  define USER_DS	MAKE_MM_SEG(TASK_SIZE - 1)
-#  endif
 
 # define get_fs()	(current_thread_info()->addr_limit)
 # define set_fs(val)	(current_thread_info()->addr_limit = (val))
+# define user_addr_max() get_fs().seg
 
-# define segment_eq(a, b)	((a).seg == (b).seg)
+# define uaccess_kernel()	(get_fs().seg == KERNEL_DS.seg)
 
-#ifndef CONFIG_MMU
-
-/* Check against bounds of physical memory */
-static inline int ___range_ok(unsigned long addr, unsigned long size)
+static inline int __access_ok(unsigned long addr, unsigned long size)
 {
-	return ((addr < memory_start) ||
-		((addr + size - 1) > (memory_start + memory_size - 1)));
+	unsigned long limit = user_addr_max();
+
+	return (size <= limit) && (addr <= (limit - size));
 }
+#define access_ok(addr, size) __access_ok((unsigned long)addr, size)
 
-#define __range_ok(addr, size) \
-		___range_ok((unsigned long)(addr), (unsigned long)(size))
-
-#define access_ok(addr, size) (__range_ok((addr), (size)) == 0)
-
-#else
-
-static inline int access_ok(const void __user *addr, unsigned long size)
-{
-	if (!size)
-		goto ok;
-
-	if ((get_fs().seg < ((unsigned long)addr)) ||
-			(get_fs().seg < ((unsigned long)addr + size - 1))) {
-		pr_devel("ACCESS fail at 0x%08x (size 0x%x), seg 0x%08x\n",
-			(__force u32)addr, (u32)size,
-			(u32)get_fs().seg);
-		return 0;
-	}
-ok:
-	pr_devel("ACCESS OK at 0x%08x (size 0x%x), seg 0x%08x\n",
-			(__force u32)addr, (u32)size,
-			(u32)get_fs().seg);
-	return 1;
-}
-#endif
-
-#ifdef CONFIG_MMU
 # define __FIXUP_SECTION	".section .fixup,\"ax\"\n"
 # define __EX_TABLE_SECTION	".section __ex_table,\"a\"\n"
-#else
-# define __FIXUP_SECTION	".section .discard,\"ax\"\n"
-# define __EX_TABLE_SECTION	".section .discard,\"ax\"\n"
-#endif
 
 extern unsigned long __copy_tofrom_user(void __user *to,
 		const void __user *from, unsigned long size);
@@ -327,28 +286,14 @@ raw_copy_to_user(void __user *to, const void *from, unsigned long n)
 /*
  * Copy a null terminated string from userspace.
  */
-extern int __strncpy_user(char *to, const char __user *from, int len);
-
-static inline long
-strncpy_from_user(char *dst, const char __user *src, long count)
-{
-	if (!access_ok(src, 1))
-		return -EFAULT;
-	return __strncpy_user(dst, src, count);
-}
+__must_check long strncpy_from_user(char *dst, const char __user *src,
+				    long count);
 
 /*
  * Return the size of a string (including the ending 0)
  *
  * Return 0 on exception, a value greater than N if too long
  */
-extern int __strnlen_user(const char __user *sstr, int len);
-
-static inline long strnlen_user(const char __user *src, long n)
-{
-	if (!access_ok(src, 1))
-		return 0;
-	return __strnlen_user(src, n);
-}
+__must_check long strnlen_user(const char __user *sstr, long len);
 
 #endif /* _ASM_MICROBLAZE_UACCESS_H */

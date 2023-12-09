@@ -209,12 +209,14 @@ static void partition_struct(tree *fields, unsigned long length, struct partitio
 
 static void performance_shuffle(tree *newtree, unsigned long length, ranctx *prng_state)
 {
-	unsigned long i, x;
+	unsigned long i, x, index;
 	struct partition_group size_group[length];
 	unsigned long num_groups = 0;
 	unsigned long randnum;
 
 	partition_struct(newtree, length, (struct partition_group *)&size_group, &num_groups);
+
+	/* FIXME: this group shuffle is currently a no-op. */
 	for (i = num_groups - 1; i > 0; i--) {
 		struct partition_group tmp;
 		randnum = ranval(prng_state) % (i + 1);
@@ -224,11 +226,14 @@ static void performance_shuffle(tree *newtree, unsigned long length, ranctx *prn
 	}
 
 	for (x = 0; x < num_groups; x++) {
-		for (i = size_group[x].start + size_group[x].length - 1; i > size_group[x].start; i--) {
+		for (index = size_group[x].length - 1; index > 0; index--) {
 			tree tmp;
+
+			i = size_group[x].start + index;
 			if (DECL_BIT_FIELD_TYPE(newtree[i]))
 				continue;
-			randnum = ranval(prng_state) % (i + 1);
+			randnum = ranval(prng_state) % (index + 1);
+			randnum += size_group[x].start;
 			// we could handle this case differently if desired
 			if (DECL_BIT_FIELD_TYPE(newtree[randnum]))
 				continue;
@@ -590,16 +595,12 @@ static void register_attributes(void *event_data, void *data)
 	randomize_layout_attr.name		= "randomize_layout";
 	randomize_layout_attr.type_required	= true;
 	randomize_layout_attr.handler		= handle_randomize_layout_attr;
-#if BUILDING_GCC_VERSION >= 4007
 	randomize_layout_attr.affects_type_identity = true;
-#endif
 
 	no_randomize_layout_attr.name		= "no_randomize_layout";
 	no_randomize_layout_attr.type_required	= true;
 	no_randomize_layout_attr.handler	= handle_randomize_layout_attr;
-#if BUILDING_GCC_VERSION >= 4007
 	no_randomize_layout_attr.affects_type_identity = true;
-#endif
 
 	randomize_considered_attr.name		= "randomize_considered";
 	randomize_considered_attr.type_required	= true;

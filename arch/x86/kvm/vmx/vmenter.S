@@ -4,6 +4,7 @@
 #include <asm/bitsperlong.h>
 #include <asm/kvm_vcpu_regs.h>
 #include <asm/nospec-branch.h>
+#include <asm/segment.h>
 #include "run_flags.h"
 
 #define WORD_SIZE (BITS_PER_LONG / 8)
@@ -28,7 +29,7 @@
 #define VCPU_R15	__VCPU_REGS_R15 * WORD_SIZE
 #endif
 
-	.text
+.section .noinstr.text, "ax"
 
 /**
  * __vmx_vcpu_run - Run a vCPU via a transition to VMX guest mode
@@ -40,7 +41,7 @@
  * Returns:
  *	0 on VM-Exit, 1 on VM-Fail
  */
-ENTRY(__vmx_vcpu_run)
+SYM_FUNC_START(__vmx_vcpu_run)
 	push %_ASM_BP
 	mov  %_ASM_SP, %_ASM_BP
 #ifdef CONFIG_X86_64
@@ -79,12 +80,12 @@ ENTRY(__vmx_vcpu_run)
 	testb $VMX_RUN_VMRESUME, %bl
 
 	/* Load guest registers.  Don't clobber flags. */
-	mov VCPU_RBX(%_ASM_AX), %_ASM_BX
 	mov VCPU_RCX(%_ASM_AX), %_ASM_CX
 	mov VCPU_RDX(%_ASM_AX), %_ASM_DX
+	mov VCPU_RBX(%_ASM_AX), %_ASM_BX
+	mov VCPU_RBP(%_ASM_AX), %_ASM_BP
 	mov VCPU_RSI(%_ASM_AX), %_ASM_SI
 	mov VCPU_RDI(%_ASM_AX), %_ASM_DI
-	mov VCPU_RBP(%_ASM_AX), %_ASM_BP
 #ifdef CONFIG_X86_64
 	mov VCPU_R8 (%_ASM_AX),  %r8
 	mov VCPU_R9 (%_ASM_AX),  %r9
@@ -100,6 +101,14 @@ ENTRY(__vmx_vcpu_run)
 
 	/* Check EFLAGS.ZF from 'testb' above */
 	jz .Lvmlaunch
+
+	/*
+	 * After a successful VMRESUME/VMLAUNCH, control flow "magically"
+	 * resumes below at 'vmx_vmexit' due to the VMCS HOST_RIP setting.
+	 * So this isn't a typical function and objtool needs to be told to
+	 * save the unwind state here and restore it below.
+	 */
+	UNWIND_HINT_SAVE
 
 /*
  * If VMRESUME/VMLAUNCH and corresponding vmexit succeed, execution resumes at
@@ -118,6 +127,9 @@ ENTRY(__vmx_vcpu_run)
 
 SYM_INNER_LABEL(vmx_vmexit, SYM_L_GLOBAL)
 
+	/* Restore unwind state from before the VMRESUME/VMLAUNCH. */
+	UNWIND_HINT_RESTORE
+
 	/* Temporarily save guest's RAX. */
 	push %_ASM_AX
 
@@ -125,13 +137,13 @@ SYM_INNER_LABEL(vmx_vmexit, SYM_L_GLOBAL)
 	mov WORD_SIZE(%_ASM_SP), %_ASM_AX
 
 	/* Save all guest registers, including RAX from the stack */
-	__ASM_SIZE(pop) VCPU_RAX(%_ASM_AX)
-	mov %_ASM_BX,   VCPU_RBX(%_ASM_AX)
-	mov %_ASM_CX,   VCPU_RCX(%_ASM_AX)
-	mov %_ASM_DX,   VCPU_RDX(%_ASM_AX)
-	mov %_ASM_SI,   VCPU_RSI(%_ASM_AX)
-	mov %_ASM_DI,   VCPU_RDI(%_ASM_AX)
-	mov %_ASM_BP,   VCPU_RBP(%_ASM_AX)
+	pop           VCPU_RAX(%_ASM_AX)
+	mov %_ASM_CX, VCPU_RCX(%_ASM_AX)
+	mov %_ASM_DX, VCPU_RDX(%_ASM_AX)
+	mov %_ASM_BX, VCPU_RBX(%_ASM_AX)
+	mov %_ASM_BP, VCPU_RBP(%_ASM_AX)
+	mov %_ASM_SI, VCPU_RSI(%_ASM_AX)
+	mov %_ASM_DI, VCPU_RDI(%_ASM_AX)
 #ifdef CONFIG_X86_64
 	mov %r8,  VCPU_R8 (%_ASM_AX)
 	mov %r9,  VCPU_R9 (%_ASM_AX)
@@ -160,9 +172,9 @@ SYM_INNER_LABEL(vmx_vmexit, SYM_L_GLOBAL)
 	xor %eax, %eax
 	xor %ecx, %ecx
 	xor %edx, %edx
+	xor %ebp, %ebp
 	xor %esi, %esi
 	xor %edi, %edi
-	xor %ebp, %ebp
 #ifdef CONFIG_X86_64
 	xor %r8d,  %r8d
 	xor %r9d,  %r9d
@@ -212,7 +224,7 @@ SYM_INNER_LABEL(vmx_vmexit, SYM_L_GLOBAL)
 	pop %edi
 #endif
 	pop %_ASM_BP
-	ret
+	RET
 
 .Lfixup:
 	cmpb $0, kvm_rebooting
@@ -223,7 +235,7 @@ SYM_INNER_LABEL(vmx_vmexit, SYM_L_GLOBAL)
 	mov $1, %_ASM_BX
 	jmp .Lclear_regs
 
-ENDPROC(__vmx_vcpu_run)
+SYM_FUNC_END(__vmx_vcpu_run)
 
 
 .section .text, "ax"
@@ -236,7 +248,7 @@ ENDPROC(__vmx_vcpu_run)
  * Save and restore volatile registers across a call to vmread_error().  Note,
  * all parameters are passed on the stack.
  */
-ENTRY(vmread_error_trampoline)
+SYM_FUNC_START(vmread_error_trampoline)
 	push %_ASM_BP
 	mov  %_ASM_SP, %_ASM_BP
 
@@ -283,5 +295,38 @@ ENTRY(vmread_error_trampoline)
 	pop %_ASM_AX
 	pop %_ASM_BP
 
-	ret
-ENDPROC(vmread_error_trampoline)
+	RET
+SYM_FUNC_END(vmread_error_trampoline)
+
+SYM_FUNC_START(vmx_do_interrupt_nmi_irqoff)
+	/*
+	 * Unconditionally create a stack frame, getting the correct RSP on the
+	 * stack (for x86-64) would take two instructions anyways, and RBP can
+	 * be used to restore RSP to make objtool happy (see below).
+	 */
+	push %_ASM_BP
+	mov %_ASM_SP, %_ASM_BP
+
+#ifdef CONFIG_X86_64
+	/*
+	 * Align RSP to a 16-byte boundary (to emulate CPU behavior) before
+	 * creating the synthetic interrupt stack frame for the IRQ/NMI.
+	 */
+	and  $-16, %rsp
+	push $__KERNEL_DS
+	push %rbp
+#endif
+	pushf
+	push $__KERNEL_CS
+	CALL_NOSPEC _ASM_ARG1
+
+	/*
+	 * "Restore" RSP from RBP, even though IRET has already unwound RSP to
+	 * the correct value.  objtool doesn't know the callee will IRET and,
+	 * without the explicit restore, thinks the stack is getting walloped.
+	 * Using an unwind hint is problematic due to x86-64's dynamic alignment.
+	 */
+	mov %_ASM_BP, %_ASM_SP
+	pop %_ASM_BP
+	RET
+SYM_FUNC_END(vmx_do_interrupt_nmi_irqoff)

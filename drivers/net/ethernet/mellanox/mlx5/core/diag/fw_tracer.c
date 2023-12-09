@@ -64,6 +64,7 @@ static int mlx5_query_mtrc_caps(struct mlx5_fw_tracer *tracer)
 			MLX5_GET(mtrc_cap, out, num_string_trace);
 	tracer->str_db.num_string_db = MLX5_GET(mtrc_cap, out, num_string_db);
 	tracer->owner = !!MLX5_GET(mtrc_cap, out, trace_owner);
+	tracer->str_db.loaded = false;
 
 	for (i = 0; i < tracer->str_db.num_string_db; i++) {
 		mtrc_cap_sp = MLX5_ADDR_OF(mtrc_cap, out, string_db_param[i]);
@@ -124,7 +125,7 @@ static void mlx5_fw_tracer_ownership_release(struct mlx5_fw_tracer *tracer)
 static int mlx5_fw_tracer_create_log_buf(struct mlx5_fw_tracer *tracer)
 {
 	struct mlx5_core_dev *dev = tracer->dev;
-	struct device *ddev = &dev->pdev->dev;
+	struct device *ddev;
 	dma_addr_t dma;
 	void *buff;
 	gfp_t gfp;
@@ -142,6 +143,7 @@ static int mlx5_fw_tracer_create_log_buf(struct mlx5_fw_tracer *tracer)
 	}
 	tracer->buff.log_buf = buff;
 
+	ddev = mlx5_core_dma_dev(dev);
 	dma = dma_map_single(ddev, buff, tracer->buff.size, DMA_FROM_DEVICE);
 	if (dma_mapping_error(ddev, dma)) {
 		mlx5_core_warn(dev, "FWTracer: Unable to map DMA: %d\n",
@@ -162,11 +164,12 @@ free_pages:
 static void mlx5_fw_tracer_destroy_log_buf(struct mlx5_fw_tracer *tracer)
 {
 	struct mlx5_core_dev *dev = tracer->dev;
-	struct device *ddev = &dev->pdev->dev;
+	struct device *ddev;
 
 	if (!tracer->buff.log_buf)
 		return;
 
+	ddev = mlx5_core_dma_dev(dev);
 	dma_unmap_single(ddev, tracer->buff.dma, tracer->buff.size, DMA_FROM_DEVICE);
 	free_pages((unsigned long)tracer->buff.log_buf, get_order(tracer->buff.size));
 }
@@ -188,7 +191,7 @@ static int mlx5_fw_tracer_create_mkey(struct mlx5_fw_tracer *tracer)
 
 	MLX5_SET(create_mkey_in, in, translations_octword_actual_size,
 		 DIV_ROUND_UP(TRACER_BUFFER_PAGE_NUM, 2));
-	mtt = (u64 *)MLX5_ADDR_OF(create_mkey_in, in, klm_pas_mtt);
+	mtt = (__be64 *)MLX5_ADDR_OF(create_mkey_in, in, klm_pas_mtt);
 	for (i = 0 ; i < TRACER_BUFFER_PAGE_NUM ; i++)
 		mtt[i] = cpu_to_be64(tracer->buff.dma + i * PAGE_SIZE);
 
@@ -679,7 +682,7 @@ static void mlx5_fw_tracer_handle_traces(struct work_struct *work)
 	block_count = tracer->buff.size / TRACER_BLOCK_SIZE_BYTE;
 	start_offset = tracer->buff.consumer_index * TRACER_BLOCK_SIZE_BYTE;
 
-	/* Copy the block to local buffer to avoid HW override while being processed*/
+	/* Copy the block to local buffer to avoid HW override while being processed */
 	memcpy(tmp_trace_block, tracer->buff.log_buf + start_offset,
 	       TRACER_BLOCK_SIZE_BYTE);
 
@@ -687,7 +690,7 @@ static void mlx5_fw_tracer_handle_traces(struct work_struct *work)
 		get_block_timestamp(tracer, &tmp_trace_block[TRACES_PER_BLOCK - 1]);
 
 	while (block_timestamp > tracer->last_timestamp) {
-		/* Check block override if its not the first block */
+		/* Check block override if it's not the first block */
 		if (!tracer->last_timestamp) {
 			u64 *ts_event;
 			/* To avoid block override be the HW in case of buffer
@@ -754,6 +757,7 @@ static int mlx5_fw_tracer_set_mtrc_conf(struct mlx5_fw_tracer *tracer)
 	if (err)
 		mlx5_core_warn(dev, "FWTracer: Failed to set tracer configurations %d\n", err);
 
+	tracer->buff.consumer_index = 0;
 	return err;
 }
 
@@ -817,8 +821,7 @@ static void mlx5_fw_tracer_ownership_change(struct work_struct *work)
 
 	mlx5_core_dbg(tracer->dev, "FWTracer: ownership changed, current=(%d)\n", tracer->owner);
 	if (tracer->owner) {
-		tracer->owner = false;
-		tracer->buff.consumer_index = 0;
+		mlx5_fw_tracer_ownership_acquire(tracer);
 		return;
 	}
 
@@ -1076,6 +1079,58 @@ void mlx5_fw_tracer_destroy(struct mlx5_fw_tracer *tracer)
 	kvfree(tracer);
 }
 
+static int mlx5_fw_tracer_recreate_strings_db(struct mlx5_fw_tracer *tracer)
+{
+	struct mlx5_core_dev *dev;
+	int err;
+
+	cancel_work_sync(&tracer->read_fw_strings_work);
+	mlx5_fw_tracer_clean_ready_list(tracer);
+	mlx5_fw_tracer_clean_print_hash(tracer);
+	mlx5_fw_tracer_clean_saved_traces_array(tracer);
+	mlx5_fw_tracer_free_strings_db(tracer);
+
+	dev = tracer->dev;
+	err = mlx5_query_mtrc_caps(tracer);
+	if (err) {
+		mlx5_core_dbg(dev, "FWTracer: Failed to query capabilities %d\n", err);
+		return err;
+	}
+
+	err = mlx5_fw_tracer_allocate_strings_db(tracer);
+	if (err) {
+		mlx5_core_warn(dev, "FWTracer: Allocate strings DB failed %d\n", err);
+		return err;
+	}
+	mlx5_fw_tracer_init_saved_traces_array(tracer);
+
+	return 0;
+}
+
+int mlx5_fw_tracer_reload(struct mlx5_fw_tracer *tracer)
+{
+	struct mlx5_core_dev *dev;
+	int err;
+
+	if (IS_ERR_OR_NULL(tracer))
+		return 0;
+
+	dev = tracer->dev;
+	mlx5_fw_tracer_cleanup(tracer);
+	err = mlx5_fw_tracer_recreate_strings_db(tracer);
+	if (err) {
+		mlx5_core_warn(dev, "Failed to recreate FW tracer strings DB\n");
+		return err;
+	}
+	err = mlx5_fw_tracer_init(tracer);
+	if (err) {
+		mlx5_core_warn(dev, "Failed to re-initialize FW tracer\n");
+		return err;
+	}
+
+	return 0;
+}
+
 static int fw_tracer_event(struct notifier_block *nb, unsigned long action, void *data)
 {
 	struct mlx5_fw_tracer *tracer = mlx5_nb_cof(nb, struct mlx5_fw_tracer, nb);
@@ -1084,8 +1139,7 @@ static int fw_tracer_event(struct notifier_block *nb, unsigned long action, void
 
 	switch (eqe->sub_type) {
 	case MLX5_TRACER_SUBTYPE_OWNERSHIP_CHANGE:
-		if (test_bit(MLX5_INTERFACE_STATE_UP, &dev->intf_state))
-			queue_work(tracer->work_queue, &tracer->ownership_change_work);
+		queue_work(tracer->work_queue, &tracer->ownership_change_work);
 		break;
 	case MLX5_TRACER_SUBTYPE_TRACES_AVAILABLE:
 		queue_work(tracer->work_queue, &tracer->handle_traces_work);

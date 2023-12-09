@@ -25,9 +25,6 @@
 #include <linux/miscdevice.h>
 #include <linux/moduleparam.h>
 
-#include <asm/pgalloc.h>
-#include <asm/pgtable.h>
-#include <asm/tlb.h>
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
 
@@ -260,7 +257,7 @@ static long privcmd_ioctl_mmap(struct file *file, void __user *udata)
 	LIST_HEAD(pagelist);
 	struct mmap_gfn_state state;
 
-	/* We only support privcmd_ioctl_mmap_batch for auto translated. */
+	/* We only support privcmd_ioctl_mmap_batch for non-auto-translated. */
 	if (xen_feature(XENFEAT_auto_translated_physmap))
 		return -ENOSYS;
 
@@ -278,7 +275,7 @@ static long privcmd_ioctl_mmap(struct file *file, void __user *udata)
 	if (rc || list_empty(&pagelist))
 		goto out;
 
-	down_write(&mm->mmap_sem);
+	mmap_write_lock(mm);
 
 	{
 		struct page *page = list_first_entry(&pagelist,
@@ -303,7 +300,7 @@ static long privcmd_ioctl_mmap(struct file *file, void __user *udata)
 
 
 out_up:
-	up_write(&mm->mmap_sem);
+	mmap_write_unlock(mm);
 
 out:
 	free_page_list(&pagelist);
@@ -423,15 +420,15 @@ static int alloc_empty_pages(struct vm_area_struct *vma, int numpgs)
 	int rc;
 	struct page **pages;
 
-	pages = kcalloc(numpgs, sizeof(pages[0]), GFP_KERNEL);
+	pages = kvcalloc(numpgs, sizeof(pages[0]), GFP_KERNEL);
 	if (pages == NULL)
 		return -ENOMEM;
 
-	rc = alloc_xenballooned_pages(numpgs, pages);
+	rc = xen_alloc_unpopulated_pages(numpgs, pages);
 	if (rc != 0) {
 		pr_warn("%s Could not alloc %d pfns rc:%d\n", __func__,
 			numpgs, rc);
-		kfree(pages);
+		kvfree(pages);
 		return -ENOMEM;
 	}
 	BUG_ON(vma->vm_private_data != NULL);
@@ -499,7 +496,7 @@ static long privcmd_ioctl_mmap_batch(
 		}
 	}
 
-	down_write(&mm->mmap_sem);
+	mmap_write_lock(mm);
 
 	vma = find_vma(mm, m.addr);
 	if (!vma ||
@@ -555,7 +552,7 @@ static long privcmd_ioctl_mmap_batch(
 	BUG_ON(traverse_pages_block(m.num, sizeof(xen_pfn_t),
 				    &pagelist, mmap_batch_fn, &state));
 
-	up_write(&mm->mmap_sem);
+	mmap_write_unlock(mm);
 
 	if (state.global_error) {
 		/* Write back errors in second pass. */
@@ -576,34 +573,38 @@ out:
 	return ret;
 
 out_unlock:
-	up_write(&mm->mmap_sem);
+	mmap_write_unlock(mm);
 	goto out;
 }
 
 static int lock_pages(
 	struct privcmd_dm_op_buf kbufs[], unsigned int num,
-	struct page *pages[], unsigned int nr_pages)
+	struct page *pages[], unsigned int nr_pages, unsigned int *pinned)
 {
-	unsigned int i;
+	unsigned int i, off = 0;
 
-	for (i = 0; i < num; i++) {
+	for (i = 0; i < num; ) {
 		unsigned int requested;
-		int pinned;
+		int page_count;
 
 		requested = DIV_ROUND_UP(
 			offset_in_page(kbufs[i].uptr) + kbufs[i].size,
-			PAGE_SIZE);
+			PAGE_SIZE) - off;
 		if (requested > nr_pages)
 			return -ENOSPC;
 
-		pinned = get_user_pages_fast(
-			(unsigned long) kbufs[i].uptr,
+		page_count = pin_user_pages_fast(
+			(unsigned long)kbufs[i].uptr + off * PAGE_SIZE,
 			requested, FOLL_WRITE, pages);
-		if (pinned < 0)
-			return pinned;
+		if (page_count <= 0)
+			return page_count ? : -EFAULT;
 
-		nr_pages -= pinned;
-		pages += pinned;
+		*pinned += page_count;
+		nr_pages -= page_count;
+		pages += page_count;
+
+		off = (requested == page_count) ? 0 : off + page_count;
+		i += !off;
 	}
 
 	return 0;
@@ -611,15 +612,7 @@ static int lock_pages(
 
 static void unlock_pages(struct page *pages[], unsigned int nr_pages)
 {
-	unsigned int i;
-
-	if (!pages)
-		return;
-
-	for (i = 0; i < nr_pages; i++) {
-		if (pages[i])
-			put_page(pages[i]);
-	}
+	unpin_user_pages_dirty_lock(pages, nr_pages, true);
 }
 
 static long privcmd_ioctl_dm_op(struct file *file, void __user *udata)
@@ -632,6 +625,7 @@ static long privcmd_ioctl_dm_op(struct file *file, void __user *udata)
 	struct xen_dm_op_buf *xbufs = NULL;
 	unsigned int i;
 	long rc;
+	unsigned int pinned = 0;
 
 	if (copy_from_user(&kdata, udata, sizeof(kdata)))
 		return -EFAULT;
@@ -685,8 +679,8 @@ static long privcmd_ioctl_dm_op(struct file *file, void __user *udata)
 		goto out;
 	}
 
-	rc = lock_pages(kbufs, kdata.num, pages, nr_pages);
-	if (rc)
+	rc = lock_pages(kbufs, kdata.num, pages, nr_pages, &pinned);
+	if (rc < 0)
 		goto out;
 
 	for (i = 0; i < kdata.num; i++) {
@@ -699,7 +693,7 @@ static long privcmd_ioctl_dm_op(struct file *file, void __user *udata)
 	xen_preemptible_hcall_end();
 
 out:
-	unlock_pages(pages, nr_pages);
+	unlock_pages(pages, pinned);
 	kfree(xbufs);
 	kfree(pages);
 	kfree(kbufs);
@@ -758,7 +752,7 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 		return __put_user(xdata.nr_frames, &udata->num);
 	}
 
-	down_write(&mm->mmap_sem);
+	mmap_write_lock(mm);
 
 	vma = find_vma(mm, kdata.addr);
 	if (!vma || vma->vm_ops != &privcmd_vm_ops) {
@@ -817,8 +811,7 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 						 kdata.addr & PAGE_MASK,
 						 pfns, kdata.num, errs,
 						 vma->vm_page_prot,
-						 domid,
-						 vma->vm_private_data);
+						 domid);
 		if (num < 0)
 			rc = num;
 		else if (num != kdata.num) {
@@ -834,7 +827,7 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 	}
 
 out:
-	up_write(&mm->mmap_sem);
+	mmap_write_unlock(mm);
 	kfree(pfns);
 
 	return rc;
@@ -916,11 +909,11 @@ static void privcmd_close(struct vm_area_struct *vma)
 
 	rc = xen_unmap_domain_gfn_range(vma, numgfns, pages);
 	if (rc == 0)
-		free_xenballooned_pages(numpgs, pages);
+		xen_free_unpopulated_pages(numpgs, pages);
 	else
 		pr_crit("unable to unmap MFN range: leaking %d pages. rc=%d\n",
 			numpgs, rc);
-	kfree(pages);
+	kvfree(pages);
 }
 
 static vm_fault_t privcmd_fault(struct vm_fault *vmf)

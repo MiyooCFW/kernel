@@ -360,7 +360,6 @@ static int stx104_probe(struct device *dev, unsigned int id)
 	}
 
 	indio_dev->name = dev_name(dev);
-	indio_dev->dev.parent = dev;
 
 	mutex_init(&priv->lock);
 

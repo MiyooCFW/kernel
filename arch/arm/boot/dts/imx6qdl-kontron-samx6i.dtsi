@@ -127,7 +127,7 @@
 
 	lcd_backlight: lcd-backlight {
 		compatible = "pwm-backlight";
-		pwms = <&pwm4 0 5000000>;
+		pwms = <&pwm4 0 5000000 0>;
 		pwm-names = "LCD_BKLT_PWM";
 
 		brightness-levels = <0 10 20 30 40 50 60 70 80 90 100>;
@@ -235,21 +235,21 @@
 &ecspi2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi2>;
-	cs-gpios = <&gpio2 26 GPIO_ACTIVE_HIGH>,
-		   <&gpio2 27 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&gpio2 26 GPIO_ACTIVE_LOW>,
+		   <&gpio2 27 GPIO_ACTIVE_LOW>;
 };
 
 /* SPI0 */
 &ecspi4 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi4>;
-	cs-gpios = <&gpio3 24 GPIO_ACTIVE_HIGH>,
-		   <&gpio3 29 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&gpio3 24 GPIO_ACTIVE_LOW>,
+		   <&gpio3 29 GPIO_ACTIVE_LOW>;
 	status = "okay";
 
 	/* default boot source: workaround #1 for errata ERR006282 */
-	smarc_flash: spi-flash@0 {
-		compatible = "winbond,w25q16dw", "jedec,spi-nor";
+	smarc_flash: flash@0 {
+		compatible = "jedec,spi-nor";
 		reg = <0>;
 		spi-max-frequency = <20000000>;
 	};
@@ -261,6 +261,10 @@
 	pinctrl-0 = <&pinctrl_enet>;
 	phy-mode = "rgmii";
 	phy-reset-gpios = <&gpio1 25 GPIO_ACTIVE_LOW>;
+};
+
+&hdmi {
+	ddc-i2c-bus = <&i2c2>;
 };
 
 &i2c_intern {
@@ -380,7 +384,7 @@
 
 /* I2C_GP */
 &i2c1 {
-	clock-frequency = <100000>;
+	clock-frequency = <375000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c1>;
 };
@@ -394,7 +398,7 @@
 
 /* I2C_PM */
 &i2c3 {
-	clock-frequency = <100000>;
+	clock-frequency = <375000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c3>;
 	status = "okay";

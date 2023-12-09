@@ -1,1 +1,0 @@
-obj-$(CONFIG_VIDEO_SUNXI_CEDAR_VE) += cedar_ve.o

@@ -1,5 +1,5 @@
 config SND_SUNIV_CODEC
-	tristate "Allwinner f1c500s codec support"
+	tristate "Allwinner f1c100s codec support"
 	select SND_SOC_GENERIC_DMAENGINE_PCM
 	select REGMAP_MMIO
 	help

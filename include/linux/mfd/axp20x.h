@@ -12,7 +12,6 @@
 
 enum axp20x_variants {
 	AXP152_ID = 0,
-	AXP199_ID,
 	AXP202_ID,
 	AXP209_ID,
 	AXP221_ID,
@@ -26,7 +25,6 @@ enum axp20x_variants {
 };
 
 #define AXP20X_DATACACHE(m)		(0x04 + (m))
-#define AXP199_DATACACHE(m)		(0x06 + (m))
 
 /* Power supply */
 #define AXP152_PWR_OP_MODE		0x01
@@ -46,9 +44,6 @@ enum axp20x_variants {
 #define AXP152_PEK_KEY			0x36
 #define AXP152_DCDC_FREQ		0x37
 #define AXP152_DCDC_MODE		0x80
-
-#define AXP199_USB_OTG_STATUS	0x04
-#define AXP199_DCDC1_V_OUT		0x26
 
 #define AXP20X_PWR_INPUT_STATUS		0x00
 #define AXP20X_PWR_OP_MODE		0x01
@@ -143,15 +138,6 @@ enum axp20x_variants {
 #define AXP152_IRQ1_STATE		0x48
 #define AXP152_IRQ2_STATE		0x49
 #define AXP152_IRQ3_STATE		0x4a
-
-#define AXP199_IRQ1_EN			0x40
-#define AXP199_IRQ2_EN			0x41
-#define AXP199_IRQ3_EN			0x42
-#define AXP199_IRQ4_EN			0x43
-#define AXP199_IRQ1_STATE		0x44
-#define AXP199_IRQ2_STATE		0x45
-#define AXP199_IRQ3_STATE		0x46
-#define AXP199_IRQ4_STATE		0x47
 
 #define AXP20X_IRQ1_EN			0x40
 #define AXP20X_IRQ2_EN			0x41
@@ -710,6 +696,6 @@ int axp20x_device_probe(struct axp20x_dev *axp20x);
  *
  * This tells the axp20x core to remove the associated mfd devices
  */
-int axp20x_device_remove(struct axp20x_dev *axp20x);
+void axp20x_device_remove(struct axp20x_dev *axp20x);
 
 #endif /* __LINUX_MFD_AXP20X_H */

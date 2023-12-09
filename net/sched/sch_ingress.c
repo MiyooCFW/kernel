@@ -78,6 +78,7 @@ static int ingress_init(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct ingress_sched_data *q = qdisc_priv(sch);
 	struct net_device *dev = qdisc_dev(sch);
+	int err;
 
 	if (sch->parent != TC_H_INGRESS)
 		return -EOPNOTSUPP;
@@ -90,7 +91,13 @@ static int ingress_init(struct Qdisc *sch, struct nlattr *opt,
 	q->block_info.chain_head_change = clsact_chain_head_change;
 	q->block_info.chain_head_change_priv = &q->miniqp;
 
-	return tcf_block_get_ext(&q->block, sch, &q->block_info, extack);
+	err = tcf_block_get_ext(&q->block, sch, &q->block_info, extack);
+	if (err)
+		return err;
+
+	mini_qdisc_pair_block_init(&q->miniqp, q->block);
+
+	return 0;
 }
 
 static void ingress_destroy(struct Qdisc *sch)
@@ -234,6 +241,8 @@ static int clsact_init(struct Qdisc *sch, struct nlattr *opt,
 				extack);
 	if (err)
 		return err;
+
+	mini_qdisc_pair_block_init(&q->miniqp_ingress, q->ingress_block);
 
 	mini_qdisc_pair_init(&q->miniqp_egress, sch, &dev->miniq_egress);
 

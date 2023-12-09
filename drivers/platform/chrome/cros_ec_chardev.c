@@ -13,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/fs.h>
-#include <linux/mfd/cros_ec.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
@@ -49,7 +48,7 @@ struct ec_event {
 	struct list_head node;
 	size_t size;
 	u8 event_type;
-	u8 data[0];
+	u8 data[];
 };
 
 static int ec_get_version(struct cros_ec_dev *ec, char *str, int maxlen)

@@ -21,7 +21,7 @@ static DEFINE_SPINLOCK(tcp_cong_list_lock);
 static LIST_HEAD(tcp_cong_list);
 
 /* Simple linear search, don't expect many entries! */
-static struct tcp_congestion_ops *tcp_ca_find(const char *name)
+struct tcp_congestion_ops *tcp_ca_find(const char *name)
 {
 	struct tcp_congestion_ops *e;
 
@@ -162,7 +162,7 @@ void tcp_assign_congestion_control(struct sock *sk)
 
 	rcu_read_lock();
 	ca = rcu_dereference(net->ipv4.tcp_congestion_control);
-	if (unlikely(!try_module_get(ca->owner)))
+	if (unlikely(!bpf_try_module_get(ca, ca->owner)))
 		ca = &tcp_reno;
 	icsk->icsk_ca_ops = ca;
 	rcu_read_unlock();
@@ -176,7 +176,7 @@ void tcp_assign_congestion_control(struct sock *sk)
 
 void tcp_init_congestion_control(struct sock *sk)
 {
-	const struct inet_connection_sock *icsk = inet_csk(sk);
+	struct inet_connection_sock *icsk = inet_csk(sk);
 
 	tcp_sk(sk)->prior_ssthresh = 0;
 	if (icsk->icsk_ca_ops->init)
@@ -185,6 +185,7 @@ void tcp_init_congestion_control(struct sock *sk)
 		INET_ECN_xmit(sk);
 	else
 		INET_ECN_dontxmit(sk);
+	icsk->icsk_ca_initialized = 1;
 }
 
 static void tcp_reinit_congestion_control(struct sock *sk,
@@ -213,7 +214,7 @@ void tcp_cleanup_congestion_control(struct sock *sk)
 
 	if (icsk->icsk_ca_ops->release)
 		icsk->icsk_ca_ops->release(sk);
-	module_put(icsk->icsk_ca_ops->owner);
+	bpf_module_put(icsk->icsk_ca_ops, icsk->icsk_ca_ops->owner);
 }
 
 /* Used by sysctl to change default congestion control */
@@ -227,7 +228,7 @@ int tcp_set_default_congestion_control(struct net *net, const char *name)
 	ca = tcp_ca_find_autoload(net, name);
 	if (!ca) {
 		ret = -ENOENT;
-	} else if (!try_module_get(ca->owner)) {
+	} else if (!bpf_try_module_get(ca, ca->owner)) {
 		ret = -EBUSY;
 	} else if (!net_eq(net, &init_net) &&
 			!(ca->flags & TCP_CONG_NON_RESTRICTED)) {
@@ -236,7 +237,7 @@ int tcp_set_default_congestion_control(struct net *net, const char *name)
 	} else {
 		prev = xchg(&net->ipv4.tcp_congestion_control, ca);
 		if (prev)
-			module_put(prev->owner);
+			bpf_module_put(prev, prev->owner);
 
 		ca->flags |= TCP_CONG_NON_RESTRICTED;
 		ret = 0;
@@ -265,6 +266,9 @@ void tcp_get_available_congestion_control(char *buf, size_t maxlen)
 		offs += snprintf(buf + offs, maxlen - offs,
 				 "%s%s",
 				 offs == 0 ? "" : " ", ca->name);
+
+		if (WARN_ON_ONCE(offs >= maxlen))
+			break;
 	}
 	rcu_read_unlock();
 }
@@ -294,6 +298,9 @@ void tcp_get_allowed_congestion_control(char *buf, size_t maxlen)
 		offs += snprintf(buf + offs, maxlen - offs,
 				 "%s%s",
 				 offs == 0 ? "" : " ", ca->name);
+
+		if (WARN_ON_ONCE(offs >= maxlen))
+			break;
 	}
 	rcu_read_unlock();
 }
@@ -343,7 +350,7 @@ out:
  * already initialized.
  */
 int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
-			       bool reinit, bool cap_net_admin)
+			       bool cap_net_admin)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	const struct tcp_congestion_ops *ca;
@@ -364,28 +371,14 @@ int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
 		goto out;
 	}
 
-	if (!ca) {
+	if (!ca)
 		err = -ENOENT;
-	} else if (!load) {
-		const struct tcp_congestion_ops *old_ca = icsk->icsk_ca_ops;
-
-		if (try_module_get(ca->owner)) {
-			if (reinit) {
-				tcp_reinit_congestion_control(sk, ca);
-			} else {
-				icsk->icsk_ca_ops = ca;
-				module_put(old_ca->owner);
-			}
-		} else {
-			err = -EBUSY;
-		}
-	} else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) || cap_net_admin)) {
+	else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) || cap_net_admin))
 		err = -EPERM;
-	} else if (!try_module_get(ca->owner)) {
+	else if (!bpf_try_module_get(ca, ca->owner))
 		err = -EBUSY;
-	} else {
+	else
 		tcp_reinit_congestion_control(sk, ca);
-	}
  out:
 	rcu_read_unlock();
 	return err;
@@ -402,10 +395,10 @@ int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
  */
 u32 tcp_slow_start(struct tcp_sock *tp, u32 acked)
 {
-	u32 cwnd = min(tp->snd_cwnd + acked, tp->snd_ssthresh);
+	u32 cwnd = min(tcp_snd_cwnd(tp) + acked, tp->snd_ssthresh);
 
-	acked -= cwnd - tp->snd_cwnd;
-	tp->snd_cwnd = min(cwnd, tp->snd_cwnd_clamp);
+	acked -= cwnd - tcp_snd_cwnd(tp);
+	tcp_snd_cwnd_set(tp, min(cwnd, tp->snd_cwnd_clamp));
 
 	return acked;
 }
@@ -419,7 +412,7 @@ void tcp_cong_avoid_ai(struct tcp_sock *tp, u32 w, u32 acked)
 	/* If credits accumulated at a higher w, apply them gently now. */
 	if (tp->snd_cwnd_cnt >= w) {
 		tp->snd_cwnd_cnt = 0;
-		tp->snd_cwnd++;
+		tcp_snd_cwnd_set(tp, tcp_snd_cwnd(tp) + 1);
 	}
 
 	tp->snd_cwnd_cnt += acked;
@@ -427,9 +420,9 @@ void tcp_cong_avoid_ai(struct tcp_sock *tp, u32 w, u32 acked)
 		u32 delta = tp->snd_cwnd_cnt / w;
 
 		tp->snd_cwnd_cnt -= delta * w;
-		tp->snd_cwnd += delta;
+		tcp_snd_cwnd_set(tp, tcp_snd_cwnd(tp) + delta);
 	}
-	tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp);
+	tcp_snd_cwnd_set(tp, min(tcp_snd_cwnd(tp), tp->snd_cwnd_clamp));
 }
 EXPORT_SYMBOL_GPL(tcp_cong_avoid_ai);
 
@@ -454,7 +447,7 @@ void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			return;
 	}
 	/* In dangerous area, increase slowly. */
-	tcp_cong_avoid_ai(tp, tp->snd_cwnd, acked);
+	tcp_cong_avoid_ai(tp, tcp_snd_cwnd(tp), acked);
 }
 EXPORT_SYMBOL_GPL(tcp_reno_cong_avoid);
 
@@ -463,7 +456,7 @@ u32 tcp_reno_ssthresh(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 
-	return max(tp->snd_cwnd >> 1U, 2U);
+	return max(tcp_snd_cwnd(tp) >> 1U, 2U);
 }
 EXPORT_SYMBOL_GPL(tcp_reno_ssthresh);
 
@@ -471,7 +464,7 @@ u32 tcp_reno_undo_cwnd(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 
-	return max(tp->snd_cwnd, tp->prior_cwnd);
+	return max(tcp_snd_cwnd(tp), tp->prior_cwnd);
 }
 EXPORT_SYMBOL_GPL(tcp_reno_undo_cwnd);
 

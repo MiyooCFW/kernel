@@ -29,12 +29,20 @@ bool pcie_ports_disabled;
  */
 bool pcie_ports_native;
 
+/*
+ * If the user specified "pcie_ports=dpc-native", use the Linux DPC PCIe
+ * service even if the platform hasn't given us permission.
+ */
+bool pcie_ports_dpc_native;
+
 static int __init pcie_port_setup(char *str)
 {
 	if (!strncmp(str, "compat", 6))
 		pcie_ports_disabled = true;
 	else if (!strncmp(str, "native", 6))
 		pcie_ports_native = true;
+	else if (!strncmp(str, "dpc-native", 10))
+		pcie_ports_dpc_native = true;
 
 	return 1;
 }
@@ -93,13 +101,18 @@ static const struct dev_pm_ops pcie_portdrv_pm_ops = {
 static int pcie_portdrv_probe(struct pci_dev *dev,
 					const struct pci_device_id *id)
 {
+	int type = pci_pcie_type(dev);
 	int status;
 
 	if (!pci_is_pcie(dev) ||
-	    ((pci_pcie_type(dev) != PCI_EXP_TYPE_ROOT_PORT) &&
-	     (pci_pcie_type(dev) != PCI_EXP_TYPE_UPSTREAM) &&
-	     (pci_pcie_type(dev) != PCI_EXP_TYPE_DOWNSTREAM)))
+	    ((type != PCI_EXP_TYPE_ROOT_PORT) &&
+	     (type != PCI_EXP_TYPE_UPSTREAM) &&
+	     (type != PCI_EXP_TYPE_DOWNSTREAM) &&
+	     (type != PCI_EXP_TYPE_RC_EC)))
 		return -ENODEV;
+
+	if (type == PCI_EXP_TYPE_RC_EC)
+		pcie_link_rcec(dev);
 
 	status = pcie_port_device_register(dev);
 	if (status)
@@ -107,7 +120,7 @@ static int pcie_portdrv_probe(struct pci_dev *dev,
 
 	pci_save_state(dev);
 
-	dev_pm_set_driver_flags(&dev->dev, DPM_FLAG_NEVER_SKIP |
+	dev_pm_set_driver_flags(&dev->dev, DPM_FLAG_NO_DIRECT_COMPLETE |
 					   DPM_FLAG_SMART_SUSPEND);
 
 	if (pci_bridge_d3_possible(dev)) {
@@ -138,14 +151,18 @@ static void pcie_portdrv_remove(struct pci_dev *dev)
 }
 
 static pci_ers_result_t pcie_portdrv_error_detected(struct pci_dev *dev,
-					enum pci_channel_state error)
+					pci_channel_state_t error)
 {
-	/* Root Port has no impact. Always recovers. */
+	if (error == pci_channel_io_frozen)
+		return PCI_ERS_RESULT_NEED_RESET;
 	return PCI_ERS_RESULT_CAN_RECOVER;
 }
 
 static pci_ers_result_t pcie_portdrv_slot_reset(struct pci_dev *dev)
 {
+	size_t off = offsetof(struct pcie_port_service_driver, slot_reset);
+	device_for_each_child(&dev->dev, &off, pcie_port_device_iter);
+
 	pci_restore_state(dev);
 	pci_save_state(dev);
 	return PCI_ERS_RESULT_RECOVERED;
@@ -187,6 +204,8 @@ static const struct pci_device_id port_pci_ids[] = {
 	{ PCI_DEVICE_CLASS(((PCI_CLASS_BRIDGE_PCI << 8) | 0x00), ~0) },
 	/* subtractive decode PCI-to-PCI bridge, class type is 060401h */
 	{ PCI_DEVICE_CLASS(((PCI_CLASS_BRIDGE_PCI << 8) | 0x01), ~0) },
+	/* handle any Root Complex Event Collector */
+	{ PCI_DEVICE_CLASS(((PCI_CLASS_SYSTEM_RCEC << 8) | 0x00), ~0) },
 	{ },
 };
 
@@ -240,7 +259,6 @@ static void __init pcie_init_services(void)
 	pcie_pme_init();
 	pcie_dpc_init();
 	pcie_hp_init();
-	pcie_bandwidth_notification_init();
 }
 
 static int __init pcie_portdrv_init(void)

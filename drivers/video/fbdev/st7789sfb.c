@@ -134,7 +134,7 @@ static struct fb_var_screeninfo myfb_var={0};
 static uint16_t lastScanLine = 120;
 static uint16_t  firstScanLine = 5;
 uint16_t x, i, scanline, vsync;
-uint32_t cpu_clock;
+uint32_t mycpu_clock;
 uint32_t video_clock;
 
 static struct fb_fix_screeninfo myfb_fix = {
@@ -278,8 +278,8 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
           lcdc_wr_cmd(0x45);
           lcdc_rd_dat();
           lcdc_rd_dat();
-          cpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-	        switch (cpu_clock) {
+          mycpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
+	        switch (mycpu_clock) {
 		    case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
 				lastScanLine = 280;
 				break;
@@ -954,12 +954,12 @@ static const struct file_operations myfops = {
 
 static int __init fb_init(void)
 {
-    suniv_ioremap();
     alloc_chrdev_region(&major, 0, 1, "miyoo_fb0");
     myclass = class_create(THIS_MODULE, "miyoo_fb0");
     device_create(myclass, NULL, major, NULL, "miyoo_fb0");
     cdev_init(&mycdev, &myfops);
     cdev_add(&mycdev, major, 1);
+    suniv_ioremap();
     return platform_driver_register(&fb_driver);
 }
 

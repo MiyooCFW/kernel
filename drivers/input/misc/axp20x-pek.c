@@ -29,17 +29,11 @@
 #define AXP20X_PEK_STARTUP_MASK		(0xc0)
 #define AXP20X_PEK_SHUTDOWN_MASK	(0x03)
 
-enum axp20x_pek_type {
-	AXP20X_PEK_EDGE,
-	AXP20X_PEK_TIME,
-};
-
 struct axp20x_info {
 	const struct axp20x_time *startup_time;
 	unsigned int startup_mask;
 	const struct axp20x_time *shutdown_time;
 	unsigned int shutdown_mask;
-	int pek_type;
 };
 
 struct axp20x_pek {
@@ -48,8 +42,6 @@ struct axp20x_pek {
 	struct axp20x_info *info;
 	int irq_dbr;
 	int irq_dbf;
-	int irq_dbs;
-	int irq_dbl;
 };
 
 struct axp20x_time {
@@ -78,20 +70,11 @@ static const struct axp20x_time shutdown_time[] = {
 	{ .time = 10000, .idx = 3 },
 };
 
-static const struct axp20x_info axp199_info = {
-	.startup_time = startup_time,
-	.startup_mask = AXP20X_PEK_STARTUP_MASK,
-	.shutdown_time = shutdown_time,
-	.shutdown_mask = AXP20X_PEK_SHUTDOWN_MASK,
-	.pek_type = AXP20X_PEK_TIME,
-};
-
 static const struct axp20x_info axp20x_info = {
 	.startup_time = startup_time,
 	.startup_mask = AXP20X_PEK_STARTUP_MASK,
 	.shutdown_time = shutdown_time,
 	.shutdown_mask = AXP20X_PEK_SHUTDOWN_MASK,
-	.pek_type = AXP20X_PEK_EDGE,
 };
 
 static const struct axp20x_info axp221_info = {
@@ -99,7 +82,6 @@ static const struct axp20x_info axp221_info = {
 	.startup_mask = AXP20X_PEK_STARTUP_MASK,
 	.shutdown_time = shutdown_time,
 	.shutdown_mask = AXP20X_PEK_SHUTDOWN_MASK,
-	.pek_type = AXP20X_PEK_EDGE,
 };
 
 static ssize_t axp20x_show_attr(struct device *dev,
@@ -209,9 +191,10 @@ static ssize_t axp20x_store_attr_shutdown(struct device *dev,
 				 axp20x_pek->info->shutdown_mask, buf, count);
 }
 
-DEVICE_ATTR(startup, 0644, axp20x_show_attr_startup, axp20x_store_attr_startup);
-DEVICE_ATTR(shutdown, 0644, axp20x_show_attr_shutdown,
-	    axp20x_store_attr_shutdown);
+static DEVICE_ATTR(startup, 0644, axp20x_show_attr_startup,
+		   axp20x_store_attr_startup);
+static DEVICE_ATTR(shutdown, 0644, axp20x_show_attr_shutdown,
+		   axp20x_store_attr_shutdown);
 
 static struct attribute *axp20x_attrs[] = {
 	&dev_attr_startup.attr,
@@ -222,116 +205,24 @@ ATTRIBUTE_GROUPS(axp20x);
 
 static irqreturn_t axp20x_pek_irq(int irq, void *pwr)
 {
-	struct input_dev *idev = pwr;
-	struct axp20x_pek *axp20x_pek = input_get_drvdata(idev);
+	struct axp20x_pek *axp20x_pek = pwr;
+	struct input_dev *idev = axp20x_pek->input;
+
+	if (!idev)
+		return IRQ_HANDLED;
 
 	/*
 	 * The power-button is connected to ground so a falling edge (dbf)
 	 * means it is pressed.
 	 */
-	if (axp20x_pek->info->pek_type == AXP20X_PEK_EDGE) {
-		if (irq == axp20x_pek->irq_dbf)
-			input_report_key(idev, KEY_POWER, true);
-		else if (irq == axp20x_pek->irq_dbr)
-			input_report_key(idev, KEY_POWER, false);
-	} else if (axp20x_pek->info->pek_type == AXP20X_PEK_TIME) {
-		if (irq == axp20x_pek->irq_dbs) {
-			input_report_key(idev, KEY_POWER, true);
-			input_report_key(idev, KEY_POWER, false);
-		} else if (irq == axp20x_pek->irq_dbl) {
-			input_report_key(idev, KEY_POWER2, true);
-			input_report_key(idev, KEY_POWER2, false);
-		}
-	}
+	if (irq == axp20x_pek->irq_dbf)
+		input_report_key(idev, KEY_POWER, true);
+	else if (irq == axp20x_pek->irq_dbr)
+		input_report_key(idev, KEY_POWER, false);
 
 	input_sync(idev);
 
 	return IRQ_HANDLED;
-}
-
-static int axp20x_pek_get_edge_irq(struct axp20x_pek *axp20x_pek,
-				   struct platform_device *pdev)
-{
-	struct axp20x_dev *axp20x = axp20x_pek->axp20x;
-	axp20x_pek->irq_dbr = platform_get_irq_byname(pdev, "PEK_DBR");
-	if (axp20x_pek->irq_dbr < 0)
-		return axp20x_pek->irq_dbr;
-	axp20x_pek->irq_dbr =
-		regmap_irq_get_virq(axp20x->regmap_irqc, axp20x_pek->irq_dbr);
-
-	axp20x_pek->irq_dbf = platform_get_irq_byname(pdev, "PEK_DBF");
-	if (axp20x_pek->irq_dbf < 0)
-		return axp20x_pek->irq_dbf;
-	axp20x_pek->irq_dbf =
-		regmap_irq_get_virq(axp20x->regmap_irqc, axp20x_pek->irq_dbf);
-	return 0;
-}
-
-static int axp20x_pek_get_time_irq(struct axp20x_pek *axp20x_pek,
-				   struct platform_device *pdev)
-{
-	struct axp20x_dev *axp20x = axp20x_pek->axp20x;
-	axp20x_pek->irq_dbs = platform_get_irq_byname(pdev, "PEK_DBS");
-	if (axp20x_pek->irq_dbs < 0)
-		return axp20x_pek->irq_dbs;
-	axp20x_pek->irq_dbs =
-		regmap_irq_get_virq(axp20x->regmap_irqc, axp20x_pek->irq_dbs);
-
-	axp20x_pek->irq_dbl = platform_get_irq_byname(pdev, "PEK_DBL");
-	if (axp20x_pek->irq_dbl < 0)
-		return axp20x_pek->irq_dbl;
-	axp20x_pek->irq_dbl =
-		regmap_irq_get_virq(axp20x->regmap_irqc, axp20x_pek->irq_dbl);
-	return 0;
-}
-
-static int axp20x_pek_request_edge_irq(struct axp20x_pek *axp20x_pek,
-				       struct platform_device *pdev)
-{
-	struct input_dev *idev = axp20x_pek->input;
-	int error;
-	error = devm_request_any_context_irq(&pdev->dev, axp20x_pek->irq_dbr,
-					     axp20x_pek_irq, 0,
-					     "axp20x-pek-dbr", idev);
-	if (error < 0) {
-		dev_err(&pdev->dev, "Failed to request dbr IRQ#%d: %d\n",
-			axp20x_pek->irq_dbr, error);
-		return error;
-	}
-	error = devm_request_any_context_irq(&pdev->dev, axp20x_pek->irq_dbf,
-					     axp20x_pek_irq, 0,
-					     "axp20x-pek-dbf", idev);
-	if (error < 0) {
-		dev_err(&pdev->dev, "Failed to request dbf IRQ#%d: %d\n",
-			axp20x_pek->irq_dbf, error);
-		return error;
-	}
-	return 0;
-}
-
-static int axp20x_pek_request_time_irq(struct axp20x_pek *axp20x_pek,
-				       struct platform_device *pdev)
-{
-	struct input_dev *idev = axp20x_pek->input;
-	int error;
-	error = devm_request_any_context_irq(&pdev->dev, axp20x_pek->irq_dbs,
-					     axp20x_pek_irq, 0,
-					     "axp20x-pek-dbs", idev);
-	if (error < 0) {
-		dev_err(&pdev->dev, "Failed to request dbs IRQ#%d: %d\n",
-			axp20x_pek->irq_dbs, error);
-		return error;
-	}
-
-	error = devm_request_any_context_irq(&pdev->dev, axp20x_pek->irq_dbl,
-					     axp20x_pek_irq, 0,
-					     "axp20x-pek-dbl", idev);
-	if (error < 0) {
-		dev_err(&pdev->dev, "Failed to request dbl IRQ#%d: %d\n",
-			axp20x_pek->irq_dbl, error);
-		return error;
-	}
-	return 0;
 }
 
 static int axp20x_pek_probe_input_device(struct axp20x_pek *axp20x_pek,
@@ -339,15 +230,6 @@ static int axp20x_pek_probe_input_device(struct axp20x_pek *axp20x_pek,
 {
 	struct input_dev *idev;
 	int error;
-
-	if (axp20x_pek->info->pek_type == AXP20X_PEK_EDGE) {
-		error = axp20x_pek_get_edge_irq(axp20x_pek, pdev);
-	} else if (axp20x_pek->info->pek_type == AXP20X_PEK_TIME) {
-		error = axp20x_pek_get_time_irq(axp20x_pek, pdev);
-	}
-	if (error < 0) {
-		return error;
-	}
 
 	axp20x_pek->input = devm_input_allocate_device(&pdev->dev);
 	if (!axp20x_pek->input)
@@ -360,18 +242,8 @@ static int axp20x_pek_probe_input_device(struct axp20x_pek *axp20x_pek,
 	idev->dev.parent = &pdev->dev;
 
 	input_set_capability(idev, EV_KEY, KEY_POWER);
-	input_set_capability(idev, EV_KEY, KEY_POWER2);
 
 	input_set_drvdata(idev, axp20x_pek);
-
-	if (axp20x_pek->info->pek_type == AXP20X_PEK_EDGE) {
-		error = axp20x_pek_request_edge_irq(axp20x_pek, pdev);
-	} else if (axp20x_pek->info->pek_type == AXP20X_PEK_TIME) {
-		error = axp20x_pek_request_time_irq(axp20x_pek, pdev);
-	}
-	if (error < 0) {
-		return error;
-	}
 
 	error = input_register_device(idev);
 	if (error) {
@@ -379,9 +251,6 @@ static int axp20x_pek_probe_input_device(struct axp20x_pek *axp20x_pek,
 			error);
 		return error;
 	}
-
-	if (axp20x_pek->axp20x->variant == AXP288_ID)
-		enable_irq_wake(axp20x_pek->irq_dbr);
 
 	return 0;
 }
@@ -439,7 +308,18 @@ static int axp20x_pek_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	axp20x_pek->axp20x = dev_get_drvdata(pdev->dev.parent);
-	axp20x_pek->info = (struct axp20x_info *)match->driver_data;
+
+	axp20x_pek->irq_dbr = platform_get_irq_byname(pdev, "PEK_DBR");
+	if (axp20x_pek->irq_dbr < 0)
+		return axp20x_pek->irq_dbr;
+	axp20x_pek->irq_dbr = regmap_irq_get_virq(
+			axp20x_pek->axp20x->regmap_irqc, axp20x_pek->irq_dbr);
+
+	axp20x_pek->irq_dbf = platform_get_irq_byname(pdev, "PEK_DBF");
+	if (axp20x_pek->irq_dbf < 0)
+		return axp20x_pek->irq_dbf;
+	axp20x_pek->irq_dbf = regmap_irq_get_virq(
+			axp20x_pek->axp20x->regmap_irqc, axp20x_pek->irq_dbf);
 
 	if (axp20x_pek_should_register_input(axp20x_pek, pdev)) {
 		error = axp20x_pek_probe_input_device(axp20x_pek, pdev);
@@ -447,7 +327,63 @@ static int axp20x_pek_probe(struct platform_device *pdev)
 			return error;
 	}
 
+	axp20x_pek->info = (struct axp20x_info *)match->driver_data;
+
+	error = devm_request_any_context_irq(&pdev->dev, axp20x_pek->irq_dbr,
+					     axp20x_pek_irq, 0,
+					     "axp20x-pek-dbr", axp20x_pek);
+	if (error < 0) {
+		dev_err(&pdev->dev, "Failed to request dbr IRQ#%d: %d\n",
+			axp20x_pek->irq_dbr, error);
+		return error;
+	}
+
+	error = devm_request_any_context_irq(&pdev->dev, axp20x_pek->irq_dbf,
+					  axp20x_pek_irq, 0,
+					  "axp20x-pek-dbf", axp20x_pek);
+	if (error < 0) {
+		dev_err(&pdev->dev, "Failed to request dbf IRQ#%d: %d\n",
+			axp20x_pek->irq_dbf, error);
+		return error;
+	}
+
+	device_init_wakeup(&pdev->dev, true);
+
 	platform_set_drvdata(pdev, axp20x_pek);
+
+	return 0;
+}
+
+static int __maybe_unused axp20x_pek_suspend(struct device *dev)
+{
+	struct axp20x_pek *axp20x_pek = dev_get_drvdata(dev);
+
+	/*
+	 * As nested threaded IRQs are not automatically disabled during
+	 * suspend, we must explicitly disable non-wakeup IRQs.
+	 */
+	if (device_may_wakeup(dev)) {
+		enable_irq_wake(axp20x_pek->irq_dbf);
+		enable_irq_wake(axp20x_pek->irq_dbr);
+	} else {
+		disable_irq(axp20x_pek->irq_dbf);
+		disable_irq(axp20x_pek->irq_dbr);
+	}
+
+	return 0;
+}
+
+static int __maybe_unused axp20x_pek_resume(struct device *dev)
+{
+	struct axp20x_pek *axp20x_pek = dev_get_drvdata(dev);
+
+	if (device_may_wakeup(dev)) {
+		disable_irq_wake(axp20x_pek->irq_dbf);
+		disable_irq_wake(axp20x_pek->irq_dbr);
+	} else {
+		enable_irq(axp20x_pek->irq_dbf);
+		enable_irq(axp20x_pek->irq_dbr);
+	}
 
 	return 0;
 }
@@ -471,16 +407,13 @@ static int __maybe_unused axp20x_pek_resume_noirq(struct device *dev)
 }
 
 static const struct dev_pm_ops axp20x_pek_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(axp20x_pek_suspend, axp20x_pek_resume)
 #ifdef CONFIG_PM_SLEEP
 	.resume_noirq = axp20x_pek_resume_noirq,
 #endif
 };
 
 static const struct platform_device_id axp_pek_id_match[] = {
-	{
-		.name = "axp199-pek",
-		.driver_data = (kernel_ulong_t)&axp199_info,
-	},
 	{
 		.name = "axp20x-pek",
 		.driver_data = (kernel_ulong_t)&axp20x_info,

@@ -1,34 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
 /*
  * Copyright (c) 2016 Mellanox Technologies Ltd. All rights reserved.
  * Copyright (c) 2015 System Fabric Works, Inc. All rights reserved.
- *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * OpenIB.org BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *	- Redistributions of source code must retain the above
- *	  copyright notice, this list of conditions and the following
- *	  disclaimer.
- *
- *	- Redistributions in binary form must reproduce the above
- *	  copyright notice, this list of conditions and the following
- *	  disclaimer in the documentation and/or other materials
- *	  provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
  */
 
 #include <linux/skbuff.h>
@@ -106,40 +79,18 @@ static void set_qkey_viol_cntr(struct rxe_port *port)
 static int check_keys(struct rxe_dev *rxe, struct rxe_pkt_info *pkt,
 		      u32 qpn, struct rxe_qp *qp)
 {
-	int i;
-	int found_pkey = 0;
 	struct rxe_port *port = &rxe->port;
 	u16 pkey = bth_pkey(pkt);
 
 	pkt->pkey_index = 0;
 
-	if (qpn == 1) {
-		for (i = 0; i < port->attr.pkey_tbl_len; i++) {
-			if (pkey_match(pkey, port->pkey_tbl[i])) {
-				pkt->pkey_index = i;
-				found_pkey = 1;
-				break;
-			}
-		}
-
-		if (!found_pkey) {
-			pr_warn_ratelimited("bad pkey = 0x%x\n", pkey);
-			set_bad_pkey_cntr(port);
-			goto err1;
-		}
-	} else {
-		if (unlikely(!pkey_match(pkey,
-					 port->pkey_tbl[qp->attr.pkey_index]
-					))) {
-			pr_warn_ratelimited("bad pkey = 0x%0x\n", pkey);
-			set_bad_pkey_cntr(port);
-			goto err1;
-		}
-		pkt->pkey_index = qp->attr.pkey_index;
+	if (!pkey_match(pkey, IB_DEFAULT_PKEY_FULL)) {
+		pr_warn_ratelimited("bad pkey = 0x%x\n", pkey);
+		set_bad_pkey_cntr(port);
+		goto err1;
 	}
 
-	if ((qp_type(qp) == IB_QPT_UD || qp_type(qp) == IB_QPT_GSI) &&
-	    pkt->mask) {
+	if (qp_type(qp) == IB_QPT_UD || qp_type(qp) == IB_QPT_GSI) {
 		u32 qkey = (qpn == 1) ? GSI_QKEY : qp->attr.qkey;
 
 		if (unlikely(deth_qkey(pkt) != qkey)) {
@@ -286,8 +237,6 @@ static void rxe_rcv_mcast_pkt(struct rxe_dev *rxe, struct sk_buff *skb)
 	struct rxe_mc_elem *mce;
 	struct rxe_qp *qp;
 	union ib_gid dgid;
-	struct sk_buff *per_qp_skb;
-	struct rxe_pkt_info *per_qp_pkt;
 	int err;
 
 	if (skb->protocol == htons(ETH_P_IP))
@@ -299,10 +248,15 @@ static void rxe_rcv_mcast_pkt(struct rxe_dev *rxe, struct sk_buff *skb)
 	/* lookup mcast group corresponding to mgid, takes a ref */
 	mcg = rxe_pool_get_key(&rxe->mc_grp_pool, &dgid);
 	if (!mcg)
-		goto err1;	/* mcast group not registered */
+		goto drop;	/* mcast group not registered */
 
 	spin_lock_bh(&mcg->mcg_lock);
 
+	/* this is unreliable datagram service so we let
+	 * failures to deliver a multicast packet to a
+	 * single QP happen and just move on and try
+	 * the rest of them on the list
+	 */
 	list_for_each_entry(mce, &mcg->qp_list, qp_list) {
 		qp = mce->qp;
 
@@ -315,39 +269,62 @@ static void rxe_rcv_mcast_pkt(struct rxe_dev *rxe, struct sk_buff *skb)
 		if (err)
 			continue;
 
-		/* for all but the last qp create a new clone of the
-		 * skb and pass to the qp. If an error occurs in the
-		 * checks for the last qp in the list we need to
-		 * free the skb since it hasn't been passed on to
-		 * rxe_rcv_pkt() which would free it later.
+		/* for all but the last QP create a new clone of the
+		 * skb and pass to the QP. Pass the original skb to
+		 * the last QP in the list.
 		 */
 		if (mce->qp_list.next != &mcg->qp_list) {
-			per_qp_skb = skb_clone(skb, GFP_ATOMIC);
+			struct sk_buff *cskb;
+			struct rxe_pkt_info *cpkt;
+
+			cskb = skb_clone(skb, GFP_ATOMIC);
+			if (unlikely(!cskb))
+				continue;
+
+			if (WARN_ON(!ib_device_try_get(&rxe->ib_dev))) {
+				kfree_skb(cskb);
+				break;
+			}
+
+			cpkt = SKB_TO_PKT(cskb);
+			cpkt->qp = qp;
+			rxe_add_ref(qp);
+			rxe_rcv_pkt(cpkt, cskb);
 		} else {
-			per_qp_skb = skb;
-			/* show we have consumed the skb */
-			skb = NULL;
+			pkt->qp = qp;
+			rxe_add_ref(qp);
+			rxe_rcv_pkt(pkt, skb);
+			skb = NULL;	/* mark consumed */
 		}
-
-		if (unlikely(!per_qp_skb))
-			continue;
-
-		per_qp_pkt = SKB_TO_PKT(per_qp_skb);
-		per_qp_pkt->qp = qp;
-		rxe_add_ref(qp);
-		rxe_rcv_pkt(per_qp_pkt, per_qp_skb);
 	}
 
 	spin_unlock_bh(&mcg->mcg_lock);
 
 	rxe_drop_ref(mcg);	/* drop ref from rxe_pool_get_key. */
 
-err1:
-	/* free skb if not consumed */
+	if (likely(!skb))
+		return;
+
+	/* This only occurs if one of the checks fails on the last
+	 * QP in the list above
+	 */
+
+drop:
 	kfree_skb(skb);
+	ib_device_put(&rxe->ib_dev);
 }
 
-static int rxe_match_dgid(struct rxe_dev *rxe, struct sk_buff *skb)
+/**
+ * rxe_chk_dgid - validate destination IP address
+ * @rxe: rxe device that received packet
+ * @skb: the received packet buffer
+ *
+ * Accept any loopback packets
+ * Extract IP address from packet and
+ * Accept if multicast packet
+ * Accept if matches an SGID table entry
+ */
+static int rxe_chk_dgid(struct rxe_dev *rxe, struct sk_buff *skb)
 {
 	struct rxe_pkt_info *pkt = SKB_TO_PKT(skb);
 	const struct ib_gid_attr *gid_attr;
@@ -365,6 +342,9 @@ static int rxe_match_dgid(struct rxe_dev *rxe, struct sk_buff *skb)
 		pdgid = (union ib_gid *)&ipv6_hdr(skb)->daddr;
 	}
 
+	if (rdma_is_multicast_addr((struct in6_addr *)pdgid))
+		return 0;
+
 	gid_attr = rdma_find_gid_by_port(&rxe->ib_dev, pdgid,
 					 IB_GID_TYPE_ROCE_UDP_ENCAP,
 					 1, skb->dev);
@@ -381,16 +361,12 @@ void rxe_rcv(struct sk_buff *skb)
 	int err;
 	struct rxe_pkt_info *pkt = SKB_TO_PKT(skb);
 	struct rxe_dev *rxe = pkt->rxe;
-	__be32 *icrcp;
-	u32 calc_icrc, pack_icrc;
 
-	pkt->offset = 0;
-
-	if (unlikely(skb->len < pkt->offset + RXE_BTH_BYTES))
+	if (unlikely(skb->len < RXE_BTH_BYTES))
 		goto drop;
 
-	if (rxe_match_dgid(rxe, skb) < 0) {
-		pr_warn_ratelimited("failed matching dgid\n");
+	if (rxe_chk_dgid(rxe, skb) < 0) {
+		pr_warn_ratelimited("failed checking dgid\n");
 		goto drop;
 	}
 
@@ -406,26 +382,9 @@ void rxe_rcv(struct sk_buff *skb)
 	if (unlikely(err))
 		goto drop;
 
-	/* Verify ICRC */
-	icrcp = (__be32 *)(pkt->hdr + pkt->paylen - RXE_ICRC_SIZE);
-	pack_icrc = be32_to_cpu(*icrcp);
-
-	calc_icrc = rxe_icrc_hdr(pkt, skb);
-	calc_icrc = rxe_crc32(rxe, calc_icrc, (u8 *)payload_addr(pkt),
-			      payload_size(pkt) + bth_pad(pkt));
-	calc_icrc = (__force u32)cpu_to_be32(~calc_icrc);
-	if (unlikely(calc_icrc != pack_icrc)) {
-		if (skb->protocol == htons(ETH_P_IPV6))
-			pr_warn_ratelimited("bad ICRC from %pI6c\n",
-					    &ipv6_hdr(skb)->saddr);
-		else if (skb->protocol == htons(ETH_P_IP))
-			pr_warn_ratelimited("bad ICRC from %pI4\n",
-					    &ip_hdr(skb)->saddr);
-		else
-			pr_warn_ratelimited("bad ICRC from unknown\n");
-
+	err = rxe_icrc_check(skb, pkt);
+	if (unlikely(err))
 		goto drop;
-	}
 
 	rxe_counter_inc(rxe, RXE_CNT_RCVD_PKTS);
 
@@ -441,4 +400,5 @@ drop:
 		rxe_drop_ref(pkt->qp);
 
 	kfree_skb(skb);
+	ib_device_put(&rxe->ib_dev);
 }

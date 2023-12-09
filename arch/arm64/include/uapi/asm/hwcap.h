@@ -65,5 +65,18 @@
 #define HWCAP2_SVESM4		(1 << 6)
 #define HWCAP2_FLAGM2		(1 << 7)
 #define HWCAP2_FRINT		(1 << 8)
+#define HWCAP2_SVEI8MM		(1 << 9)
+#define HWCAP2_SVEF32MM		(1 << 10)
+#define HWCAP2_SVEF64MM		(1 << 11)
+#define HWCAP2_SVEBF16		(1 << 12)
+#define HWCAP2_I8MM		(1 << 13)
+#define HWCAP2_BF16		(1 << 14)
+#define HWCAP2_DGH		(1 << 15)
+#define HWCAP2_RNG		(1 << 16)
+#define HWCAP2_BTI		(1 << 17)
+#define HWCAP2_MTE		(1 << 18)
+#define HWCAP2_ECV		(1 << 19)
+#define HWCAP2_AFP		(1 << 20)
+#define HWCAP2_RPRES		(1 << 21)
 
 #endif /* _UAPI__ASM_HWCAP_H */

@@ -9,10 +9,11 @@
 #include "xfs_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"
-#include "xfs_sb.h"
 #include "xfs_alloc.h"
 #include "xfs_ialloc.h"
 #include "xfs_health.h"
+#include "xfs_btree.h"
+#include "xfs_ag.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
 #include "scrub/trace.h"
@@ -70,11 +71,11 @@ xchk_fscount_warmup(
 	xfs_agnumber_t		agno;
 	int			error = 0;
 
-	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
-		pag = xfs_perag_get(mp, agno);
-
+	for_each_perag(mp, agno, pag) {
+		if (xchk_should_terminate(sc, &error))
+			break;
 		if (pag->pagi_init && pag->pagf_init)
-			goto next_loop_perag;
+			continue;
 
 		/* Lock both AG headers. */
 		error = xfs_ialloc_read_agi(mp, sc->tp, agno, &agi_bp);
@@ -83,29 +84,20 @@ xchk_fscount_warmup(
 		error = xfs_alloc_read_agf(mp, sc->tp, agno, 0, &agf_bp);
 		if (error)
 			break;
-		error = -ENOMEM;
-		if (!agf_bp || !agi_bp)
-			break;
 
 		/*
 		 * These are supposed to be initialized by the header read
 		 * function.
 		 */
-		error = -EFSCORRUPTED;
-		if (!pag->pagi_init || !pag->pagf_init)
+		if (!pag->pagi_init || !pag->pagf_init) {
+			error = -EFSCORRUPTED;
 			break;
+		}
 
 		xfs_buf_relse(agf_bp);
 		agf_bp = NULL;
 		xfs_buf_relse(agi_bp);
 		agi_bp = NULL;
-next_loop_perag:
-		xfs_perag_put(pag);
-		pag = NULL;
-		error = 0;
-
-		if (fatal_signal_pending(current))
-			break;
 	}
 
 	if (agf_bp)
@@ -119,8 +111,7 @@ next_loop_perag:
 
 int
 xchk_setup_fscounters(
-	struct xfs_scrub	*sc,
-	struct xfs_inode	*ip)
+	struct xfs_scrub	*sc)
 {
 	struct xchk_fscounters	*fsc;
 	int			error;
@@ -137,14 +128,36 @@ xchk_setup_fscounters(
 	if (error)
 		return error;
 
-	/*
-	 * Pause background reclaim while we're scrubbing to reduce the
-	 * likelihood of background perturbations to the counters throwing off
-	 * our calculations.
-	 */
-	xchk_stop_reaping(sc);
-
 	return xchk_trans_alloc(sc, 0);
+}
+
+/* Count free space btree blocks manually for pre-lazysbcount filesystems. */
+static int
+xchk_fscount_btreeblks(
+	struct xfs_scrub	*sc,
+	struct xchk_fscounters	*fsc,
+	xfs_agnumber_t		agno)
+{
+	xfs_extlen_t		blocks;
+	int			error;
+
+	error = xchk_ag_init_existing(sc, agno, &sc->sa);
+	if (error)
+		goto out_free;
+
+	error = xfs_btree_count_blocks(sc->sa.bno_cur, &blocks);
+	if (error)
+		goto out_free;
+	fsc->fdblocks += blocks - 1;
+
+	error = xfs_btree_count_blocks(sc->sa.cnt_cur, &blocks);
+	if (error)
+		goto out_free;
+	fsc->fdblocks += blocks - 1;
+
+out_free:
+	xchk_ag_free(sc, &sc->sa);
+	return error;
 }
 
 /*
@@ -163,19 +176,21 @@ xchk_fscount_aggregate_agcounts(
 	uint64_t		delayed;
 	xfs_agnumber_t		agno;
 	int			tries = 8;
+	int			error = 0;
 
 retry:
 	fsc->icount = 0;
 	fsc->ifree = 0;
 	fsc->fdblocks = 0;
 
-	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
-		pag = xfs_perag_get(mp, agno);
+	for_each_perag(mp, agno, pag) {
+		if (xchk_should_terminate(sc, &error))
+			break;
 
 		/* This somehow got unset since the warmup? */
 		if (!pag->pagi_init || !pag->pagf_init) {
-			xfs_perag_put(pag);
-			return -EFSCORRUPTED;
+			error = -EFSCORRUPTED;
+			break;
 		}
 
 		/* Count all the inodes */
@@ -185,7 +200,13 @@ retry:
 		/* Add up the free/freelist/bnobt/cntbt blocks */
 		fsc->fdblocks += pag->pagf_freeblks;
 		fsc->fdblocks += pag->pagf_flcount;
-		fsc->fdblocks += pag->pagf_btreeblks;
+		if (xfs_has_lazysbcount(sc->mp)) {
+			fsc->fdblocks += pag->pagf_btreeblks;
+		} else {
+			error = xchk_fscount_btreeblks(sc, fsc, agno);
+			if (error)
+				break;
+		}
 
 		/*
 		 * Per-AG reservations are taken out of the incore counters,
@@ -194,11 +215,11 @@ retry:
 		fsc->fdblocks -= pag->pag_meta_resv.ar_reserved;
 		fsc->fdblocks -= pag->pag_rmapbt_resv.ar_orig_reserved;
 
-		xfs_perag_put(pag);
-
-		if (fatal_signal_pending(current))
-			break;
 	}
+	if (pag)
+		xfs_perag_put(pag);
+	if (error)
+		return error;
 
 	/*
 	 * The global incore space reservation is taken from the incore
@@ -324,6 +345,12 @@ xchk_fscounters(
 	/* See if fdblocks is obviously wrong. */
 	if (fdblocks > mp->m_sb.sb_dblocks)
 		xchk_set_corrupt(sc);
+
+	/*
+	 * XXX: We can't quiesce percpu counter updates, so exit early.
+	 * This can be re-enabled when we gain exclusive freeze functionality.
+	 */
+	return 0;
 
 	/*
 	 * If ifree exceeds icount by more than the minimum variance then

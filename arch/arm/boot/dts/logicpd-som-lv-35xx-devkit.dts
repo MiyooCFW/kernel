@@ -9,7 +9,7 @@
 
 / {
 	model = "LogicPD Zoom OMAP35xx SOM-LV Development Kit";
-	compatible = "logicpd,dm3730-som-lv-devkit", "ti,omap3";
+	compatible = "logicpd,dm3730-som-lv-devkit", "ti,omap3430", "ti,omap3";
 };
 
 &omap3_pmx_core2 {

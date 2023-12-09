@@ -25,17 +25,13 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
-#include <linux/fs_context.h>
+#include <linux/init_syscalls.h>
 #include <uapi/linux/mount.h>
 #include "base.h"
 
 static struct task_struct *thread;
 
-#if defined CONFIG_DEVTMPFS_MOUNT
-static int mount_dev = 1;
-#else
-static int mount_dev;
-#endif
+static int __initdata mount_dev = IS_ENABLED(CONFIG_DEVTMPFS_MOUNT);
 
 static DEFINE_SPINLOCK(req_lock);
 
@@ -79,10 +75,10 @@ static struct file_system_type internal_fs_type = {
 	.name = "devtmpfs",
 #ifdef CONFIG_TMPFS
 	.init_fs_context = shmem_init_fs_context,
-	.parameters	= &shmem_fs_parameters,
+	.parameters	= shmem_fs_parameters,
 #else
 	.init_fs_context = ramfs_init_fs_context,
-	.parameters	= &ramfs_fs_parameters,
+	.parameters	= ramfs_fs_parameters,
 #endif
 	.kill_sb = kill_litter_super,
 };
@@ -100,6 +96,23 @@ static inline int is_blockdev(struct device *dev)
 #else
 static inline int is_blockdev(struct device *dev) { return 0; }
 #endif
+
+static int devtmpfs_submit_req(struct req *req, const char *tmp)
+{
+	init_completion(&req->done);
+
+	spin_lock(&req_lock);
+	req->next = requests;
+	requests = req;
+	spin_unlock(&req_lock);
+
+	wake_up_process(thread);
+	wait_for_completion(&req->done);
+
+	kfree(tmp);
+
+	return req->err;
+}
 
 int devtmpfs_create_node(struct device *dev)
 {
@@ -125,19 +138,7 @@ int devtmpfs_create_node(struct device *dev)
 
 	req.dev = dev;
 
-	init_completion(&req.done);
-
-	spin_lock(&req_lock);
-	req.next = requests;
-	requests = &req;
-	spin_unlock(&req_lock);
-
-	wake_up_process(thread);
-	wait_for_completion(&req.done);
-
-	kfree(tmp);
-
-	return req.err;
+	return devtmpfs_submit_req(&req, tmp);
 }
 
 int devtmpfs_delete_node(struct device *dev)
@@ -155,18 +156,7 @@ int devtmpfs_delete_node(struct device *dev)
 	req.mode = 0;
 	req.dev = dev;
 
-	init_completion(&req.done);
-
-	spin_lock(&req_lock);
-	req.next = requests;
-	requests = &req;
-	spin_unlock(&req_lock);
-
-	wake_up_process(thread);
-	wait_for_completion(&req.done);
-
-	kfree(tmp);
-	return req.err;
+	return devtmpfs_submit_req(&req, tmp);
 }
 
 static int dev_mkdir(const char *name, umode_t mode)
@@ -179,7 +169,7 @@ static int dev_mkdir(const char *name, umode_t mode)
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
-	err = vfs_mkdir(d_inode(path.dentry), dentry, mode);
+	err = vfs_mkdir(&init_user_ns, d_inode(path.dentry), dentry, mode);
 	if (!err)
 		/* mark as kernel-created inode */
 		d_inode(dentry)->i_private = &thread;
@@ -229,7 +219,8 @@ static int handle_create(const char *nodename, umode_t mode, kuid_t uid,
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
-	err = vfs_mknod(d_inode(path.dentry), dentry, mode, dev->devt);
+	err = vfs_mknod(&init_user_ns, d_inode(path.dentry), dentry, mode,
+			dev->devt);
 	if (!err) {
 		struct iattr newattrs;
 
@@ -238,7 +229,7 @@ static int handle_create(const char *nodename, umode_t mode, kuid_t uid,
 		newattrs.ia_gid = gid;
 		newattrs.ia_valid = ATTR_MODE|ATTR_UID|ATTR_GID;
 		inode_lock(d_inode(dentry));
-		notify_change(dentry, &newattrs, NULL);
+		notify_change(&init_user_ns, dentry, &newattrs, NULL);
 		inode_unlock(d_inode(dentry));
 
 		/* mark as kernel-created inode */
@@ -259,7 +250,8 @@ static int dev_rmdir(const char *name)
 		return PTR_ERR(dentry);
 	if (d_really_is_positive(dentry)) {
 		if (d_inode(dentry)->i_private == &thread)
-			err = vfs_rmdir(d_inode(parent.dentry), dentry);
+			err = vfs_rmdir(&init_user_ns, d_inode(parent.dentry),
+					dentry);
 		else
 			err = -EPERM;
 	} else {
@@ -345,9 +337,10 @@ static int handle_remove(const char *nodename, struct device *dev)
 			newattrs.ia_valid =
 				ATTR_UID|ATTR_GID|ATTR_MODE;
 			inode_lock(d_inode(dentry));
-			notify_change(dentry, &newattrs, NULL);
+			notify_change(&init_user_ns, dentry, &newattrs, NULL);
 			inode_unlock(d_inode(dentry));
-			err = vfs_unlink(d_inode(parent.dentry), dentry, NULL);
+			err = vfs_unlink(&init_user_ns, d_inode(parent.dentry),
+					 dentry, NULL);
 			if (!err || err == -ENOENT)
 				deleted = 1;
 		}
@@ -367,7 +360,7 @@ static int handle_remove(const char *nodename, struct device *dev)
  * If configured, or requested by the commandline, devtmpfs will be
  * auto-mounted after the kernel mounted the root filesystem.
  */
-int devtmpfs_mount(const char *mntdir)
+int __init devtmpfs_mount(void)
 {
 	int err;
 
@@ -377,7 +370,7 @@ int devtmpfs_mount(const char *mntdir)
 	if (!thread)
 		return 0;
 
-	err = ksys_mount("devtmpfs", mntdir, "devtmpfs", MS_SILENT, NULL);
+	err = init_mount("devtmpfs", "dev", "devtmpfs", MS_SILENT, NULL);
 	if (err)
 		printk(KERN_INFO "devtmpfs: error mounting %i\n", err);
 	else
@@ -385,7 +378,7 @@ int devtmpfs_mount(const char *mntdir)
 	return err;
 }
 
-static DECLARE_COMPLETION(setup_done);
+static __initdata DECLARE_COMPLETION(setup_done);
 
 static int handle(const char *name, umode_t mode, kuid_t uid, kgid_t gid,
 		  struct device *dev)
@@ -396,18 +389,8 @@ static int handle(const char *name, umode_t mode, kuid_t uid, kgid_t gid,
 		return handle_remove(name, dev);
 }
 
-static int devtmpfsd(void *p)
+static void __noreturn devtmpfs_work_loop(void)
 {
-	int *err = p;
-	*err = ksys_unshare(CLONE_NEWNS);
-	if (*err)
-		goto out;
-	*err = ksys_mount("devtmpfs", "/", "devtmpfs", MS_SILENT, NULL);
-	if (*err)
-		goto out;
-	ksys_chdir("/.."); /* will traverse into overmounted root */
-	ksys_chroot(".");
-	complete(&setup_done);
 	while (1) {
 		spin_lock(&req_lock);
 		while (requests) {
@@ -427,10 +410,39 @@ static int devtmpfsd(void *p)
 		spin_unlock(&req_lock);
 		schedule();
 	}
-	return 0;
+}
+
+static noinline int __init devtmpfs_setup(void *p)
+{
+	int err;
+
+	err = ksys_unshare(CLONE_NEWNS);
+	if (err)
+		goto out;
+	err = init_mount("devtmpfs", "/", "devtmpfs", MS_SILENT, NULL);
+	if (err)
+		goto out;
+	init_chdir("/.."); /* will traverse into overmounted root */
+	init_chroot(".");
 out:
+	*(int *)p = err;
+	return err;
+}
+
+/*
+ * The __ref is because devtmpfs_setup needs to be __init for the routines it
+ * calls.  That call is done while devtmpfs_init, which is marked __init,
+ * synchronously waits for it to complete.
+ */
+static int __ref devtmpfsd(void *p)
+{
+	int err = devtmpfs_setup(p);
+
 	complete(&setup_done);
-	return *err;
+	if (err)
+		return err;
+	devtmpfs_work_loop();
+	return 0;
 }
 
 /*

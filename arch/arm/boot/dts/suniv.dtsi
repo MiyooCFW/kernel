@@ -1,5 +1,5 @@
-#include <dt-bindings/clock/suniv-ccu.h>
-#include <dt-bindings/reset/suniv-ccu.h>
+#include <dt-bindings/clock/suniv-ccu-f1c100s.h>
+#include <dt-bindings/reset/suniv-ccu-f1c100s.h>
 
 / {
 	#address-cells = <1>;

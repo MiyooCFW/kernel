@@ -1,14 +1,14 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2017 Icenowy Zheng <icenowy@aosc.io>
  *
- * SPDX-License-Identifier: GPL-2.0+
  */
 
-#ifndef _CCU_SUNIV_H_
-#define _CCU_SUNIV_H_
+#ifndef _CCU_SUNIV_F1C100S_H_
+#define _CCU_SUNIV_F1C100S_H_
 
-#include <dt-bindings/clock/suniv-ccu.h>
-#include <dt-bindings/reset/suniv-ccu.h>
+#include <dt-bindings/clock/suniv-ccu-f1c100s.h>
+#include <dt-bindings/reset/suniv-ccu-f1c100s.h>
 
 #define CLK_PLL_CPU		0
 #define CLK_PLL_AUDIO_BASE	1
@@ -31,4 +31,4 @@
 
 #define CLK_NUMBER		(CLK_AVS + 1)
 
-#endif /* _CCU_SUNIV_H_ */
+#endif /* _CCU_SUNIV_F1C100S_H_ */

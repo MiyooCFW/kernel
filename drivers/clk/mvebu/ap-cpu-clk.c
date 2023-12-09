@@ -30,7 +30,7 @@
 
 #define APN806_MAX_DIVIDER		32
 
-/**
+/*
  * struct cpu_dfs_regs: CPU DFS register mapping
  * @divider_reg: full integer ratio from PLL frequency to CPU clock frequency
  * @force_reg: request to force new ratio regardless of relation to other clocks
@@ -197,7 +197,7 @@ static int ap_cpu_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 
 	stable_bit = BIT(clk->pll_regs->ratio_state_offset +
 			 clk->cluster *
-			 clk->pll_regs->ratio_state_cluster_offset),
+			 clk->pll_regs->ratio_state_cluster_offset);
 	ret = regmap_read_poll_timeout(clk->pll_cr_base,
 				       clk->pll_regs->ratio_state_reg, reg,
 				       reg & stable_bit, STATUS_POLL_PERIOD_US,
@@ -277,8 +277,8 @@ static int ap_cpu_clock_probe(struct platform_device *pdev)
 	if (!ap_cpu_clk)
 		return -ENOMEM;
 
-	ap_cpu_data = devm_kzalloc(dev, sizeof(*ap_cpu_data) +
-				sizeof(struct clk_hw *) * nclusters,
+	ap_cpu_data = devm_kzalloc(dev, struct_size(ap_cpu_data, hws,
+						    nclusters),
 				GFP_KERNEL);
 	if (!ap_cpu_data)
 		return -ENOMEM;

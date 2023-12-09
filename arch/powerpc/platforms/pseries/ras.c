@@ -122,7 +122,7 @@ static inline u8 rtas_mc_error_sub_type(const struct pseries_mc_errorlog *mlog)
  * devices or systems (e.g. hugepages) that have not been initialized at the
  * subsys stage.
  */
-int __init init_ras_hotplug_IRQ(void)
+static int __init init_ras_hotplug_IRQ(void)
 {
 	struct device_node *np;
 
@@ -254,7 +254,7 @@ static void rtas_parse_epow_errlog(struct rtas_error_log *log)
 		break;
 
 	case EPOW_SYSTEM_SHUTDOWN:
-		handle_system_shutdown(epow_log->event_modifier);
+		handle_system_shutdown(modifier);
 		break;
 
 	case EPOW_SYSTEM_HALT:
@@ -315,12 +315,10 @@ static irqreturn_t ras_hotplug_interrupt(int irq, void *dev_id)
 /* Handle environmental and power warning (EPOW) interrupts. */
 static irqreturn_t ras_epow_interrupt(int irq, void *dev_id)
 {
-	int status;
 	int state;
 	int critical;
 
-	status = rtas_get_sensor_fast(EPOW_SENSOR_TOKEN, EPOW_SENSOR_INDEX,
-				      &state);
+	rtas_get_sensor_fast(EPOW_SENSOR_TOKEN, EPOW_SENSOR_INDEX, &state);
 
 	if (state > 3)
 		critical = 1;		/* Time Critical */
@@ -329,12 +327,9 @@ static irqreturn_t ras_epow_interrupt(int irq, void *dev_id)
 
 	spin_lock(&ras_log_buf_lock);
 
-	status = rtas_call(ras_check_exception_token, 6, 1, NULL,
-			   RTAS_VECTOR_EXTERNAL_INTERRUPT,
-			   virq_to_hw(irq),
-			   RTAS_EPOW_WARNING,
-			   critical, __pa(&ras_log_buf),
-				rtas_get_error_log_max());
+	rtas_call(ras_check_exception_token, 6, 1, NULL, RTAS_VECTOR_EXTERNAL_INTERRUPT,
+		  virq_to_hw(irq), RTAS_EPOW_WARNING, critical, __pa(&ras_log_buf),
+		  rtas_get_error_log_max());
 
 	log_error(ras_log_buf, ERR_TYPE_RTAS_LOG, 0);
 
@@ -405,6 +400,20 @@ static inline struct rtas_error_log *fwnmi_get_errlog(void)
 	return (struct rtas_error_log *)local_paca->mce_data_buf;
 }
 
+static __be64 *fwnmi_get_savep(struct pt_regs *regs)
+{
+	unsigned long savep_ra;
+
+	/* Mask top two bits */
+	savep_ra = regs->gpr[3] & ~(0x3UL << 62);
+	if (!VALID_FWNMI_BUFFER(savep_ra)) {
+		printk(KERN_ERR "FWNMI: corrupt r3 0x%016lx\n", regs->gpr[3]);
+		return NULL;
+	}
+
+	return __va(savep_ra);
+}
+
 /*
  * Get the error information for errors coming through the
  * FWNMI vectors.  The pt_regs' r3 will be updated to reflect
@@ -422,19 +431,14 @@ static inline struct rtas_error_log *fwnmi_get_errlog(void)
  */
 static struct rtas_error_log *fwnmi_get_errinfo(struct pt_regs *regs)
 {
-	unsigned long *savep;
 	struct rtas_error_log *h;
+	__be64 *savep;
 
-	/* Mask top two bits */
-	regs->gpr[3] &= ~(0x3UL << 62);
-
-	if (!VALID_FWNMI_BUFFER(regs->gpr[3])) {
-		printk(KERN_ERR "FWNMI: corrupt r3 0x%016lx\n", regs->gpr[3]);
+	savep = fwnmi_get_savep(regs);
+	if (!savep)
 		return NULL;
-	}
 
-	savep = __va(regs->gpr[3]);
-	regs->gpr[3] = be64_to_cpu(savep[0]);	/* restore original r3 */
+	regs->gpr[3] = be64_to_cpu(savep[0]); /* restore original r3 */
 
 	h = (struct rtas_error_log *)&savep[1];
 	/* Use the per cpu buffer from paca to store rtas error log */
@@ -458,7 +462,15 @@ static struct rtas_error_log *fwnmi_get_errinfo(struct pt_regs *regs)
  */
 static void fwnmi_release_errinfo(void)
 {
-	int ret = rtas_call(rtas_token("ibm,nmi-interlock"), 0, 1, NULL);
+	struct rtas_args rtas_args;
+	int ret;
+
+	/*
+	 * On pseries, the machine check stack is limited to under 4GB, so
+	 * args can be on-stack.
+	 */
+	rtas_call_unlocked(&rtas_args, ibm_nmi_interlock_token, 0, 1, NULL);
+	ret = be32_to_cpu(rtas_args.rets[0]);
 	if (ret != 0)
 		printk(KERN_ERR "FWNMI: nmi-interlock failed: %d\n", ret);
 }
@@ -475,17 +487,27 @@ int pSeries_system_reset_exception(struct pt_regs *regs)
 	if ((be64_to_cpu(regs->msr) &
 			(MSR_LE|MSR_RI|MSR_DR|MSR_IR|MSR_ME|MSR_PR|
 			 MSR_ILE|MSR_HV|MSR_SF)) == (MSR_DR|MSR_SF)) {
-		regs->nip = be64_to_cpu((__be64)regs->nip);
-		regs->msr = 0;
+		regs_set_return_ip(regs, be64_to_cpu((__be64)regs->nip));
+		regs_set_return_msr(regs, 0);
 	}
 #endif
 
 	if (fwnmi_active) {
-		struct rtas_error_log *errhdr = fwnmi_get_errinfo(regs);
-		if (errhdr) {
-			/* XXX Should look at FWNMI information */
-		}
-		fwnmi_release_errinfo();
+		__be64 *savep;
+
+		/*
+		 * Firmware (PowerVM and KVM) saves r3 to a save area like
+		 * machine check, which is not exactly what PAPR (2.9)
+		 * suggests but there is no way to detect otherwise, so this
+		 * is the interface now.
+		 *
+		 * System resets do not save any error log or require an
+		 * "ibm,nmi-interlock" rtas call to release.
+		 */
+
+		savep = fwnmi_get_savep(regs);
+		if (savep)
+			regs->gpr[3] = be64_to_cpu(savep[0]); /* restore original r3 */
 	}
 
 	if (smp_handle_nmi_ipi(regs))
@@ -499,8 +521,11 @@ static int mce_handle_err_realmode(int disposition, u8 error_type)
 #ifdef CONFIG_PPC_BOOK3S_64
 	if (disposition == RTAS_DISP_NOT_RECOVERED) {
 		switch (error_type) {
-		case	MC_ERROR_TYPE_SLB:
 		case	MC_ERROR_TYPE_ERAT:
+			flush_erat();
+			disposition = RTAS_DISP_FULLY_RECOVERED;
+			break;
+		case	MC_ERROR_TYPE_SLB:
 			/*
 			 * Store the old slb content in paca before flushing.
 			 * Print this when we go to virtual mode.
@@ -568,8 +593,6 @@ static int mce_handle_err_virtmode(struct pt_regs *regs,
 		mce_err.severity = MCE_SEV_SEVERE;
 	else if (severity == RTAS_SEVERITY_ERROR)
 		mce_err.severity = MCE_SEV_SEVERE;
-	else if (severity == RTAS_SEVERITY_FATAL)
-		mce_err.severity = MCE_SEV_FATAL;
 	else
 		mce_err.severity = MCE_SEV_FATAL;
 
@@ -584,6 +607,9 @@ static int mce_handle_err_virtmode(struct pt_regs *regs,
 	switch (error_type) {
 	case MC_ERROR_TYPE_UE:
 		mce_err.error_type = MCE_ERROR_TYPE_UE;
+		mce_common_process_ue(regs, &mce_err);
+		if (mce_err.ignore_event)
+			disposition = RTAS_DISP_FULLY_RECOVERED;
 		switch (err_sub_type) {
 		case MC_ERROR_UE_IFETCH:
 			mce_err.u.ue_error_type = MCE_UE_ERROR_IFETCH;
@@ -671,7 +697,7 @@ static int mce_handle_err_virtmode(struct pt_regs *regs,
 		mce_err.error_type = MCE_ERROR_TYPE_DCACHE;
 		break;
 	case MC_ERROR_TYPE_I_CACHE:
-		mce_err.error_type = MCE_ERROR_TYPE_DCACHE;
+		mce_err.error_type = MCE_ERROR_TYPE_ICACHE;
 		break;
 	case MC_ERROR_TYPE_UNKNOWN:
 	default:
@@ -689,6 +715,7 @@ static int mce_handle_error(struct pt_regs *regs, struct rtas_error_log *errp)
 	struct pseries_errorlog *pseries_log;
 	struct pseries_mc_errorlog *mce_log = NULL;
 	int disposition = rtas_error_disposition(errp);
+	unsigned long msr;
 	u8 error_type;
 
 	if (!rtas_error_extended(errp))
@@ -714,9 +741,21 @@ static int mce_handle_error(struct pt_regs *regs, struct rtas_error_log *errp)
 	 *       SLB multihit is done by now.
 	 */
 out:
-	mtmsr(mfmsr() | MSR_IR | MSR_DR);
+	msr = mfmsr();
+	mtmsr(msr | MSR_IR | MSR_DR);
+
 	disposition = mce_handle_err_virtmode(regs, errp, mce_log,
 					      disposition);
+
+	/*
+	 * Queue irq work to log this rtas event later.
+	 * irq_work_queue uses per-cpu variables, so do this in virt
+	 * mode as well.
+	 */
+	irq_work_queue(&mce_errlog_process_work);
+
+	mtmsr(msr);
+
 	return disposition;
 }
 
@@ -744,7 +783,7 @@ static int recover_mce(struct pt_regs *regs, struct machine_check_event *evt)
 {
 	int recovered = 0;
 
-	if (!(regs->msr & MSR_RI)) {
+	if (regs_is_unrecoverable(regs)) {
 		/* If MSR_RI isn't set, we cannot recover */
 		pr_err("Machine check interrupt unrecoverable: MSR(RI=0)\n");
 		recovered = 0;
@@ -780,7 +819,7 @@ static int recover_mce(struct pt_regs *regs, struct machine_check_event *evt)
 			 */
 			recovered = 0;
 		} else {
-			die("Machine check", regs, SIGBUS);
+			die_mce("Machine check", regs, SIGBUS);
 			recovered = 1;
 		}
 	}
@@ -832,10 +871,8 @@ long pseries_machine_check_realmode(struct pt_regs *regs)
 		 * virtual mode.
 		 */
 		disposition = mce_handle_error(regs, errp);
-		fwnmi_release_errinfo();
 
-		/* Queue irq work to log this rtas event later. */
-		irq_work_queue(&mce_errlog_process_work);
+		fwnmi_release_errinfo();
 
 		if (disposition == RTAS_DISP_FULLY_RECOVERED)
 			return 1;

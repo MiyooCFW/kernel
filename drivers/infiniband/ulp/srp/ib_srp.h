@@ -44,7 +44,6 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_sa.h>
 #include <rdma/ib_cm.h>
-#include <rdma/ib_fmr_pool.h>
 #include <rdma/rdma_cm.h>
 
 enum {
@@ -97,8 +96,7 @@ enum srp_iu_type {
 /*
  * @mr_page_mask: HCA memory registration page mask.
  * @mr_page_size: HCA memory registration page size.
- * @mr_max_size: Maximum size in bytes of a single FMR / FR registration
- *   request.
+ * @mr_max_size: Maximum size in bytes of a single FR registration request.
  */
 struct srp_device {
 	struct list_head	dev_list;
@@ -109,9 +107,7 @@ struct srp_device {
 	int			mr_page_size;
 	int			mr_max_size;
 	int			max_pages_per_mr;
-	bool			has_fmr;
 	bool			has_fr;
-	bool			use_fmr;
 	bool			use_fast_reg;
 };
 
@@ -129,11 +125,7 @@ struct srp_host {
 struct srp_request {
 	struct scsi_cmnd       *scmnd;
 	struct srp_iu	       *cmd;
-	union {
-		struct ib_pool_fmr **fmr_list;
-		struct srp_fr_desc **fr_list;
-	};
-	u64		       *map_page;
+	struct srp_fr_desc     **fr_list;
 	struct srp_direct_buf  *indirect_desc;
 	dma_addr_t		indirect_dma_addr;
 	short			nmdesc;
@@ -157,12 +149,10 @@ struct srp_rdma_ch {
 	struct ib_cq	       *send_cq;
 	struct ib_cq	       *recv_cq;
 	struct ib_qp	       *qp;
-	union {
-		struct ib_fmr_pool     *fmr_pool;
-		struct srp_fr_pool     *fr_pool;
-	};
+	struct srp_fr_pool     *fr_pool;
 	uint32_t		max_it_iu_len;
 	uint32_t		max_ti_iu_len;
+	u8			max_imm_sge;
 	bool			use_imm_data;
 
 	/* Everything above this point is used in the hot path of
@@ -186,7 +176,6 @@ struct srp_rdma_ch {
 
 	struct srp_iu	      **tx_ring;
 	struct srp_iu	      **rx_ring;
-	struct srp_request     *req_ring;
 	int			comp_vector;
 
 	u64			tsk_mgmt_tag;
@@ -211,6 +200,7 @@ struct srp_target_port {
 	u32			ch_count;
 	u32			lkey;
 	enum srp_target_state	state;
+	uint32_t		max_it_iu_size;
 	unsigned int		cmd_sg_cnt;
 	unsigned int		indirect_size;
 	bool			allow_ext_sg;
@@ -231,7 +221,6 @@ struct srp_target_port {
 	int			mr_pool_size;
 	int			mr_per_cmd;
 	int			queue_size;
-	int			req_ring_size;
 	int			comp_vector;
 	int			tl_retry_count;
 
@@ -247,11 +236,13 @@ struct srp_target_port {
 			union {
 				struct sockaddr_in	ip4;
 				struct sockaddr_in6	ip6;
+				struct sockaddr		sa;
 				struct sockaddr_storage ss;
 			} src;
 			union {
 				struct sockaddr_in	ip4;
 				struct sockaddr_in6	ip6;
+				struct sockaddr		sa;
 				struct sockaddr_storage ss;
 			} dst;
 			bool src_specified;
@@ -307,7 +298,7 @@ struct srp_fr_pool {
 	int			max_page_list_len;
 	spinlock_t		lock;
 	struct list_head	free_list;
-	struct srp_fr_desc	desc[0];
+	struct srp_fr_desc	desc[];
 };
 
 /**
@@ -317,19 +308,15 @@ struct srp_fr_pool {
  * @pages:	    Array with DMA addresses of pages being considered for
  *		    memory registration.
  * @base_dma_addr:  DMA address of the first page that has not yet been mapped.
- * @dma_len:	    Number of bytes that will be registered with the next
- *		    FMR or FR memory registration call.
+ * @dma_len:	    Number of bytes that will be registered with the next FR
+ *                  memory registration call.
  * @total_len:	    Total number of bytes in the sg-list being mapped.
  * @npages:	    Number of page addresses in the pages[] array.
- * @nmdesc:	    Number of FMR or FR memory descriptors used for mapping.
+ * @nmdesc:	    Number of FR memory descriptors used for mapping.
  * @ndesc:	    Number of SRP buffer descriptors that have been filled in.
  */
 struct srp_map_state {
 	union {
-		struct {
-			struct ib_pool_fmr **next;
-			struct ib_pool_fmr **end;
-		} fmr;
 		struct {
 			struct srp_fr_desc **next;
 			struct srp_fr_desc **end;

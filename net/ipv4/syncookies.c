@@ -206,6 +206,12 @@ struct sock *tcp_get_cookie_sock(struct sock *sk, struct sk_buff *skb,
 		refcount_set(&req->rsk_refcnt, 1);
 		tcp_sk(child)->tsoffset = tsoff;
 		sock_rps_save_rxhash(child, skb);
+
+		if (rsk_drop_req(req)) {
+			reqsk_put(req);
+			return child;
+		}
+
 		if (inet_csk_reqsk_queue_add(sk, req, child))
 			return child;
 
@@ -263,12 +269,50 @@ bool cookie_ecn_ok(const struct tcp_options_received *tcp_opt,
 	if (!ecn_ok)
 		return false;
 
-	if (net->ipv4.sysctl_tcp_ecn)
+	if (READ_ONCE(net->ipv4.sysctl_tcp_ecn))
 		return true;
 
 	return dst_feature(dst, RTAX_FEATURE_ECN);
 }
 EXPORT_SYMBOL(cookie_ecn_ok);
+
+struct request_sock *cookie_tcp_reqsk_alloc(const struct request_sock_ops *ops,
+					    const struct tcp_request_sock_ops *af_ops,
+					    struct sock *sk,
+					    struct sk_buff *skb)
+{
+	struct tcp_request_sock *treq;
+	struct request_sock *req;
+
+	if (sk_is_mptcp(sk))
+		req = mptcp_subflow_reqsk_alloc(ops, sk, false);
+	else
+		req = inet_reqsk_alloc(ops, sk, false);
+
+	if (!req)
+		return NULL;
+
+	treq = tcp_rsk(req);
+
+	/* treq->af_specific might be used to perform TCP_MD5 lookup */
+	treq->af_specific = af_ops;
+
+	treq->syn_tos = TCP_SKB_CB(skb)->ip_dsfield;
+#if IS_ENABLED(CONFIG_MPTCP)
+	treq->is_mptcp = sk_is_mptcp(sk);
+	if (treq->is_mptcp) {
+		int err = mptcp_subflow_init_cookie_req(req, sk, skb);
+
+		if (err) {
+			reqsk_free(req);
+			return NULL;
+		}
+	}
+#endif
+
+	return req;
+}
+EXPORT_SYMBOL_GPL(cookie_tcp_reqsk_alloc);
 
 /* On input, sk is a listener.
  * Output is listener if incoming packet would not create a child
@@ -321,13 +365,13 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 		goto out;
 
 	ret = NULL;
-	req = inet_reqsk_alloc(&tcp_request_sock_ops, sk, false); /* for safety */
+	req = cookie_tcp_reqsk_alloc(&tcp_request_sock_ops,
+				     &tcp_request_sock_ipv4_ops, sk, skb);
 	if (!req)
 		goto out;
 
 	ireq = inet_rsk(req);
 	treq = tcp_rsk(req);
-	treq->af_specific	= &tcp_request_sock_ipv4_ops;
 	treq->rcv_isn		= ntohl(th->seq) - 1;
 	treq->snt_isn		= cookie;
 	treq->ts_off		= 0;
@@ -345,6 +389,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 	req->ts_recent		= tcp_opt.saw_tstamp ? tcp_opt.rcv_tsval : 0;
 	treq->snt_synack	= 0;
 	treq->tfo_listener	= false;
+
 	if (IS_ENABLED(CONFIG_SMC))
 		ireq->smc_ok = 0;
 
@@ -373,7 +418,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 			   inet_sk_flowi_flags(sk),
 			   opt->srr ? opt->faddr : ireq->ir_rmt_addr,
 			   ireq->ir_loc_addr, th->source, th->dest, sk->sk_uid);
-	security_req_classify_flow(req, flowi4_to_flowi(&fl4));
+	security_req_classify_flow(req, flowi4_to_flowi_common(&fl4));
 	rt = ip_route_output_key(sock_net(sk), &fl4);
 	if (IS_ERR(rt)) {
 		reqsk_free(req);

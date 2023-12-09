@@ -1,5 +1,5 @@
 /*
- * Allwinner new F-series SoC (suniv) pinctrl driver.
+ * Allwinner new F-series F1C100s SoC (suniv) pinctrl driver.
  *
  * Copyright (C) 2018 Icenowy Zheng
  *
@@ -29,7 +29,7 @@
 #include <linux/pinctrl/pinctrl.h>
 
 #include "pinctrl-sunxi.h"
-static const struct sunxi_desc_pin suniv_pins[] = {
+static const struct sunxi_desc_pin suniv_f1c100s_pins[] = {
 	SUNXI_PIN(SUNXI_PINCTRL_PIN(A, 0),
 		  SUNXI_FUNCTION(0x0, "gpio_in"),
 		  SUNXI_FUNCTION(0x1, "gpio_out"),
@@ -389,28 +389,28 @@ static const struct sunxi_desc_pin suniv_pins[] = {
 		  SUNXI_FUNCTION_IRQ_BANK(0x6, 2, 5)),
 };
 
-static const struct sunxi_pinctrl_desc suniv_pinctrl_data = {
-	.pins = suniv_pins,
-	.npins = ARRAY_SIZE(suniv_pins),
+static const struct sunxi_pinctrl_desc suniv_f1c100s_pinctrl_data = {
+	.pins = suniv_f1c100s_pins,
+	.npins = ARRAY_SIZE(suniv_f1c100s_pins),
 	.irq_banks = 3,
 };
 
 static int suniv_pinctrl_probe(struct platform_device *pdev)
 {
 	return sunxi_pinctrl_init(pdev,
-				  &suniv_pinctrl_data);
+				  &suniv_f1c100s_pinctrl_data);
 }
 
-static const struct of_device_id suniv_pinctrl_match[] = {
+static const struct of_device_id suniv_f1c100s_pinctrl_match[] = {
 	{ .compatible = "allwinner,suniv-f1c100s-pinctrl", },
 	{}
 };
 
-static struct platform_driver suniv_pinctrl_driver = {
+static struct platform_driver suniv_f1c100s_pinctrl_driver = {
 	.probe	= suniv_pinctrl_probe,
 	.driver	= {
-		.name		= "suniv-pinctrl",
-		.of_match_table	= suniv_pinctrl_match,
+		.name		= "suniv-f1c100s-pinctrl",
+		.of_match_table	= suniv_f1c100s_pinctrl_match,
 	},
 };
-builtin_platform_driver(suniv_pinctrl_driver);
+builtin_platform_driver(suniv_f1c100s_pinctrl_driver);

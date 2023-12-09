@@ -110,7 +110,7 @@ int xhci_mvebu_a3700_plat_setup(struct usb_hcd *hcd)
 phy_exit:
 	phy_exit(phy);
 phy_put:
-	phy_put(phy);
+	of_phy_put(phy);
 phy_out:
 
 	return 0;

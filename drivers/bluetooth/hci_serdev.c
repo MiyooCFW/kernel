@@ -21,8 +21,6 @@
 
 #include "hci_uart.h"
 
-static struct serdev_device_ops hci_serdev_client_ops;
-
 static inline void hci_uart_tx_complete(struct hci_uart *hu, int pkt_type)
 {
 	struct hci_dev *hdev = hu->hdev;
@@ -115,7 +113,21 @@ static int hci_uart_flush(struct hci_dev *hdev)
 /* Initialize device */
 static int hci_uart_open(struct hci_dev *hdev)
 {
+	struct hci_uart *hu = hci_get_drvdata(hdev);
+	int err;
+
 	BT_DBG("%s %p", hdev->name, hdev);
+
+	/* When Quirk HCI_QUIRK_NON_PERSISTENT_SETUP is set by
+	 * driver, BT SoC is completely turned OFF during
+	 * BT OFF. Upon next BT ON UART port should be opened.
+	 */
+	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
+		err = serdev_device_open(hu->serdev);
+		if (err)
+			return err;
+		set_bit(HCI_UART_PROTO_READY, &hu->flags);
+	}
 
 	/* Undo clearing this from hci_uart_close() */
 	hdev->flush = hci_uart_flush;
@@ -126,10 +138,24 @@ static int hci_uart_open(struct hci_dev *hdev)
 /* Close device */
 static int hci_uart_close(struct hci_dev *hdev)
 {
+	struct hci_uart *hu = hci_get_drvdata(hdev);
+
 	BT_DBG("hdev %p", hdev);
+
+	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
+		return 0;
 
 	hci_uart_flush(hdev);
 	hdev->flush = NULL;
+
+	/* When QUIRK HCI_QUIRK_NON_PERSISTENT_SETUP is set by driver,
+	 * BT SOC is completely powered OFF during BT OFF, holding port
+	 * open may drain the battery.
+	 */
+	if (test_bit(HCI_QUIRK_NON_PERSISTENT_SETUP, &hdev->quirks)) {
+		clear_bit(HCI_UART_PROTO_READY, &hu->flags);
+		serdev_device_close(hu->serdev);
+	}
 
 	return 0;
 }
@@ -260,7 +286,7 @@ static int hci_uart_receive_buf(struct serdev_device *serdev, const u8 *data,
 	return count;
 }
 
-static struct serdev_device_ops hci_serdev_client_ops = {
+static const struct serdev_device_ops hci_serdev_client_ops = {
 	.receive_buf = hci_uart_receive_buf,
 	.write_wakeup = hci_uart_write_wakeup,
 };
@@ -275,11 +301,12 @@ int hci_uart_register_device(struct hci_uart *hu,
 
 	serdev_device_set_client_ops(hu->serdev, &hci_serdev_client_ops);
 
+	if (percpu_init_rwsem(&hu->proto_lock))
+		return -ENOMEM;
+
 	err = serdev_device_open(hu->serdev);
 	if (err)
-		return err;
-
-	percpu_init_rwsem(&hu->proto_lock);
+		goto err_rwsem;
 
 	err = p->open(hu);
 	if (err)
@@ -318,6 +345,9 @@ int hci_uart_register_device(struct hci_uart *hu,
 	hdev->setup = hci_uart_setup;
 	SET_HCIDEV_DEV(hdev, &hu->serdev->dev);
 
+	if (test_bit(HCI_UART_NO_SUSPEND_NOTIFIER, &hu->flags))
+		set_bit(HCI_QUIRK_NO_SUSPEND_NOTIFIER, &hdev->quirks);
+
 	if (test_bit(HCI_UART_RAW_DEVICE, &hu->hdev_flags))
 		set_bit(HCI_QUIRK_RAW_DEVICE, &hdev->quirks);
 
@@ -349,6 +379,8 @@ err_alloc:
 	p->close(hu);
 err_open:
 	serdev_device_close(hu->serdev);
+err_rwsem:
+	percpu_free_rwsem(&hu->proto_lock);
 	return err;
 }
 EXPORT_SYMBOL_GPL(hci_uart_register_device);
@@ -356,8 +388,6 @@ EXPORT_SYMBOL_GPL(hci_uart_register_device);
 void hci_uart_unregister_device(struct hci_uart *hu)
 {
 	struct hci_dev *hdev = hu->hdev;
-
-	clear_bit(HCI_UART_PROTO_READY, &hu->flags);
 
 	cancel_work_sync(&hu->init_ready);
 	if (test_bit(HCI_UART_REGISTERED, &hu->flags))
@@ -367,6 +397,11 @@ void hci_uart_unregister_device(struct hci_uart *hu)
 	cancel_work_sync(&hu->write_work);
 
 	hu->proto->close(hu);
-	serdev_device_close(hu->serdev);
+
+	if (test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
+		clear_bit(HCI_UART_PROTO_READY, &hu->flags);
+		serdev_device_close(hu->serdev);
+	}
+	percpu_free_rwsem(&hu->proto_lock);
 }
 EXPORT_SYMBOL_GPL(hci_uart_unregister_device);

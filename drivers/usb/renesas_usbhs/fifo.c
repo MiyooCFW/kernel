@@ -167,8 +167,10 @@ static int usbhsf_pkt_handler(struct usbhs_pipe *pipe, int type)
 	usbhs_lock(priv, flags);
 
 	pkt = __usbhsf_pkt_get(pipe);
-	if (!pkt)
+	if (!pkt) {
+		ret = -EINVAL;
 		goto __usbhs_pkt_handler_end;
+	}
 
 	switch (type) {
 	case USBHSF_PKT_PREPARE:
@@ -364,7 +366,7 @@ static int usbhs_dcp_dir_switch_to_write(struct usbhs_pkt *pkt, int *is_done)
 
 	ret = usbhsf_fifo_select(pipe, fifo, 1);
 	if (ret < 0) {
-		dev_err(dev, "%s() faile\n", __func__);
+		dev_err(dev, "%s() failed\n", __func__);
 		return ret;
 	}
 
@@ -1281,11 +1283,11 @@ static void usbhsf_dma_init_dt(struct device *dev, struct usbhs_fifo *fifo,
 	 */
 	snprintf(name, sizeof(name), "ch%d", channel);
 	if (channel & 1) {
-		fifo->tx_chan = dma_request_slave_channel_reason(dev, name);
+		fifo->tx_chan = dma_request_chan(dev, name);
 		if (IS_ERR(fifo->tx_chan))
 			fifo->tx_chan = NULL;
 	} else {
-		fifo->rx_chan = dma_request_slave_channel_reason(dev, name);
+		fifo->rx_chan = dma_request_chan(dev, name);
 		if (IS_ERR(fifo->rx_chan))
 			fifo->rx_chan = NULL;
 	}

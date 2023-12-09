@@ -1,24 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PCI Error Recovery Driver for RPA-compliant PPC64 platform.
  * Copyright IBM Corp. 2004 2005
  * Copyright Linas Vepstas <linas@linas.org> 2004, 2005
- *
- * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or (at
- * your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- * NON INFRINGEMENT.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Send comments and feedback to Linas Vepstas <linas@austin.ibm.com>
  */
@@ -230,7 +214,7 @@ static void eeh_dev_save_state(struct eeh_dev *edev, void *userdata)
 	pci_save_state(pdev);
 }
 
-static void eeh_set_channel_state(struct eeh_pe *root, enum pci_channel_state s)
+static void eeh_set_channel_state(struct eeh_pe *root, pci_channel_state_t s)
 {
 	struct eeh_pe *pe;
 	struct eeh_dev *edev, *tmp;
@@ -441,8 +425,8 @@ static enum pci_ers_result eeh_report_resume(struct eeh_dev *edev,
 
 	pci_uevent_ers(edev->pdev, PCI_ERS_RESULT_RECOVERED);
 #ifdef CONFIG_PCI_IOV
-	if (eeh_ops->notify_resume && eeh_dev_to_pdn(edev))
-		eeh_ops->notify_resume(eeh_dev_to_pdn(edev));
+	if (eeh_ops->notify_resume)
+		eeh_ops->notify_resume(edev);
 #endif
 	return PCI_ERS_RESULT_NONE;
 }
@@ -493,7 +477,7 @@ static void *eeh_add_virt_device(struct eeh_dev *edev)
 	}
 
 #ifdef CONFIG_PCI_IOV
-	pci_iov_add_virtfn(edev->physfn, eeh_dev_to_pdn(edev)->vf_index);
+	pci_iov_add_virtfn(edev->physfn, edev->vf_index);
 #endif
 	return NULL;
 }
@@ -537,9 +521,7 @@ static void eeh_rmv_device(struct eeh_dev *edev, void *userdata)
 
 	if (edev->physfn) {
 #ifdef CONFIG_PCI_IOV
-		struct pci_dn *pdn = eeh_dev_to_pdn(edev);
-
-		pci_iov_remove_virtfn(edev->physfn, pdn->vf_index);
+		pci_iov_remove_virtfn(edev->physfn, edev->vf_index);
 		edev->pdev = NULL;
 #endif
 		if (rmv_data)
@@ -560,7 +542,7 @@ static void *eeh_pe_detach_dev(struct eeh_pe *pe, void *userdata)
 			continue;
 
 		edev->mode &= ~(EEH_DEV_DISCONNECTED | EEH_DEV_IRQ_DISABLED);
-		eeh_rmv_from_parent_pe(edev);
+		eeh_pe_tree_remove(edev);
 	}
 
 	return NULL;
@@ -1072,46 +1054,45 @@ void eeh_handle_normal_event(struct eeh_pe *pe)
 		}
 
 		pr_info("EEH: Recovery successful.\n");
-		goto out;
-	}
+	} else  {
+		/*
+		 * About 90% of all real-life EEH failures in the field
+		 * are due to poorly seated PCI cards. Only 10% or so are
+		 * due to actual, failed cards.
+		 */
+		pr_err("EEH: Unable to recover from failure from PHB#%x-PE#%x.\n"
+		       "Please try reseating or replacing it\n",
+			pe->phb->global_number, pe->addr);
 
-	/*
-	 * About 90% of all real-life EEH failures in the field
-	 * are due to poorly seated PCI cards. Only 10% or so are
-	 * due to actual, failed cards.
-	 */
-	pr_err("EEH: Unable to recover from failure from PHB#%x-PE#%x.\n"
-		"Please try reseating or replacing it\n",
-		pe->phb->global_number, pe->addr);
+		eeh_slot_error_detail(pe, EEH_LOG_PERM);
 
-	eeh_slot_error_detail(pe, EEH_LOG_PERM);
+		/* Notify all devices that they're about to go down. */
+		eeh_set_channel_state(pe, pci_channel_io_perm_failure);
+		eeh_set_irq_state(pe, false);
+		eeh_pe_report("error_detected(permanent failure)", pe,
+			      eeh_report_failure, NULL);
 
-	/* Notify all devices that they're about to go down. */
-	eeh_set_irq_state(pe, false);
-	eeh_pe_report("error_detected(permanent failure)", pe,
-		      eeh_report_failure, NULL);
-	eeh_set_channel_state(pe, pci_channel_io_perm_failure);
+		/* Mark the PE to be removed permanently */
+		eeh_pe_state_mark(pe, EEH_PE_REMOVED);
 
-	/* Mark the PE to be removed permanently */
-	eeh_pe_state_mark(pe, EEH_PE_REMOVED);
+		/*
+		 * Shut down the device drivers for good. We mark
+		 * all removed devices correctly to avoid access
+		 * the their PCI config any more.
+		 */
+		if (pe->type & EEH_PE_VF) {
+			eeh_pe_dev_traverse(pe, eeh_rmv_device, NULL);
+			eeh_pe_dev_mode_mark(pe, EEH_DEV_REMOVED);
+		} else {
+			eeh_pe_state_clear(pe, EEH_PE_PRI_BUS, true);
+			eeh_pe_dev_mode_mark(pe, EEH_DEV_REMOVED);
 
-	/*
-	 * Shut down the device drivers for good. We mark
-	 * all removed devices correctly to avoid access
-	 * the their PCI config any more.
-	 */
-	if (pe->type & EEH_PE_VF) {
-		eeh_pe_dev_traverse(pe, eeh_rmv_device, NULL);
-		eeh_pe_dev_mode_mark(pe, EEH_DEV_REMOVED);
-	} else {
-		eeh_pe_state_clear(pe, EEH_PE_PRI_BUS, true);
-		eeh_pe_dev_mode_mark(pe, EEH_DEV_REMOVED);
-
-		pci_lock_rescan_remove();
-		pci_hp_remove_devices(bus);
-		pci_unlock_rescan_remove();
-		/* The passed PE should no longer be used */
-		return;
+			pci_lock_rescan_remove();
+			pci_hp_remove_devices(bus);
+			pci_unlock_rescan_remove();
+			/* The passed PE should no longer be used */
+			return;
+		}
 	}
 
 out:
@@ -1207,10 +1188,10 @@ void eeh_handle_special_event(void)
 
 			/* Notify all devices to be down */
 			eeh_pe_state_clear(pe, EEH_PE_PRI_BUS, true);
+			eeh_set_channel_state(pe, pci_channel_io_perm_failure);
 			eeh_pe_report(
 				"error_detected(permanent failure)", pe,
 				eeh_report_failure, NULL);
-			eeh_set_channel_state(pe, pci_channel_io_perm_failure);
 
 			pci_lock_rescan_remove();
 			list_for_each_entry(hose, &hose_list, list_node) {

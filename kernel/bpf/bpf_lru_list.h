@@ -30,7 +30,7 @@ struct bpf_lru_node {
 struct bpf_lru_list {
 	struct list_head lists[NR_BPF_LRU_LIST_T];
 	unsigned int counts[NR_BPF_LRU_LIST_COUNT];
-	/* The next inacitve list rotation starts from here */
+	/* The next inactive list rotation starts from here */
 	struct list_head *next_inactive_rotation;
 
 	raw_spinlock_t lock ____cacheline_aligned_in_smp;
@@ -63,8 +63,11 @@ struct bpf_lru {
 
 static inline void bpf_lru_node_set_ref(struct bpf_lru_node *node)
 {
-	if (!READ_ONCE(node->ref))
-		WRITE_ONCE(node->ref, 1);
+	/* ref is an approximation on access frequency.  It does not
+	 * have to be very accurate.  Hence, no protection is used.
+	 */
+	if (!node->ref)
+		node->ref = 1;
 }
 
 int bpf_lru_init(struct bpf_lru *lru, bool percpu, u32 hash_offset,

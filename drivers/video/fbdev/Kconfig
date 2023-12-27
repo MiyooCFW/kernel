@@ -2237,6 +2237,13 @@ config FB_SM712
 	  This driver is also available as a module. The module will be
 	  called sm712fb. If you want to compile it as a module, say M
 	  here and read <file:Documentation/kbuild/modules.rst>.
+
+config FB_MIYOO_VIDEO
+	tristate "Get video driver chosen by uboot"
+	depends on FB
+        help
+	  Returns name of video driver in /sys/kernel/miyoo_video/miyoo_video file
+
 config FB_R61520
 	tristate "Renesas R61520 SLCD framebuffer support"
 	depends on FB

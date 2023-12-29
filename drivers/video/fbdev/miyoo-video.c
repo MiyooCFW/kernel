@@ -13,9 +13,20 @@ static char *driver = "";
 module_param(driver, charp, S_IRUGO);
 MODULE_PARM_DESC(driver, "Name of video driver to load");
 
+static int replacechar(char *str, char orig, char rep) {
+    char *ix = str;
+    int n = 0;
+    while((ix = strchr(ix, orig)) != NULL) {
+        *ix++ = rep;
+        n++;
+    }
+    return n;
+}
+
 static ssize_t miyoo_video_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-    return sprintf(buf, "%s", driver);
+	replacechar(driver, '+', ' ');
+    return sprintf(buf, "%s", driver); 
 }
 
 static ssize_t miyoo_video_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)

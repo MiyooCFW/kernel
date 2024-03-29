@@ -16,7 +16,7 @@ jobs:
     container:
       image: miyoocfw/toolchain-shared-uclibc:master
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - if: inputs.submodule
       run: git submodule update --init --depth 1 -- ${{ inputs.submodule }}
@@ -28,7 +28,7 @@ jobs:
         cd ${{ inputs.submodule }}
         echo "key=${{ inputs.submodule }}-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
       
-    - uses: actions/cache@v3
+    - uses: actions/cache@v4
       if: inputs.submodule
       with:
         path: ${{ inputs.submodule || '.' }}/dist/*
@@ -58,7 +58,7 @@ jobs:
         
     - run: find ${{ inputs.submodule || '.' }}/dist
     
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: kernel (uClibc)
         path: ${{ inputs.submodule || '.' }}/dist/*

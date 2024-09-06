@@ -46,5 +46,5 @@ make -j ${YOUR_CPU_COUNT}
 ```
 
 ---
-# _Kernel 5.4.0_ (docs: https://www.kernel.org/doc/html/v5.4/)
+# _Kernel 5.15.141_ (docs: https://www.kernel.org/doc/html/v5.15/)
 ---

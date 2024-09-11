@@ -21,6 +21,7 @@ make miyoo_defconfig
 - build
 ```
 make
+make dir-pkg
 ```
 - edit configuration if needed & rebuild:
 ```

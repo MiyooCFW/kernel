@@ -42,6 +42,7 @@ jobs:
         cd ${{ inputs.submodule || '.' }}
         make miyoo_defconfig
         make
+        make tar-pkg
         
         # put everything in the same folder so that we can grab it all as a single artifact
     - name: gather files
@@ -55,6 +56,7 @@ jobs:
         mv drivers/video/fbdev/*.ko dist/
         mv drivers/usb/gadget/legacy/*.ko dist/
         mv sound/drivers/*.ko dist/
+        mv linux-5.15.141-miyoo-arm.tar dist/
         
     - run: find ${{ inputs.submodule || '.' }}/dist
     

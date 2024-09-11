@@ -27,17 +27,13 @@ make
 make menuconfig
 make clean
 make
+make dir-pkg
 ```
-- grab output kernel modules/core & move to ``./dist``:
-```
-mkdir -p dist
-mv arch/arm/boot/dts/*.dtb dist/
-mv arch/arm/boot/zImage dist/
-mv drivers/video/fbdev/core/*.ko dist/
-mv drivers/video/fbdev/*.ko dist/
-mv drivers/usb/gadget/legacy/*.ko dist/
-mv sound/drivers/*.ko dist/
-```
+- Install kernel on SD card
+  - copy `arch/arm/boot/zImage` to `boot` partition on the SD card
+
+- Install modules on SD card
+  - copy `tar-install/lib` directory to `rootfs` partition on the SD card
 
 ### Compile speed:
 If you have a multicore CPU, you can increase build speed with:

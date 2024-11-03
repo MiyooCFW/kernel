@@ -254,12 +254,29 @@ static void refresh_lcd(struct myfb_par *par)
     if (par->lcdc_ready) {
         lcdc_wr_cmd(0x2c);
   
-        if (par->app_virt->yoffset == 0) {
-	        suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
-	        suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
-        } else {
-	        suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
-	        suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+		if(par->app_virt->yoffset == 0) {
+            suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+        }
+        else if(par->app_virt->yoffset == 240) {
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+            suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+        }
+        else if(par->app_virt->yoffset == 480) {
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+            suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+        }
+        else if(par->app_virt->yoffset == 720) {
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+            suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+            suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
         }
 	    suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 0));
     }

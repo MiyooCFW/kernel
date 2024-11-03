@@ -205,14 +205,30 @@ static void refresh_lcd(struct myfb_par *par)
 
     lcdc_wr_cmd(0x22);
 
-  if(par->yoffset == 0){
-	  suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
-	  suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
-  }
-  else{
-	  suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
-	  suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
-  }
+	if(par->yoffset == 0) {
+		suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+	}
+	else if(par->yoffset == 240) {
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+		suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+	}
+	else if(par->yoffset == 480) {
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+		suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+	}
+	else if(par->yoffset == 720) {
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 9));
+		suniv_clrbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 10));
+		suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 11));
+	} 
 	suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 0));
 }
 
@@ -473,45 +489,56 @@ static void suniv_enable_irq(struct myfb_par *par)
 
 static void suniv_lcdc_init(struct myfb_par *par)
 {
-  uint32_t ret=0, bp=0, total=0;
+	uint32_t ret=0, bp=0, total=0;
 	uint32_t h_front_porch = 8;
 	uint32_t h_back_porch = 8;
 	uint32_t h_sync_len = 1;
 	uint32_t v_front_porch = 8;
 	uint32_t v_back_porch = 8;
 	uint32_t v_sync_len = 1;
- 
+
 	writel(0, iomm.lcdc + TCON_CTRL_REG);
 	writel(0, iomm.lcdc + TCON_INT_REG0);
 	ret = readl(iomm.lcdc + TCON_CLK_CTRL_REG);
 	ret&= ~(0xf << 28);
 	writel(ret, iomm.lcdc + TCON_CLK_CTRL_REG);
-  writel(0xffffffff, iomm.lcdc + TCON0_IO_CTRL_REG1);
+	writel(0xffffffff, iomm.lcdc + TCON0_IO_CTRL_REG1);
 	writel(0xffffffff, iomm.lcdc + TCON1_IO_CTRL_REG1);
 
 	suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 0));
-  writel(par->mode.xres << 4, iomm.debe + DEBE_LAY0_LINEWIDTH_REG);
-  writel(par->mode.xres << 4, iomm.debe + DEBE_LAY1_LINEWIDTH_REG);
+	writel(par->mode.xres << 4, iomm.debe + DEBE_LAY0_LINEWIDTH_REG);
+	writel(par->mode.xres << 4, iomm.debe + DEBE_LAY1_LINEWIDTH_REG);
+	writel(par->mode.xres << 4, iomm.debe + DEBE_LAY2_LINEWIDTH_REG);
+	writel(par->mode.xres << 4, iomm.debe + DEBE_LAY3_LINEWIDTH_REG);
 	writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_DISP_SIZE_REG);
 	writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY0_SIZE_REG);
 	writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY1_SIZE_REG);
+	writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY2_SIZE_REG);
+	writel((((par->mode.yres) - 1) << 16) | (((par->mode.xres) - 1) << 0), iomm.debe + DEBE_LAY3_SIZE_REG);
 	writel((5 << 8), iomm.debe + DEBE_LAY0_ATT_CTRL_REG1);
-  writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+	writel((5 << 8), iomm.debe + DEBE_LAY1_ATT_CTRL_REG1);
+	writel((5 << 8), iomm.debe + DEBE_LAY2_ATT_CTRL_REG1);
+	writel((5 << 8), iomm.debe + DEBE_LAY3_ATT_CTRL_REG1);
 	suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 8));
 	suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 1));
-  suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 1));
+	suniv_setbits(iomm.debe + DEBE_MODE_CTRL_REG, (1 << 1));
 
 	ret = readl(iomm.lcdc + TCON_CTRL_REG);
 	ret&= ~(1 << 0);
 	writel(ret, iomm.lcdc + TCON_CTRL_REG);
 	ret = (v_front_porch + v_back_porch + v_sync_len);
 
-    writel((uint32_t)(par->vram_phys) << 3, iomm.debe + DEBE_LAY0_FB_ADDR_REG);
-    writel((uint32_t)(par->vram_phys) >> 29, iomm.debe + DEBE_LAY0_FB_HI_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2) << 3, iomm.debe + DEBE_LAY1_FB_ADDR_REG);
-    writel((uint32_t)(par->vram_phys + 320*240*2) >> 29, iomm.debe + DEBE_LAY1_FB_HI_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*0) << 3, iomm.debe + DEBE_LAY0_FB_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*1) << 3, iomm.debe + DEBE_LAY1_FB_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*2) << 3, iomm.debe + DEBE_LAY2_FB_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*3) << 3, iomm.debe + DEBE_LAY3_FB_ADDR_REG);
+
+	writel((uint32_t)(par->vram_phys + 320*240*2*0) >> 29, iomm.debe + DEBE_LAY0_FB_HI_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*1) >> 29, iomm.debe + DEBE_LAY1_FB_HI_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*2) >> 29, iomm.debe + DEBE_LAY2_FB_HI_ADDR_REG);
+	writel((uint32_t)(par->vram_phys + 320*240*2*3) >> 29, iomm.debe + DEBE_LAY3_FB_HI_ADDR_REG);	
 	  
-    writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
+	writel((1 << 31) | ((ret & 0x1f) << 4) | (1 << 24), iomm.lcdc + TCON0_CTRL_REG);
 	  writel((0xf << 28) | (6 << 0), iomm.lcdc + TCON_CLK_CTRL_REG); // 6, 15
 	  writel((4 << 29) | (1 << 26), iomm.lcdc + TCON0_CPU_IF_REG);
 	  writel((1 << 28), iomm.lcdc + TCON0_IO_CTRL_REG0);
@@ -527,9 +554,9 @@ static void suniv_lcdc_init(struct myfb_par *par)
 	writel(((h_sync_len - 1) << 16) | ((v_sync_len - 1) << 0), iomm.lcdc + TCON0_BASIC_TIMING_REG3);
 	writel(0, iomm.lcdc + TCON0_HV_TIMING_REG);
 	writel(0, iomm.lcdc + TCON0_IO_CTRL_REG1);	
-  
+
 	suniv_setbits(iomm.lcdc + TCON_CTRL_REG, (1 << 31));
-  suniv_setbits(iomm.gpio + PE_INT_STA, (1 << 10));
+	suniv_setbits(iomm.gpio + PE_INT_STA, (1 << 10));
 	suniv_setbits(iomm.lcdc + TCON_INT_REG0, (1 << 31));
 	suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
 }

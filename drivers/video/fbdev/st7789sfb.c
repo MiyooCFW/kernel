@@ -773,7 +773,7 @@ static int myfb_probe(struct platform_device *device)
     par->bpp = 16;
     fb_videomode_to_var(&myfb_var, mode);
 
-    par->vram_size = (320 * 240 * 2 * 4) + 4096;
+    par->vram_size = (640 * 480 * 2 * 4);
     par->vram_virt = dma_alloc_coherent(par->dev, par->vram_size, (resource_size_t*)&par->vram_phys, GFP_KERNEL | GFP_DMA);
     if (!par->vram_virt) {
         return -EINVAL;

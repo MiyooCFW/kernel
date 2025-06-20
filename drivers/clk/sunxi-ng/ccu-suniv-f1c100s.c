@@ -303,7 +303,7 @@ static SUNXI_CCU_M_WITH_MUX_TABLE_GATE(csi_clk, "csi", csi_parents, csi_table,
  * TODO: BSP says the parent is pll-audio, however common sense and experience
  * told us it should be pll-ve. pll-ve is totally not used in BSP code.
  */
-static SUNXI_CCU_GATE(ve_clk, "ve", "pll-audio", 0x13c, BIT(31), 0);
+static SUNXI_CCU_GATE(ve_clk, "ve", "pll-ve", 0x13c, BIT(31), 0);
 
 static SUNXI_CCU_GATE(codec_clk, "codec", "pll-audio", 0x140, BIT(31), 0);
 

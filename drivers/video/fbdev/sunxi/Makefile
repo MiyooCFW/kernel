@@ -1,0 +1,1 @@
+obj-$(CONFIG_SUNXI_DISP_IOCTL) += disp.o

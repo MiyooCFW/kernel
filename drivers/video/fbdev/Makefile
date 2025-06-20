@@ -126,6 +126,7 @@ obj-$(CONFIG_FB_RM68090)	  += rm68090fb.o
 obj-$(CONFIG_FB_HX8347D)	  += hx8347dfb.o
 obj-$(CONFIG_FB_TVOUT)		  += miyoo-tvout.o
 obj-$(CONFIG_FB_MIYOO_VIDEO)	  += miyoo-video.o
+obj-$(CONFIG_SUNXI_DISP_IOCTL) += sunxi/
 
 
 # Platform or fallback drivers go here

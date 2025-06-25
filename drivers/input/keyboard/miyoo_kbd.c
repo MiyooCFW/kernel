@@ -14,25 +14,24 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 #include <linux/fs.h>
-#include <linux/kobject.h>
 #include <linux/cdev.h>
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/module.h>
-#include <linux/delay.h>
 #include <linux/timer.h>
 #include <linux/gpio.h>
 #include <linux/input.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/backlight.h>
-#include <asm/irq.h>
 #include <asm/io.h>
-#include <asm/io.h>
-#include <asm/arch-suniv/cpu.h>
-#include <asm/arch-suniv/gpio.h>
 #include <linux/uaccess.h>
-#include <linux/unistd.h>
+#include <linux/kallsyms.h>
+#include <linux/module.h>
+
+static void (*miyoo_increase_volume)(void) = NULL;
+static void (*miyoo_decrease_volume)(void) = NULL;
+extern void MIYOO_INCREASE_VOLUME(void);
+extern void MIYOO_DECREASE_VOLUME(void);
 
 //Hotkeys
 #define KILL_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")"
@@ -165,6 +164,12 @@ bool non_hotkey_menu=false;
 module_param(miyoo_ver,uint,0660);
 module_param(miyoo_layout,uint,0660);
 
+bool is_module_loaded(const char *mod_name)
+{
+	struct module *mod = find_module(mod_name);
+	return mod != NULL;
+}
+
 static int do_input_request(uint32_t pin, const char*name)
 {
   if(gpio_request(pin, name) < 0){
@@ -235,8 +240,6 @@ static void scan_handler(struct timer_list *timer)
   static uint32_t pre=0;
   uint32_t scan=0, val=0, debounce=0;
   static uint32_t touchRead=0, touchReadPrev=0;
-  extern void MIYOO_INCREASE_VOLUME(void);
-  extern void MIYOO_DECREASE_VOLUME(void);
   static char * kill_argv[] = {KILL_HK, NULL};
   static char * kill_soft_argv[] = {KILL_SOFT_HK, NULL};
   static char * shutdown_argv[] = {SHUTDOWN_HK, NULL};
@@ -785,19 +788,27 @@ static void scan_handler(struct timer_list *timer)
       }
 		}
 		else if((val & MY_R) && (val & MY_UP)){
-      if(!hotkey_down && !hotkey_custom) {
-        MIYOO_INCREASE_VOLUME();
-        hotkey_down = true;
-      }
+			if (!hotkey_down && !hotkey_custom) {
+				if (!miyoo_increase_volume && is_module_loaded("miyoo") ) {
+					miyoo_increase_volume = symbol_get(MIYOO_INCREASE_VOLUME);
+				}
+				if (miyoo_increase_volume)
+					miyoo_increase_volume();
+				hotkey_down = true;
+			}
 			hotkey_actioned = true;
 			if (hotkey_custom)
         hotkey = hotkey == 0 ? 5 : hotkey;
 		}
 		else if((val & MY_R) && (val & MY_DOWN)){
-      if(!hotkey_down && !hotkey_custom) {
-        MIYOO_DECREASE_VOLUME();
-        hotkey_down = true;
-      }
+			if (!hotkey_down && !hotkey_custom) {
+				if (!miyoo_decrease_volume && is_module_loaded("miyoo") ) {
+					miyoo_decrease_volume = symbol_get(MIYOO_DECREASE_VOLUME);
+				}
+				if (miyoo_decrease_volume)
+					miyoo_decrease_volume();
+				hotkey_down = true;
+			}
 			hotkey_actioned = true;
       if (hotkey_custom)
 			  hotkey = hotkey == 0 ? 6 : hotkey;
@@ -1113,7 +1124,10 @@ static void __exit kbd_exit(void)
 {
   input_unregister_device(mydev);
   del_timer(&mytimer);
-
+  if (miyoo_increase_volume)
+	  symbol_put(MIYOO_INCREASE_VOLUME);
+  if (miyoo_decrease_volume)
+	  symbol_put(MIYOO_DECREASE_VOLUME);
   device_destroy(myclass, major);
   cdev_del(&mycdev);
   class_destroy(myclass);

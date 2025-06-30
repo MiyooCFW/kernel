@@ -66,6 +66,7 @@
 #include <asm/arch-suniv/common.h>
 
 //#define DEBUG
+#define TIMEOUT_NS 1000000
 #define PALETTE_SIZE 256
 #define DRIVER_NAME  "ST7789S-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
@@ -131,8 +132,7 @@ struct timer_list mytimer;
 static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
-static uint16_t lastScanLine = 120;
-static uint16_t  firstScanLine = 5;
+ktime_t start;
 uint16_t x, i, scanline, vsync;
 uint32_t mycpu_clock;
 uint32_t video_clock;
@@ -288,6 +288,16 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
     return IRQ_HANDLED;
 }
 
+uint16_t st7789_get_scanline(void) {
+	uint8_t buf[2] = {0};
+	lcdc_wr_cmd(0x45);
+	lcdc_rd_dat();
+	buf[0] = lcdc_rd_dat();
+	buf[1] = lcdc_rd_dat();
+
+	return  ((uint16_t)buf[0] << 8) | buf[1];
+}
+
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
 	if (tefix != 0) {
@@ -295,35 +305,16 @@ static irqreturn_t lcdc_irq_handler(int irq, void *arg)
           lcdc_wr_cmd(0x45);
           lcdc_rd_dat();
           lcdc_rd_dat();
-          mycpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-	        switch (mycpu_clock) {
-		    case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
-				lastScanLine = 280;
-				break;
-		    case 0x90000A20: case 0x90001010: //==[792, 816]MHz
-				lastScanLine = 240;
-				break;					
-		    case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
-				lastScanLine = 200;
-				break;
-		    case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
-				lastScanLine = 164;
-				break;
-		    default: // < 696Mhz
-				lastScanLine = 120;
+	      start = ktime_get();
+	      while (st7789_get_scanline() == 0) {
+		      if (ktime_to_ns(ktime_sub(ktime_get(), start)) > TIMEOUT_NS) {
+			      suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+			      suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+			      return IRQ_HANDLED;
+		      }
+		      cpu_relax();
 	      }
-          for (i = firstScanLine; i <= lastScanLine; i++) {
-              lcdc_wr_cmd(0x45);
-              lcdc_rd_dat();
-              lcdc_rd_dat();
-              vsync = lcdc_rd_dat();
-              if (vsync > 0) {
-                  refresh_lcd(arg);
-                  suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-                  suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-                  return IRQ_HANDLED;
-              }
-          }
+	      refresh_lcd(arg);
     suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
     suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
     return IRQ_HANDLED;
@@ -505,10 +496,10 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
     uint32_t v_sync_len = 1;
     if (tefix == 3) {
         v_front_porch = 10;
-        v_back_porch = 110;
+        v_back_porch = 116;
     } else if (tefix == 2) {
         v_front_porch = 10;
-        v_back_porch = 110;
+        v_back_porch = 137;
     } else if (tefix == 1) {
         h_front_porch = 45;
         h_back_porch = 45;

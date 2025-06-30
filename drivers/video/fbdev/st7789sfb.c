@@ -133,7 +133,7 @@ static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
 ktime_t start;
-uint16_t x, i, scanline, vsync;
+uint16_t x, i, scanline, vsync, bporch, fporch;
 uint32_t mycpu_clock;
 uint32_t video_clock;
 
@@ -289,39 +289,49 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
 }
 
 uint16_t st7789_get_scanline(void) {
-	uint8_t buf[2] = {0};
+	uint8_t buf[3] = {0};
 	lcdc_wr_cmd(0x45);
-	lcdc_rd_dat();
 	buf[0] = lcdc_rd_dat();
 	buf[1] = lcdc_rd_dat();
+	buf[2] = lcdc_rd_dat();
+	//printk("ST7789 scanline bytes: %u\n", ((uint16_t)buf[2] << 8) | buf[0]);
 
-	return  ((uint16_t)buf[0] << 8) | buf[1];
+	return ((uint16_t)buf[2] << 8) | buf[0];
 }
 
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
 	if (tefix != 0) {
-      suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-          lcdc_wr_cmd(0x45);
-          lcdc_rd_dat();
-          lcdc_rd_dat();
-	      start = ktime_get();
-	      while (st7789_get_scanline() == 0) {
-		      if (ktime_to_ns(ktime_sub(ktime_get(), start)) > TIMEOUT_NS) {
-			      suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-			      suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-			      return IRQ_HANDLED;
-		      }
-		      cpu_relax();
-	      }
-	      refresh_lcd(arg);
-    suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-    suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-    return IRQ_HANDLED;
+		suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+		lcdc_wr_cmd(0x45);
+		lcdc_rd_dat();
+		lcdc_rd_dat();
+		start = ktime_get();
+		uint16_t scanline;
+		while (true) {
+			scanline = st7789_get_scanline();
+			if (scanline == 0 || scanline == 1)
+				continue;
+			if (scanline <= bporch + 1 || scanline >= 240 + bporch + 1)
+				break;
+
+			if (ktime_to_ns(ktime_sub(ktime_get(), start)) > TIMEOUT_NS) {
+				suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+				suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+				return IRQ_HANDLED;
+			}
+
+			ndelay(500);
+			//cpu_relax();
+		}
+		refresh_lcd(arg);
+		suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+		suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+		return IRQ_HANDLED;
 	}
-    refresh_lcd(arg);
-    suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-    return IRQ_HANDLED;	
+	refresh_lcd(arg);
+	suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+	return IRQ_HANDLED;
 }
 
 static void init_lcd(void)
@@ -359,8 +369,8 @@ static void init_lcd(void)
     // ST7789S Frame rate setting
 	lcdc_wr_cmd(0xb2);
 	if (tefix == 3) {
-		lcdc_wr_dat(8); // bp 0x0a
-		lcdc_wr_dat(122); // fp 0x0b
+		lcdc_wr_dat(bporch); // bp 0x0a
+		lcdc_wr_dat(fporch); // fp 0x0b
     } else if (tefix == 2) {
         lcdc_wr_dat(8); // bp 0x0a
         lcdc_wr_dat(120); // fp 0x0b
@@ -495,8 +505,10 @@ static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
     uint32_t v_back_porch = 8;
     uint32_t v_sync_len = 1;
     if (tefix == 3) {
-        v_front_porch = 10;
-        v_back_porch = 116;
+	    bporch=8;
+	    fporch=122;
+        v_front_porch = bporch-1;
+        v_back_porch = fporch-1;
     } else if (tefix == 2) {
         v_front_porch = 10;
         v_back_porch = 137;

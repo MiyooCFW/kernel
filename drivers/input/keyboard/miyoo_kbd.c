@@ -28,11 +28,6 @@
 #include <linux/kallsyms.h>
 #include <linux/module.h>
 
-static void (*miyoo_increase_volume)(void) = NULL;
-static void (*miyoo_decrease_volume)(void) = NULL;
-extern void MIYOO_INCREASE_VOLUME(void);
-extern void MIYOO_DECREASE_VOLUME(void);
-
 //Hotkeys
 #define KILL_HK "/bin/sh", "-c", "/bin/kill -9 $(/bin/ps -al | /bin/grep \"/mnt/\")"
 #define KILL_SOFT_HK "/bin/sh", "-c", "/bin/kill -2 $(/bin/ps -al | /bin/grep \"/mnt/\")"
@@ -789,11 +784,6 @@ static void scan_handler(struct timer_list *timer)
 		}
 		else if((val & MY_R) && (val & MY_UP)){
 			if (!hotkey_down && !hotkey_custom) {
-				if (!miyoo_increase_volume && is_module_loaded("miyoo") ) {
-					miyoo_increase_volume = symbol_get(MIYOO_INCREASE_VOLUME);
-				}
-				if (miyoo_increase_volume)
-					miyoo_increase_volume();
 				hotkey_down = true;
 			}
 			hotkey_actioned = true;
@@ -802,11 +792,6 @@ static void scan_handler(struct timer_list *timer)
 		}
 		else if((val & MY_R) && (val & MY_DOWN)){
 			if (!hotkey_down && !hotkey_custom) {
-				if (!miyoo_decrease_volume && is_module_loaded("miyoo") ) {
-					miyoo_decrease_volume = symbol_get(MIYOO_DECREASE_VOLUME);
-				}
-				if (miyoo_decrease_volume)
-					miyoo_decrease_volume();
 				hotkey_down = true;
 			}
 			hotkey_actioned = true;
@@ -1124,10 +1109,6 @@ static void __exit kbd_exit(void)
 {
   input_unregister_device(mydev);
   del_timer(&mytimer);
-  if (miyoo_increase_volume)
-	  symbol_put(MIYOO_INCREASE_VOLUME);
-  if (miyoo_decrease_volume)
-	  symbol_put(MIYOO_DECREASE_VOLUME);
   device_destroy(myclass, major);
   cdev_del(&mycdev);
   class_destroy(myclass);

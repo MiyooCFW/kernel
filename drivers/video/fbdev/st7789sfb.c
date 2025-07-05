@@ -66,6 +66,7 @@
 #include <asm/arch-suniv/common.h>
 
 //#define DEBUG
+#define TIMEOUT_NS 1000000
 #define PALETTE_SIZE 256
 #define DRIVER_NAME  "ST7789S-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
@@ -131,9 +132,8 @@ struct timer_list mytimer;
 static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
-static uint16_t lastScanLine = 120;
-static uint16_t  firstScanLine = 5;
-uint16_t x, i, scanline, vsync;
+ktime_t start;
+uint16_t x, i, scanline, vsync, bporch=9, fporch=10;
 uint32_t mycpu_clock;
 uint32_t video_clock;
 
@@ -288,49 +288,60 @@ static irqreturn_t gpio_irq_handler(int irq, void *arg)
     return IRQ_HANDLED;
 }
 
+uint16_t st7789_get_scanline(void) {
+	uint8_t buf[3] = {0};
+	lcdc_wr_cmd(0x45);
+	buf[0] = lcdc_rd_dat();
+	buf[1] = lcdc_rd_dat();
+	buf[2] = lcdc_rd_dat();
+	//printk("ST7789 scanline bytes: %u\n", ((uint16_t)buf[2] << 8) | buf[0]);
+
+	return ((uint16_t)buf[2] << 8) | buf[0];
+}
+
 static irqreturn_t lcdc_irq_handler(int irq, void *arg)
 {
 	if (tefix != 0) {
-      suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-          lcdc_wr_cmd(0x45);
-          lcdc_rd_dat();
-          lcdc_rd_dat();
-          mycpu_clock = readl(iomm.ccm + PLL_CPU_CTRL_REG);
-	        switch (mycpu_clock) {
-		    case 0x90001110: case 0x90001210: case 0x90000C20: case 0x90001310: case 0x90001410: //==[864, 912, 936, 960, 1008]MHz
-				lastScanLine = 280;
+		suniv_clrbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+		lcdc_wr_cmd(0x45);
+		lcdc_rd_dat();
+		lcdc_rd_dat();
+		start = ktime_get();
+		while (true) {
+
+			// Read the current scanline from the panel
+			scanline = st7789_get_scanline();
+
+			// Ignore scanline 0 and 1 - vblank
+			if (scanline == 0 || scanline == 1)
+				continue;
+
+			// Exit the loop if scanline is outside of visible area to avoid tearing
+			// flow:
+			// vblank - 1 frame
+			// bporch - configured by 0xb2
+			// visible area - 240 frames
+			// fporch - configured by 0xb2
+			if (scanline <= bporch + 1 || scanline >= 240 + bporch + 1)
 				break;
-		    case 0x90000A20: case 0x90001010: //==[792, 816]MHz
-				lastScanLine = 240;
-				break;					
-		    case 0x90001E00: case 0x90001F00: //==[744, 768]MHz
-				lastScanLine = 200;
-				break;
-		    case 0x90001C00: case 0x90001D00: //==[696, 720]MHz
-				lastScanLine = 164;
-				break;
-		    default: // < 696Mhz
-				lastScanLine = 120;
-	      }
-          for (i = firstScanLine; i <= lastScanLine; i++) {
-              lcdc_wr_cmd(0x45);
-              lcdc_rd_dat();
-              lcdc_rd_dat();
-              vsync = lcdc_rd_dat();
-              if (vsync > 0) {
-                  refresh_lcd(arg);
-                  suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-                  suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-                  return IRQ_HANDLED;
-              }
-          }
-    suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
-    suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-    return IRQ_HANDLED;
+
+			// If timeout expires, re-enable CPU interface and clear interrupt bit
+			if (ktime_to_ns(ktime_sub(ktime_get(), start)) > TIMEOUT_NS) {
+				suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+				suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+				return IRQ_HANDLED;
+			}
+			// Relax CPU to reduce busy-wait load
+			cpu_relax();
+		}
+		refresh_lcd(arg);
+		suniv_setbits(iomm.lcdc + TCON0_CPU_IF_REG, (1 << 28));
+		suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+		return IRQ_HANDLED;
 	}
-    refresh_lcd(arg);
-    suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
-    return IRQ_HANDLED;	
+	refresh_lcd(arg);
+	suniv_clrbits(iomm.lcdc + TCON_INT_REG0, (1 << 15));
+	return IRQ_HANDLED;
 }
 
 static void init_lcd(void)
@@ -367,22 +378,11 @@ static void init_lcd(void)
         
     // ST7789S Frame rate setting
 	lcdc_wr_cmd(0xb2);
-	if (tefix == 3) {
-		lcdc_wr_dat(8); // bp 0x0a
-		lcdc_wr_dat(122); // fp 0x0b
-    } else if (tefix == 2) {
-        lcdc_wr_dat(8); // bp 0x0a
-        lcdc_wr_dat(120); // fp 0x0b
-	} else if (tefix == 1) {
-		lcdc_wr_dat(90); // bp 0x0a
-		lcdc_wr_dat(20); // fp 0x0b
-	} else {
-        lcdc_wr_dat(9); // bp 0x0a
-        lcdc_wr_dat(10); // fp 0x0b
-    }
-		lcdc_wr_dat(0x00);        			
-		lcdc_wr_dat(0x33);
-		lcdc_wr_dat(0x33);
+	lcdc_wr_dat(bporch); // bp 0x0a
+	lcdc_wr_dat(fporch); // fp 0x0b
+	lcdc_wr_dat(0x00);
+	lcdc_wr_dat(0x33);
+	lcdc_wr_dat(0x33);
 
 //    // Gate Control
 //    lcdc_wr_cmd(0xb7);
@@ -418,9 +418,9 @@ static void init_lcd(void)
 
     lcdc_wr_cmd(0xc6);
     if (tefix == 3)
-        lcdc_wr_dat(0x03); // 0x04, 0x1f
+        lcdc_wr_dat(0x04); // 0x04, 0x1f
     else if (tefix == 2)
-        lcdc_wr_dat(0x04);
+        lcdc_wr_dat(0x05);
     else if (tefix == 1)
         lcdc_wr_dat(0x03);
     else
@@ -496,26 +496,27 @@ static void suniv_fb_addr_init(struct myfb_par *par)
 
 static void suniv_lcdc_init(unsigned long xres, unsigned long yres)
 {
-    uint32_t ret=0, bp=0, total=0;
-    uint32_t h_front_porch = 8;
-    uint32_t h_back_porch = 8;
-    uint32_t h_sync_len = 1;
-    uint32_t v_front_porch = 8;
-    uint32_t v_back_porch = 8;
-    uint32_t v_sync_len = 1;
-    if (tefix == 3) {
-        v_front_porch = 10;
-        v_back_porch = 110;
-    } else if (tefix == 2) {
-        v_front_porch = 10;
-        v_back_porch = 110;
-    } else if (tefix == 1) {
-        h_front_porch = 45;
-        h_back_porch = 45;
-	    v_front_porch = 4;
-        v_back_porch = 16;
-        v_sync_len = 3;
-        h_sync_len = 3;
+	uint32_t ret = 0, bp = 0, total = 0;
+	uint32_t h_front_porch = 7;
+	uint32_t h_back_porch = 7;
+	uint32_t h_sync_len = 1;
+	uint32_t v_front_porch = 8;
+	uint32_t v_back_porch = 8;
+	uint32_t v_sync_len = 1;
+	if (tefix == 3 || tefix == 2) {
+		bporch = 90;
+		fporch = 50;
+		v_front_porch = fporch - 1;
+		v_back_porch = bporch - 1;
+	} else if (tefix == 1) {
+		bporch = 90;
+		fporch = 20;
+		h_front_porch = 45;
+		h_back_porch = 45;
+		v_front_porch = 4;
+		v_back_porch = 16;
+		v_sync_len = 3;
+		h_sync_len = 3;
 	}
 
     writel(0, iomm.lcdc + TCON_CTRL_REG);
@@ -603,10 +604,42 @@ static void suniv_enable_irq(struct myfb_par *par)
 static void suniv_cpu_init(struct myfb_par *par)
 {
     uint32_t ret, i;
-    if (tefix == 3 || tefix == 2) {
-        writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
-    } else {
-        writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
+	if (tefix == 3) {
+		writel(
+				(1 << 31) |       // PLL_ENABLE = 1
+				(0 << 30) |       // PLL_MODE = 0 (manual)
+				(1 << 28) |       // LOCK = 1
+				(0 << 25) |       // FRAC_CLK_OUT = 0
+				(1 << 24) |       // PLL_MODE_SEL = 1 (Integer mode)
+				(0 << 20) |       // PLL_SDM_EN = 0
+				(18 << 8) |       // PLL_FACTOR_N = 18
+				(3 << 0),         // PLL_PREDIV_M = 3
+				iomm.ccm + PLL_VIDEO_CTRL_REG
+		);
+	} else if (tefix == 2) {
+		writel(
+				(1 << 31) |       // PLL_ENABLE = 1
+				(0 << 30) |       // PLL_MODE = 0 (manual)
+				(1 << 28) |       // LOCK = 1
+				(0 << 25) |       // FRAC_CLK_OUT = 0
+				(1 << 24) |       // PLL_MODE_SEL = 1 (Integer mode)
+				(0 << 20) |       // PLL_SDM_EN = 0
+				(17 << 8) |       // PLL_FACTOR_N = 17
+				(3 << 0),         // PLL_PREDIV_M = 3
+				iomm.ccm + PLL_VIDEO_CTRL_REG
+		);
+	} else {
+		writel(
+				(1 << 31) |       // Bit 31: PLL_ENABLE = 1
+				(0 << 30) |       // Bit 30: PLL_MODE = 0 (Manual)
+				(1 << 28) |       // Bit 28: LOCK = 1
+				(0 << 25) |       // Bit 25: FRAC_CLK_OUT = 0 (270 MHz)
+				(1 << 24) |       // Bit 24: PLL_MODE_SEL = 1 (Integer mode)
+				(0 << 20) |       // Bit 20: PLL_SDM_EN = 0 (Disabled)
+				(17 << 8) |      // Bits 14:8: PLL_FACTOR_N = 17
+				(7 << 0),         // Bits 3:0: PLL_PREDIV_M = 7
+				iomm.ccm + PLL_VIDEO_CTRL_REG
+		);
     }
     while ((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){}
     while ((readl(iomm.ccm + PLL_PERIPH_CTRL_REG) & (1 << 28)) == 0){}
@@ -943,14 +976,46 @@ static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 #if defined(DEBUG)
             printk("st7789sfb: set TE fix to: %d", (int)tefix);
 #endif
-            if (tefix == 3 || tefix == 2) {
-            	writel(0x91001303, iomm.ccm + PLL_VIDEO_CTRL_REG);
-            } else {
-            	writel(0x91001107, iomm.ccm + PLL_VIDEO_CTRL_REG);
-            }
-            while ((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0){};
-            suniv_lcdc_init(320, 240);
-            break;
+			if (tefix == 3) {
+				writel(
+						(1 << 31) |       // PLL_ENABLE = 1
+						(0 << 30) |       // PLL_MODE = 0 (manual)
+						(1 << 28) |       // LOCK = 1
+						(0 << 25) |       // FRAC_CLK_OUT = 0
+						(1 << 24) |       // PLL_MODE_SEL = 1 (Integer mode)
+						(0 << 20) |       // PLL_SDM_EN = 0
+						(18 << 8) |       // PLL_FACTOR_N = 18
+						(3 << 0),         // PLL_PREDIV_M = 3
+						iomm.ccm + PLL_VIDEO_CTRL_REG
+				);
+			} else if (tefix == 2) {
+				writel(
+						(1 << 31) |       // PLL_ENABLE = 1
+						(0 << 30) |       // PLL_MODE = 0 (manual)
+						(1 << 28) |       // LOCK = 1
+						(0 << 25) |       // FRAC_CLK_OUT = 0
+						(1 << 24) |       // PLL_MODE_SEL = 1 (Integer mode)
+						(0 << 20) |       // PLL_SDM_EN = 0
+						(17 << 8) |       // PLL_FACTOR_N = 17
+						(3 << 0),         // PLL_PREDIV_M = 3
+						iomm.ccm + PLL_VIDEO_CTRL_REG
+				);
+			} else {
+				writel(
+						(1 << 31) |       // Bit 31: PLL_ENABLE = 1
+						(0 << 30) |       // Bit 30: PLL_MODE = 0 (Manual)
+						(1 << 28) |       // Bit 28: LOCK = 1
+						(0 << 25) |       // Bit 25: FRAC_CLK_OUT = 0 (270 MHz)
+						(1 << 24) |       // Bit 24: PLL_MODE_SEL = 1 (Integer mode)
+						(0 << 20) |       // Bit 20: PLL_SDM_EN = 0 (Disabled)
+						(17 << 8) |      // Bits 14:8: PLL_FACTOR_N = 17
+						(7 << 0),         // Bits 3:0: PLL_PREDIV_M = 7
+						iomm.ccm + PLL_VIDEO_CTRL_REG
+				);
+			}
+			while ((readl(iomm.ccm + PLL_VIDEO_CTRL_REG) & (1 << 28)) == 0) {};
+			suniv_lcdc_init(320, 240);
+			break;
         case MIYOO_FB0_GET_TEFIX:
             ret = copy_to_user((void*)arg, &tefix, sizeof(unsigned long));
 #if defined(DEBUG)

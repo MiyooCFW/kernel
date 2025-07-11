@@ -198,9 +198,9 @@ static long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
 
 		for(i = 0; i < 4; i++) // Color conversion table
 		{
-			writel(csc_tab[i], iomm.defe + DEFE_CSC_COEF + i * 4 + 0 * 4);
-			writel(csc_tab[i + 4], iomm.defe + DEFE_CSC_COEF + i * 4 + 4 * 4);
-			writel(csc_tab[i + 8], iomm.defe + DEFE_CSC_COEF + i * 4 + 8 * 4);
+			writel(csc_tab[2 * 48 + i], iomm.defe + DEFE_CSC_COEF + i * 4 + 0 * 4);
+			writel(csc_tab[2 * 48 + i + 4], iomm.defe + DEFE_CSC_COEF + i * 4 + 4 * 4);
+			writel(csc_tab[2 * 48 + i + 8], iomm.defe + DEFE_CSC_COEF + i * 4 + 8 * 4);
 		}
 		suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 0));
 		break;

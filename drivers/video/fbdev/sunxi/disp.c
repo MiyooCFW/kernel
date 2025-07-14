@@ -40,6 +40,12 @@ struct __disp_fb_t {
 	uint32_t mode;
 };
 
+struct disp_rect {
+    int x;
+    int y;
+    int width;
+    int height;
+};
 
 struct suniv_iomm {
 	uint8_t *debe;
@@ -99,11 +105,18 @@ void debe_layer_set_mode(uint8_t layer, debe_color_mode_e mode)
 	}
 }
 
-
-
-static long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static inline uint32_t calc_scaling_factor(int input, int output)
 {
-	uint32_t __user *uarg = (uint32_t __user *)arg;
+    uint32_t ratio = (input << 16) / output;
+    uint32_t int_part = (ratio >> 16) & 0xFF;
+    uint32_t frac_part = ratio & 0xFFFF;
+    return (int_part << 16) | frac_part;
+}
+
+static long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
+	uint32_t
+	__user * uarg = (uint32_t
+	__user *)arg;
 	uint32_t tmp[4];
 
 	if (copy_from_user(tmp, uarg, sizeof(tmp)))
@@ -111,17 +124,54 @@ static long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 
-	case DISP_CMD_VERSION:
-		tmp[0] = 0x202406;
-		if (copy_to_user(uarg, tmp, sizeof(uint32_t)))
-			return -EFAULT;
-		break;
+		case DISP_CMD_VERSION:
+			tmp[0] = 0x202406;
+			if (copy_to_user(uarg, tmp, sizeof(uint32_t)))
+				return -EFAULT;
+			break;
 
-	case DISP_CMD_LAYER_REQUEST:
-	case DISP_CMD_LAYER_RELEASE:
-	case DISP_CMD_LAYER_SET_PARA:
-	case DISP_CMD_LAYER_GET_PARA:
-	case DISP_CMD_LAYER_SET_SRC_WINDOW:
+		case DISP_CMD_LAYER_REQUEST:
+		case DISP_CMD_LAYER_RELEASE:
+		case DISP_CMD_LAYER_SET_PARA:
+		case DISP_CMD_LAYER_GET_PARA:
+		case DISP_CMD_LAYER_SET_SRC_WINDOW: {
+			unsigned int __user
+			*argp;
+			unsigned int tmp[3];
+			struct disp_rect *user_rect;
+			struct disp_rect rect;
+			argp = (unsigned int __user
+			*)arg;
+			if (copy_from_user(tmp, argp, sizeof(tmp)))
+				return -EFAULT;
+			user_rect = (struct disp_rect *) (uintptr_t) tmp[2];
+			if (tmp[2] != 0) {
+				if (copy_from_user(&rect, user_rect, sizeof(rect)))
+					return -EFAULT;
+				writel(rect.width, iomm.defe + DEFE_STRIDE0);
+				writel(rect.width / 2, iomm.defe + DEFE_STRIDE1);
+				writel(rect.width / 2, iomm.defe + DEFE_STRIDE2);
+				writel((rect.width - 1) | ((rect.height - 1) << 16), iomm.defe + DEFE_IN_SIZE);
+				writel((320 - 1) | ((240 - 1) << 16), iomm.defe + DEFE_OUT_SIZE);
+				writel(calc_scaling_factor(rect.width, 320), iomm.defe + DEFE_H_FACT);
+
+				//Sunxi VPU aligns the buffer height to a multiple of 16 pixels.
+				switch (rect.height) {
+					case 256:
+						writel(calc_scaling_factor(240, 240), iomm.defe + DEFE_V_FACT);
+						break;
+					case 384:
+						writel(calc_scaling_factor(360, 240), iomm.defe + DEFE_V_FACT);
+						break;
+					default:
+						writel(calc_scaling_factor(rect.height, 240), iomm.defe + DEFE_V_FACT);
+						break;
+				}
+			}
+			break;
+		}
+    
+
 	case DISP_CMD_LAYER_SET_SCN_WINDOW:
 		break;
 
@@ -129,17 +179,15 @@ static long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (copy_from_user(&fb, (void __user *)tmp[2], sizeof(fb)))
 			return -EFAULT;
 		writel((uint32_t)(fb.addr[0] ), iomm.defe+DEFE_ADDR0);
+		writel((uint32_t)(fb.addr[1] ), iomm.defe+DEFE_ADDR1);
+		writel((uint32_t)(fb.addr[2] ), iomm.defe+DEFE_ADDR2);
+
 		break;
 	case DISP_CMD_LAYER_OPEN:
 		suniv_setbits(iomm.defe+DEFE_EN, 0x01); // Enable DEFE
 		suniv_setbits(iomm.defe+DEFE_EN, (1 << 31)); // Enable CPU access
 		writel((0 << 0) | (0 << 1), iomm.defe+DEFE_BYPASS); // CSC/scaler bypass disabled
-		writel(320*2, iomm.defe+DEFE_STRIDE0);
-		writel((320-1) | ((240-1) << 16), iomm.defe+DEFE_IN_SIZE);
-		writel((320-1) | ((240-1) << 16), iomm.defe+DEFE_OUT_SIZE);
-		writel((1 << 16), iomm.defe+DEFE_H_FACT); // H scale
-		writel((1 << 16), iomm.defe+DEFE_V_FACT); // V scale
-		writel( (1 << 8 ) | (1 << 4) | (1 << 0) , iomm.defe+DEFE_IN_FMT);
+		writel( (0 << 8 ) | (2 << 4) | (0 << 0) , iomm.defe+DEFE_IN_FMT); // YV12
 		suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 23)); // Enable CPU access to filter RAM (if enabled, filter is bypassed?)
 		suniv_clrbits(iomm.defe+DEFE_EN, (1 << 31)); // Disable CPU access (?)
 		suniv_setbits(iomm.defe+DEFE_FRM_CTRL, (1 << 0)); // Registers ready
@@ -150,9 +198,9 @@ static long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		for(i = 0; i < 4; i++) // Color conversion table
 		{
-			writel(csc_tab[i], iomm.defe + DEFE_CSC_COEF + i * 4 + 0 * 4);
-			writel(csc_tab[i + 4], iomm.defe + DEFE_CSC_COEF + i * 4 + 4 * 4);
-			writel(csc_tab[i + 8], iomm.defe + DEFE_CSC_COEF + i * 4 + 8 * 4);
+			writel(csc_tab[2 * 48 + i], iomm.defe + DEFE_CSC_COEF + i * 4 + 0 * 4);
+			writel(csc_tab[2 * 48 + i + 4], iomm.defe + DEFE_CSC_COEF + i * 4 + 4 * 4);
+			writel(csc_tab[2 * 48 + i + 8], iomm.defe + DEFE_CSC_COEF + i * 4 + 8 * 4);
 		}
 		suniv_setbits(iomm.debe + DEBE_REGBUFF_CTRL_REG, (1 << 0));
 		break;

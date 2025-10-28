@@ -55,6 +55,7 @@
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_SND_SET_VOLUME  _IOWR(0x100, 0, unsigned long)
 #define MIYOO_SND_GET_VOLUME  _IOWR(0x101, 0, unsigned long)
+#define MIYOO_SND_JACK_STATUS _IOWR(0x102, 0, unsigned long)
 
 struct mypcm {
   uint32_t dma_period;
@@ -469,8 +470,19 @@ EXPORT_SYMBOL_GPL(MIYOO_DECREASE_VOLUME);
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
   uint32_t ret;
+  bool miyoo_jack = false;
 
   switch(cmd){
+  case MIYOO_SND_JACK_STATUS:
+    ret = readl(iomm.gpio + PA_DATA);
+    if(ret & 4){
+      miyoo_jack = false;
+    }
+    else{
+      miyoo_jack = true;
+    }
+    ret = copy_to_user((void*)arg, &miyoo_jack, sizeof(bool));
+    break;
   case MIYOO_SND_SET_VOLUME:
     MIYOO_SET_VOLUME(arg);
     break;

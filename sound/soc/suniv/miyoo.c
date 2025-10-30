@@ -56,6 +56,7 @@
 #define MIYOO_SND_SET_VOLUME  _IOWR(0x100, 0, unsigned long)
 #define MIYOO_SND_GET_VOLUME  _IOWR(0x101, 0, unsigned long)
 #define MIYOO_SND_JACK_STATUS _IOWR(0x102, 0, unsigned long)
+#define MIYOO_TV_JACK_STATUS  _IOWR(0x103, 0, unsigned long)
 
 struct mypcm {
   uint32_t dma_period;
@@ -85,7 +86,9 @@ static struct class *myclass = NULL;
 
 static unsigned long MIYOO_VOLUME = 5;
 static uint32_t miyoo_snd=1;
+static bool miyoo_tvjack=false;
 module_param(miyoo_snd,uint,0660);
+module_param(miyoo_tvjack,bool,0660);
 
 static void suniv_ioremap(void)
 {
@@ -470,18 +473,29 @@ EXPORT_SYMBOL_GPL(MIYOO_DECREASE_VOLUME);
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
   uint32_t ret;
-  bool miyoo_jack = false;
+  bool jack = false;
+  bool tvjack = false;
 
   switch(cmd){
   case MIYOO_SND_JACK_STATUS:
     ret = readl(iomm.gpio + PA_DATA);
-    if(ret & 4){
-      miyoo_jack = false;
+    if(ret & 4)
+      jack = false;
+    else
+      jack = true;
+    ret = copy_to_user((void*)arg, &jack, sizeof(bool));
+    break;
+  case MIYOO_TV_JACK_STATUS:
+    ret = readl(iomm.gpio + PA_DATA);
+    if(miyoo_tvjack){
+      // no info about separate tvjack PIN data
+    } else {
+      if(ret & 4)
+        tvjack = false;
+      else
+        tvjack = true;
     }
-    else{
-      miyoo_jack = true;
-    }
-    ret = copy_to_user((void*)arg, &miyoo_jack, sizeof(bool));
+    ret = copy_to_user((void*)arg, &tvjack, sizeof(bool));
     break;
   case MIYOO_SND_SET_VOLUME:
     MIYOO_SET_VOLUME(arg);

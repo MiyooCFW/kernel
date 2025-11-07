@@ -70,7 +70,7 @@
 #define DRIVER_NAME  "tvout-fb"
 #define MIYOO_FB0_PUT_OSD     _IOWR(0x100, 0, unsigned long)
 #define MIYOO_FB0_SET_MODE    _IOWR(0x101, 0, unsigned long)
-static int tvmode=0;
+static int tvmode=1;
 module_param(tvmode,int,0660);
 
 
@@ -413,7 +413,7 @@ void defe_init_spl_422(uint16_t in_w, uint16_t in_h, struct myfb_par *par)
     writel((uint32_t)((par->vram_phys)), iomm.defe+DEFE_ADDR0);
     writel(in_w*4, iomm.defe+DEFE_STRIDE0);
     writel((in_w-1) | ((in_h-1) << 16), iomm.defe+DEFE_IN_SIZE);
-    if (tvmode == 0) {
+    if (tvmode != 1) {
         writel((665-1) | ((450-1) << 16), iomm.defe+DEFE_OUT_SIZE);
         writel((31500 << 0), iomm.defe+DEFE_H_FACT); // H scale
         writel((70600 << 0), iomm.defe+DEFE_V_FACT); // V scale
@@ -437,7 +437,7 @@ static void suniv_tve_init(struct myfb_par *par)
 {
     de.mode = DE_TV;
 
-    if (tvmode == 0) {
+    if (tvmode != 1) {
         mode = TVE_MODE_NTSC;
         de.width = 665;
         de.height = 450;

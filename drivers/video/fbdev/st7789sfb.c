@@ -133,7 +133,7 @@ static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
 ktime_t start;
-uint16_t x, i, scanline, vsync, bporch=9, fporch=10;
+uint16_t x, scanline, vsync, bporch=9, fporch=10;
 uint32_t mycpu_clock;
 uint32_t video_clock;
 

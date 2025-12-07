@@ -118,8 +118,6 @@ static struct suniv_iomm iomm={0};
 static struct myfb_par *mypar=NULL;
 static struct fb_var_screeninfo myfb_var={0};
 
-uint16_t i;
-uint32_t val;
 tve_mode_e mode;
 static struct fb_fix_screeninfo myfb_fix = {
         .id = DRIVER_NAME,
@@ -317,6 +315,8 @@ static void tcon1_init(tve_mode_e mode) // TCON1 -> TVE
 
 static void debe_update_linewidth(uint8_t layer)
 {
+    uint32_t val;
+
     if (layer > 3)
         return;
 
@@ -349,8 +349,10 @@ void debe_layer_init(uint8_t layer)
     debe_update_linewidth(layer);
 }
 
-void debe_layer_set_mode(uint8_t layer, debe_color_mode_e mode)
+void debe_layer_set_mode_tv(uint8_t layer, debe_color_mode_e mode)
 {
+    uint32_t val;
+
     if (layer > 3)
         return;
     if (mode == DEBE_MODE_DEFE_VIDEO)
@@ -381,13 +383,15 @@ void debe_layer_set_mode(uint8_t layer, debe_color_mode_e mode)
 
 static void debe_init(struct myfb_par *par)
 {
+    uint16_t i;
+
     writel((1 << 1), iomm.debe + DEBE_MODE_CTRL_REG);
     for (i = 0; i < 1; i++)
     {
         writel(0, iomm.debe + DEBE_LAY0_ATT_CTRL_REG1 + i*4);
         de.layer[i].bits_per_pixel = 32;
         debe_layer_init(i);
-        debe_layer_set_mode(i, DEBE_MODE_DEFE_VIDEO);
+        debe_layer_set_mode_tv(i, DEBE_MODE_DEFE_VIDEO);
     }
     for (i = 0; i < 4; i++) {
         writel(csc_tab[12 * 3 + i] << 16, iomm.debe + DEBE_COEF00_REG + i * 4 + 0 * 4);
@@ -400,8 +404,10 @@ static void debe_init(struct myfb_par *par)
 // TCON clock configuration
 void clk_tcon_config(void)
 {
-    uint32_t val = readl(iomm.ccm + TCON_CLK_REG) & ~(0x7 << 24);
-    writel( val | (0 << 24), iomm.ccm + TCON_CLK_REG);
+    uint32_t val;
+
+    val = readl(iomm.ccm + TCON_CLK_REG) & ~(0x7 << 24);
+    writel(val | (0 << 24), iomm.ccm + TCON_CLK_REG);
 }
 
 void defe_init_spl_422(uint16_t in_w, uint16_t in_h, struct myfb_par *par)
@@ -461,6 +467,8 @@ static void suniv_tve_init(struct myfb_par *par)
 
 static void pll_video_init(uint8_t mul, uint8_t div) // out = (24MHz*N) / M
 {
+    uint32_t val;
+
     if ((mul == 0) || (div == 0))
         return;
     if ((mul > 128) || (div > 16))
@@ -469,7 +477,7 @@ static void pll_video_init(uint8_t mul, uint8_t div) // out = (24MHz*N) / M
     // mul = n
     // div = m
 
-    uint32_t val = readl(iomm.ccm + PLL_VIDEO_CTRL_REG);
+    val = readl(iomm.ccm + PLL_VIDEO_CTRL_REG);
     val &= (1 << 31) | (1 << 28);
     val |= ((mul - 1) << 8) | (div - 1) | (1 << 24);
     writel(val, iomm.ccm + PLL_VIDEO_CTRL_REG);
@@ -484,6 +492,8 @@ void clk_cpu_config(clk_source_cpu_e source)
 
 static void pll_periph_init(uint8_t mul, uint8_t div) // out = (24MHz*N) / M
 {
+    uint32_t val;
+
     if ((mul == 0) || (div == 0))
         return;
     if ((mul > 32) || (div > 4))
@@ -492,7 +502,7 @@ static void pll_periph_init(uint8_t mul, uint8_t div) // out = (24MHz*N) / M
     // mul = n
     // div = m
 
-    uint32_t val = readl(iomm.ccm + CCU_PLL_PERIPH_CTRL);
+    val = readl(iomm.ccm + CCU_PLL_PERIPH_CTRL);
     val &= (1 << 31) | (1 << 28);
     val |= ((mul - 1) << 8) | ((div - 1) << 4) | (1 << 18); // do we need 24m output?
     writel(val, iomm.ccm + CCU_PLL_PERIPH_CTRL);
@@ -507,27 +517,35 @@ inline void clk_pll_enable(pll_ch_e pll)
 // Get PLL lock state
 uint8_t clk_pll_is_locked(pll_ch_e pll)
 {
-    uint32_t val = readl(iomm.ccm + pll);
+    uint32_t val;
+
+    val = readl(iomm.ccm + pll);
     return ((val >> 28) & 0x1);
 }
 
 void clk_hclk_config(uint8_t div) // HCLK = CPUCLK / div
 {
+    uint32_t val;
+
     if ((div == 0) || (div > 4))
         return;
 
-    uint32_t val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~(0x3 << 16);
+    val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~(0x3 << 16);
     writel(val | ((div-1) << 16), iomm.ccm+CCU_AHB_APB_CFG);
 }
 
 void clk_apb_config(clk_div_apb_e div) // APB = AHB / div
 {
-    uint32_t val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~(0x3 << 8);
-    writel( val | (div << 8), iomm.ccm+CCU_AHB_APB_CFG);
+    uint32_t val;
+
+    val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~(0x3 << 8);
+    writel(val | (div << 8), iomm.ccm+CCU_AHB_APB_CFG);
 }
 
 void clk_ahb_config(clk_source_ahb_e src, uint8_t prediv, uint8_t div) // AHB = (src or src/prediv)/div
 {
+    uint32_t val;
+
     if ((prediv == 0) || (prediv > 4))
         return;
     if ((div == 0) || ((div > 4) && (div != 8)) || (div == 3))
@@ -537,18 +555,20 @@ void clk_ahb_config(clk_source_ahb_e src, uint8_t prediv, uint8_t div) // AHB = 
     if (div == 8)
         div = 4;
 
-    uint32_t val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~((0x3 << 12) | (0xF << 4));
+    val = readl(iomm.ccm+CCU_AHB_APB_CFG) & ~((0x3 << 12) | (0xF << 4));
     writel(val | (src << 12) | ((prediv-1) << 6) | ((div-1) << 4), iomm.ccm+CCU_AHB_APB_CFG);
 }
 
 static void pll_cpu_init(uint8_t mul, uint8_t div) // out = (24MHz*N*K) / (M*P)
 {
+    uint32_t val;
+    uint8_t n, k, m, p;
+
     if ((mul == 0) || (div == 0))
         return;
     if ((mul > 128) || (div > 16))
         return;
 
-    uint8_t n, k, m, p;
     // mul = n*k
     // n = 1..32
     // k = 1..4
@@ -576,7 +596,7 @@ static void pll_cpu_init(uint8_t mul, uint8_t div) // out = (24MHz*N*K) / (M*P)
     if (p == 3)
         p = 2;
 
-    uint32_t val = readl(iomm.ccm + CCU_PLL_CPU_CTRL);
+    val = readl(iomm.ccm + CCU_PLL_CPU_CTRL);
     val &= (1 << 31) | (1 << 28);
     val |= ((n - 1) << 8) | ((k - 1) << 4) | (m - 1) | (p << 16);
     writel(val, iomm.ccm + CCU_PLL_CPU_CTRL);
@@ -683,7 +703,6 @@ static int myfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 
 static int myfb_remove(struct platform_device *dev)
 {
-    int i;
     struct fb_info *info = dev_get_drvdata(&dev->dev);
     struct myfb_par *par = info->par;
 
@@ -765,7 +784,7 @@ static struct fb_ops myfb_ops = {
 
 static int myfb_probe(struct platform_device *device)
 {
-    int i, ret;
+    int ret;
     struct fb_info *info;
     struct myfb_par *par;
     struct fb_videomode *mode;
@@ -921,9 +940,6 @@ static int myclose(struct inode *inode, struct file *file)
 
 static long myioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    int32_t w, bpp;
-    unsigned long tmp;
-
     switch(cmd){
         case MIYOO_FB0_PUT_OSD:
             break;

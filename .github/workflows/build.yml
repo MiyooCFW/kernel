@@ -40,7 +40,6 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         cd ${{ inputs.submodule || '.' }}
-        apt-get update && apt-get install -y kmod
         make miyoo_defconfig
         make
         make tar-pkg

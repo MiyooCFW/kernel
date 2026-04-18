@@ -10,41 +10,40 @@ on:
         type: string
 
 jobs:   
-  build:
-    name: kernel for MiyooCFW (uClibc)
+  build-modern:
+    name: kernel for MiyooCFW (musl)
     runs-on: ubuntu-22.04
     container:
-      image: miyoocfw/toolchain-shared-uclibc:master
+      image: miyoocfw/toolchain-shared-musl:master
     steps:
     - uses: actions/checkout@v4
-    
+
     - if: inputs.submodule
       run: git submodule update --init --depth 1 -- ${{ inputs.submodule }}
-    
+
     - name: Generate cache key
       if: inputs.submodule
-      id: cache-key
+      id: cache-key-musl
       run: |
         cd ${{ inputs.submodule }}
-        echo "key=${{ inputs.submodule }}-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-      
+        echo "key=${{ inputs.submodule }}-musl-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
     - uses: actions/cache@v4
       if: inputs.submodule
       with:
         path: ${{ inputs.submodule || '.' }}/dist/*
-        key: ${{ steps.cache-key.outputs.key }}
+        key: ${{ steps.cache-key-musl.outputs.key }}
       id: cache
-      
-    # ARCH=arm and CROSS_COMPILE=arm-buildroot-linux-musleabi- env props are set in the docker image
+
+    # ARCH=arm and CROSS_COMPILE= env props are set in the docker image
     - name: build
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         cd ${{ inputs.submodule || '.' }}
-        apt-get update && apt-get install -y kmod
         make miyoo_defconfig
         make
         make tar-pkg
-        
+
         # put everything in the same folder so that we can grab it all as a single artifact
     - name: gather files
       if: steps.cache.outputs.cache-hit != 'true'
@@ -54,7 +53,59 @@ jobs:
         mv arch/arm/boot/dts/*.dtb dist/
         mv arch/arm/boot/zImage dist/
         mv linux-5.15.141-miyoo-arm.tar dist/
-        
+
+    - run: find ${{ inputs.submodule || '.' }}/dist
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: kernel (musl)
+        path: ${{ inputs.submodule || '.' }}/dist/*
+        if-no-files-found: error # 'error', 'warn', 'ignore'; defaults to `warn`
+
+  build-legacy:
+    name: kernel for MiyooCFW (uClibc)
+    runs-on: ubuntu-22.04
+    container:
+      image: miyoocfw/toolchain-shared-uclibc:master
+    steps:
+    - uses: actions/checkout@v4
+
+    - if: inputs.submodule
+      run: git submodule update --init --depth 1 -- ${{ inputs.submodule }}
+
+    - name: Generate cache key
+      if: inputs.submodule
+      id: cache-key-uclibc
+      run: |
+        cd ${{ inputs.submodule }}
+        echo "key=${{ inputs.submodule }}-uclibc-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+    - uses: actions/cache@v4
+      if: inputs.submodule
+      with:
+        path: ${{ inputs.submodule || '.' }}/dist/*
+        key: ${{ steps.cache-key-uclibc.outputs.key }}
+      id: cache
+
+    # ARCH=arm and CROSS_COMPILE= env props are set in the docker image
+    - name: build
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        make miyoo_defconfig
+        make
+        make tar-pkg
+
+        # put everything in the same folder so that we can grab it all as a single artifact
+    - name: gather files
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ inputs.submodule || '.' }}
+        mkdir dist
+        mv arch/arm/boot/dts/*.dtb dist/
+        mv arch/arm/boot/zImage dist/
+        mv linux-5.15.141-miyoo-arm.tar dist/
+
     - run: find ${{ inputs.submodule || '.' }}/dist
 
     - uses: actions/upload-artifact@v4
